@@ -1,0 +1,64 @@
+{
+  "profiles": [
+    {
+      "id": "profile-1",
+      "name": "Kullanıcı 1",
+      "flowId": "kosmos-bireysel-standart",
+      "userDataDir": "data/profiles/profile-1/user-data",
+      "cookiesFile": "data/sessions/profile-1/cookies.json",
+      "storageFile": "data/sessions/profile-1/storage.json",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "form": {
+        "appointmentCity": "Ankara",
+        "applicationType": "Bireysel",
+        "appointmentStyle": "Standart",
+        "nationalityNumber": "${NATIONALITY_NUMBER_PROFILE_1}"
+      }
+    },
+    {
+      "id": "profile-2",
+      "name": "Kullanıcı 2",
+      "flowId": "kosmos-bireysel-standart",
+      "userDataDir": "data/profiles/profile-2/user-data",
+      "cookiesFile": "data/sessions/profile-2/cookies.json",
+      "storageFile": "data/sessions/profile-2/storage.json",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "form": {
+        "appointmentCity": "Ankara",
+        "applicationType": "Bireysel",
+        "appointmentStyle": "Standart",
+        "nationalityNumber": "${NATIONALITY_NUMBER_PROFILE_2}"
+      }
+    },
+    {
+      "id": "profile-3",
+      "name": "Kullanıcı 3",
+      "flowId": "kosmos-bireysel-standart",
+      "userDataDir": "data/profiles/profile-3/user-data",
+      "cookiesFile": "data/sessions/profile-3/cookies.json",
+      "storageFile": "data/sessions/profile-3/storage.json",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "form": {
+        "appointmentCity": "Ankara",
+        "applicationType": "Bireysel",
+        "appointmentStyle": "Standart",
+        "nationalityNumber": "${NATIONALITY_NUMBER_PROFILE_3}"
+      }
+    },
+    {
+      "id": "profile-4",
+      "name": "Kullanıcı 4",
+      "flowId": "kosmos-bireysel-standart",
+      "userDataDir": "data/profiles/profile-4/user-data",
+      "cookiesFile": "data/sessions/profile-4/cookies.json",
+      "storageFile": "data/sessions/profile-4/storage.json",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "form": {
+        "appointmentCity": "Ankara",
+        "applicationType": "Bireysel",
+        "appointmentStyle": "Standart",
+        "nationalityNumber": "${NATIONALITY_NUMBER_PROFILE_4}"
+      }
+    }
+  ]
+}

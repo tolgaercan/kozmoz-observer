@@ -1,0 +1,10 @@
+# 2Captcha unpacked extension buraya konulmalı.
+# İndir: https://2captcha.com/extension
+#
+# Kurulum:
+# 1. Chrome Web Store'dan veya 2captcha sitesinden .crx indir
+# 2. CRX Extractor ile unpacked klasöre çıkar
+# 3. Klasörü extensions/2captcha/ olarak kopyala
+# 4. .env içine CAPTCHA_SOLVER_API_KEY=your_key ekle
+#
+# Playwright başlangıcında eklenti otomatik yüklenir ve config güncellenir.

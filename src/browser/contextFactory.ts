@@ -1,0 +1,122 @@
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+
+import type { AppSettings } from "../config/settings.js";
+import { buildCaptchaSettingsFromEnv } from "../captcha/captchaConfig.js";
+import { prepareExtensionLaunch } from "../captcha/extensionLoader.js";
+import type { ResolvedProfile } from "../profiles/profileManager.js";
+import { ProfileManager } from "../profiles/profileManager.js";
+import { loadSession } from "../session/sessionLoader.js";
+import { logger } from "../utils/logger.js";
+import {
+  STEALTH_INIT_SCRIPT,
+  buildContextOptions,
+} from "./stealth.js";
+import { connectOverCdp, resolveCdpObserverPage } from "./cdpConnector.js";
+import { resolveObserverPage } from "./pageResolver.js";
+import { assertChromeClosed, warnIfChromeRunning } from "./chromeProcessCheck.js";
+
+export interface BrowserSession {
+  context: BrowserContext;
+  page: Page;
+  sessionLoadResult: Awaited<ReturnType<typeof loadSession>>;
+  browser?: Browser;
+  viaCdp: boolean;
+}
+
+export class ContextFactory {
+  constructor(
+    private readonly profileManager: ProfileManager,
+    private readonly settings: AppSettings,
+  ) {}
+
+  async launch(profile: ResolvedProfile): Promise<BrowserSession> {
+    try {
+      if (this.settings.browserConnectMethod === "cdp") {
+        return this.launchViaCdp(profile);
+      }
+      return this.launchViaPlaywright(profile);
+    } catch (error) {
+      throw new Error(
+        `Browser context başlatılamadı: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async launchViaCdp(profile: ResolvedProfile): Promise<BrowserSession> {
+    logger.info("Mod: CDP — Playwright Chrome BAŞLATMAZ, açık Chrome'a bağlanır.");
+    logger.info(`  CDP endpoint: ${this.settings.cdpEndpoint}`);
+    logger.info("  Chrome'u scripts/start-chrome-debug.ps1 ile açmış olmalısınız.");
+
+    const { browser, context } = await connectOverCdp(this.settings.cdpEndpoint);
+    const page = await resolveCdpObserverPage(context);
+
+    return {
+      context,
+      page,
+      browser,
+      viaCdp: true,
+      sessionLoadResult: {
+        cookiesLoaded: 0,
+        storageKeysLoaded: 0,
+      },
+    };
+  }
+
+  private async launchViaPlaywright(profile: ResolvedProfile): Promise<BrowserSession> {
+    if (this.settings.browserMode === "fixed" && this.settings.fixedBrowser) {
+      assertChromeClosed();
+      logger.warn(
+        "Playwright launch modu — Cloudflare tarafından algılanma riski YÜKSEK. BROWSER_CONNECT=cdp önerilir.",
+      );
+      logger.info("Sabit Chrome profili açılıyor:");
+      logger.info(`  Profil yolu: ${this.settings.fixedBrowser.profilePath}`);
+    } else {
+      warnIfChromeRunning();
+      logger.info(`Persistent context başlatılıyor: ${profile.name} (${profile.id})`);
+    }
+
+    const captchaConfig = buildCaptchaSettingsFromEnv(this.settings.projectRoot);
+    const extensionSetup = prepareExtensionLaunch(captchaConfig);
+
+    logger.info("Chrome başlatılıyor — profil yüklenirken 10-30 sn sürebilir...");
+
+    const context = await chromium.launchPersistentContext(
+      profile.absoluteUserDataDir,
+      buildContextOptions(profile, this.settings, extensionSetup),
+    );
+
+    logger.info("Chrome başlatıldı (Playwright launch).");
+    await context.addInitScript(STEALTH_INIT_SCRIPT);
+
+    const page = await resolveObserverPage(context, {
+      preferNewTab: this.settings.browserMode === "fixed",
+    });
+
+    const sessionLoadResult = await loadSession(
+      context,
+      page,
+      this.profileManager.toSessionPaths(profile),
+      {
+        skipCookies: this.settings.browserMode === "fixed",
+        skipStorage: this.settings.browserMode === "fixed",
+      },
+    );
+
+    return { context, page, viaCdp: false, sessionLoadResult };
+  }
+
+  async close(session: BrowserSession): Promise<void> {
+    try {
+      if (session.viaCdp) {
+        await session.page.close();
+        logger.info("Observer sekmesi kapatıldı — Chrome açık kaldı (CDP modu).");
+        return;
+      }
+
+      await session.context.close();
+      logger.info("Browser context kapatıldı.");
+    } catch (error) {
+      logger.error("Browser kapatılırken hata oluştu.", error);
+    }
+  }
+}

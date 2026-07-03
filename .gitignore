@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+data/profiles/*/user-data/
+data/sessions/
+data/cookies/
+data/config/captcha.runtime.json
+*.log
+
+# GitHub Desktop ile yanlışlıkla oluşturulan iç içe boş repo klasörü
+/kozmoz-observer/

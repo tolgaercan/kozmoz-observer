@@ -1,0 +1,8 @@
+{
+  "mode": "fixed-browser",
+  "enabled": true,
+  "pollIntervalMs": 4000,
+  "maxChallengeWaitMs": 180000,
+  "continuousWatchIntervalMs": 8000,
+  "autoSaveCookies": true
+}

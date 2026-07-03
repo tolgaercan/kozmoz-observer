@@ -1,0 +1,24 @@
+{
+  "name": "kozmoz-observer",
+  "version": "1.0.0",
+  "description": "Playwright Observer bot for visa portal automation",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/index.ts",
+    "observer": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/index.ts",
+    "preflight": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/preflight/runPreflight.ts",
+    "chrome:debug": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1"
+  },
+  "keywords": ["playwright", "observer", "visa", "automation"],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "playwright": "^1.49.1"
+  }
+}
