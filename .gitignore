@@ -1,6 +1,8 @@
 node_modules/
 dist/
 .env
+.env.local
+.env.*.local
 data/profiles/*/user-data/
 data/sessions/
 data/cookies/
