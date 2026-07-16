@@ -52,15 +52,29 @@ export async function runPreflight(
     logger.info(`Preflight akış: ${flow.name} (${flowId})`);
 
     if (settings.browserConnectMethod === "cdp") {
-      logger.info(`Mod: CDP bağlantı (${settings.cdpEndpoint})`);
+      const cdpEndpoint = profile.cdpEndpoint ?? settings.cdpEndpoint;
+      logger.info(`Mod: CDP bağlantı (${cdpEndpoint})`);
+      logger.info(`Chrome user-data: ${profile.absoluteUserDataDir}`);
 
-      const cdpReady = await isCdpEndpointReady(settings.cdpEndpoint);
+      const cdpReady = await isCdpEndpointReady(cdpEndpoint);
       if (!cdpReady) {
-        errors.push(
-          `CDP endpoint hazır değil: ${settings.cdpEndpoint}\n` +
-            "  Önce: .\\scripts\\start-chrome-debug.ps1\n" +
-            "  Sonra: npm run observer -- --profile profile-1 --pause",
-        );
+        if (isChromeRunning()) {
+          errors.push(
+            `Chrome açık ama debug modunda değil (${cdpEndpoint}).\n` +
+              `  Normal Chrome penceresi observer'a bağlanamaz.\n` +
+              `  Tüm Chrome pencerelerini kapatın, sonra tek komut:\n` +
+              `    npm run run:profile-1`,
+          );
+        } else {
+          errors.push(
+            `Chrome debug modunda çalışmıyor (${cdpEndpoint}).\n` +
+              `  Tek komut (önerilen):\n` +
+              `    npm run run:profile-1\n` +
+              `  İki adım isterseniz:\n` +
+              `    1) npm run chrome:debug\n` +
+              `    2) Chrome penceresini KAPATMADAN: npm run observer -- --profile ${profile.id} --pause`,
+          );
+        }
       }
     } else if (settings.browserMode === "fixed" && settings.fixedBrowser) {
       logger.info(`Mod: sabit Chrome profili (${settings.fixedBrowser.profileDirectory})`);
@@ -75,6 +89,12 @@ export async function runPreflight(
       if (!existsSync(settings.fixedBrowser.profilePath)) {
         errors.push(`Chrome profili bulunamadı: ${settings.fixedBrowser.profilePath}`);
       }
+    }
+
+    if (!existsSync(profile.absoluteUserDataDir)) {
+      warnings.push(
+        `Chrome profil klasörü henüz yok (ilk çalıştırmada oluşur): ${profile.absoluteUserDataDir}`,
+      );
     }
 
     if (existsSync(paths.cookiesFile)) {

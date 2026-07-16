@@ -9,7 +9,10 @@
     "start": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/index.ts",
     "observer": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/index.ts",
     "preflight": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/preflight/runPreflight.ts",
-    "chrome:debug": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1"
+    "chrome:debug": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1",
+    "chrome:seed-profile": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/browser/seedChromeProfile.ts",
+    "run:profile-1": "powershell -ExecutionPolicy Bypass -Command \"npm run chrome:debug -- -Profile profile-1; if ($LASTEXITCODE -eq 0) { npm run observer -- --profile profile-1 --pause }\"",
+    "run:chrome-only": "powershell -ExecutionPolicy Bypass -Command \"npm run chrome:debug -- -Profile profile-1; if ($LASTEXITCODE -eq 0) { npm run observer -- --profile profile-1 --phase chrome-profile --pause }\""
   },
   "keywords": ["playwright", "observer", "visa", "automation"],
   "license": "MIT",

@@ -6,9 +6,10 @@ import { prepareExtensionLaunch } from "../captcha/extensionLoader.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { ProfileManager } from "../profiles/profileManager.js";
 import { loadSession } from "../session/sessionLoader.js";
+import { clearBrowserCookies } from "../session/sessionReset.js";
 import { logger } from "../utils/logger.js";
 import {
-  STEALTH_INIT_SCRIPT,
+  applyStealthToContext,
   buildContextOptions,
 } from "./stealth.js";
 import { connectOverCdp, resolveCdpObserverPage } from "./cdpConnector.js";
@@ -43,22 +44,43 @@ export class ContextFactory {
   }
 
   private async launchViaCdp(profile: ResolvedProfile): Promise<BrowserSession> {
-    logger.info("Mod: CDP — Playwright Chrome BAŞLATMAZ, açık Chrome'a bağlanır.");
-    logger.info(`  CDP endpoint: ${this.settings.cdpEndpoint}`);
-    logger.info("  Chrome'u scripts/start-chrome-debug.ps1 ile açmış olmalısınız.");
+    const cdpEndpoint = profile.cdpEndpoint || this.settings.cdpEndpoint;
 
-    const { browser, context } = await connectOverCdp(this.settings.cdpEndpoint);
+    logger.info("Mod: CDP — Playwright Chrome BAŞLATMAZ, açık Chrome'a bağlanır.");
+    logger.info(`  CDP endpoint: ${cdpEndpoint}`);
+    logger.info(`  Chrome user-data: ${profile.absoluteUserDataDir}`);
+    logger.info("  Chrome'u scripts/start-chrome-debug.ps1 -Profile <id> ile açmış olmalısınız.");
+
+    const { browser, context } = await connectOverCdp(cdpEndpoint);
+    await applyStealthToContext(context);
+    logger.info("[stealth] CDP oturumuna anti-detection script uygulandi.");
     const page = await resolveCdpObserverPage(context);
+
+    const skipSession =
+      this.settings.chromeFreshProfile ||
+      this.settings.chromeFreshStart ||
+      this.settings.observerPhase === "chrome-profile";
+
+    if (this.settings.chromeFreshProfile) {
+      logger.info("Mod: temiz Chrome profili — portal cerez/storage enjekte edilmeyecek.");
+    }
+
+    if (this.settings.chromeFreshStart) {
+      await clearBrowserCookies(context);
+    }
+
+    const sessionPaths = this.profileManager.toSessionPaths(profile);
+    const sessionLoadResult = await loadSession(context, page, sessionPaths, {
+      skipCookies: skipSession,
+      skipStorage: skipSession,
+    });
 
     return {
       context,
       page,
       browser,
       viaCdp: true,
-      sessionLoadResult: {
-        cookiesLoaded: 0,
-        storageKeysLoaded: 0,
-      },
+      sessionLoadResult,
     };
   }
 
@@ -86,7 +108,7 @@ export class ContextFactory {
     );
 
     logger.info("Chrome başlatıldı (Playwright launch).");
-    await context.addInitScript(STEALTH_INIT_SCRIPT);
+    await applyStealthToContext(context);
 
     const page = await resolveObserverPage(context, {
       preferNewTab: this.settings.browserMode === "fixed",
@@ -105,9 +127,16 @@ export class ContextFactory {
     return { context, page, viaCdp: false, sessionLoadResult };
   }
 
-  async close(session: BrowserSession): Promise<void> {
+  async close(session: BrowserSession, options: { keepPage?: boolean } = {}): Promise<void> {
     try {
       if (session.viaCdp) {
+        if (options.keepPage) {
+          logger.info(
+            "Observer kapandi — Chrome penceresi acik kaldi.\n" +
+              "  Portal icin Chrome'u kapatmadan: npm run observer -- --profile profile-1 --pause",
+          );
+          return;
+        }
         await session.page.close();
         logger.info("Observer sekmesi kapatıldı — Chrome açık kaldı (CDP modu).");
         return;

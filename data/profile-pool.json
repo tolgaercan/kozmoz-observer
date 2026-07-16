@@ -1,0 +1,22 @@
+{
+  "profiles": [
+    {
+      "id": "profile-2",
+      "enabled": false,
+      "mode": "observer",
+      "note": "Havuz — manifest'e taşınmadan önce .env credentials ekleyin"
+    },
+    {
+      "id": "profile-3",
+      "enabled": false,
+      "mode": "observer",
+      "note": "Havuz — ileride eklenecek"
+    },
+    {
+      "id": "profile-4",
+      "enabled": false,
+      "mode": "observer",
+      "note": "Havuz — ileride eklenecek"
+    }
+  ]
+}

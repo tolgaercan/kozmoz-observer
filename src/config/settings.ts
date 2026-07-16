@@ -123,6 +123,8 @@ export interface PostCityFlowResult {
 
 export type BrowserConnectMethod = "launch" | "cdp";
 
+export type ObserverPhase = "full" | "chrome-profile";
+
 export interface AppSettings {
   visaPortalHomeUrl: string;
   defaultProfileId: string;
@@ -134,6 +136,18 @@ export interface AppSettings {
   /** launch = Playwright Chrome başlatır | cdp = açık Chrome'a bağlanır (CF için önerilir) */
   browserConnectMethod: BrowserConnectMethod;
   cdpEndpoint: string;
+  /** CDP + fixed modda bile manifest browser.userDataDir kullan */
+  cdpUseManifestProfile: boolean;
+  /** Observer başında chrome://profile-picker */
+  chromeProfileGateEnabled: boolean;
+  chromeStartupUrl: string;
+  /** true: CDP baglantida portal cerezlerini yukleme */
+  chromeFreshStart: boolean;
+  /** true: her chrome:debug'de user-data sifirlanir (temiz Chrome profili) */
+  chromeFreshProfile: boolean;
+  /** full = tum akis | chrome-profile = Chrome ac + Google giris + google.com */
+  observerPhase: ObserverPhase;
+  cdpPort: number;
   fixedBrowser: FixedBrowserSettings | null;
   useChromeChannel: boolean;
   preGotoDelayMs: number;
@@ -224,6 +238,28 @@ function resolveDefaultChromeUserDataDir(): string {
   return resolve(process.env.USERPROFILE ?? "", "AppData", "Local", "Google", "Chrome", "User Data");
 }
 
+function resolveChromeFreshProfile(env: NodeJS.ProcessEnv): boolean {
+  const explicit = env.CHROME_FRESH_PROFILE?.trim();
+  if (explicit === "true") {
+    return true;
+  }
+  if (explicit === "false") {
+    return false;
+  }
+  return (env.BROWSER_MODE ?? "isolated") === "isolated";
+}
+
+function resolveChromeProfileGateEnabled(env: NodeJS.ProcessEnv): boolean {
+  const explicit = env.CHROME_PROFILE_GATE_ENABLED?.trim();
+  if (explicit === "true") {
+    return true;
+  }
+  if (explicit === "false") {
+    return false;
+  }
+  return (env.BROWSER_MODE ?? "isolated") !== "isolated";
+}
+
 function loadFixedBrowserSettings(): FixedBrowserSettings | null {
   const browserMode = (process.env.BROWSER_MODE ?? "fixed") as "fixed" | "isolated";
   if (browserMode !== "fixed") {
@@ -239,9 +275,9 @@ function loadFixedBrowserSettings(): FixedBrowserSettings | null {
 }
 
 const DEFAULT_NAV_STEP_1 =
-  "role=link[name='Randevu İşlemleri']|a:has-text('Randevu İşlemleri')|header >> text=Randevu İşlemleri";
+  "li.nav-link a[href='/appointmentProcedures']:visible|a[href='/appointmentProcedures']:visible|li.nav-link span.nav-item-title:has-text('Randevu İşlemleri')";
 const DEFAULT_NAV_STEP_2 =
-  "a.tab-link:has-text('Randevu Al')|a[href='/appointmentForm']|role=link[name='Randevu Al']";
+  "a.tab-link:visible:has-text('Randevu Al')|a[href='/appointmentForm']:visible|a:visible:has-text('Randevu Al')";
 
 function loadNavigationSteps(): string[] {
   const navSteps = process.env.NAV_STEPS?.trim();
@@ -268,12 +304,19 @@ export function loadSettings(projectRoot: string): AppSettings {
   return {
     visaPortalHomeUrl: process.env.VISA_PORTAL_HOME_URL ?? "https://example-visa-portal.com/",
     defaultProfileId: process.env.DEFAULT_PROFILE_ID ?? "profile-1",
-    defaultFlowId: process.env.DEFAULT_FLOW_ID ?? "kosmos-bireysel-standart",
+    defaultFlowId: process.env.DEFAULT_FLOW_ID ?? "kosmos-observe-v1",
     projectRoot,
     manifestPath: resolve(projectRoot, "data/profiles/manifest.json"),
-    browserMode: (process.env.BROWSER_MODE ?? "fixed") as "fixed" | "isolated",
+    browserMode: (process.env.BROWSER_MODE ?? "isolated") as "fixed" | "isolated",
     browserConnectMethod: (process.env.BROWSER_CONNECT ?? "cdp") as BrowserConnectMethod,
     cdpEndpoint: process.env.CDP_ENDPOINT ?? "http://127.0.0.1:9222",
+    cdpUseManifestProfile: process.env.CDP_USE_MANIFEST_PROFILE !== "false",
+    chromeProfileGateEnabled: resolveChromeProfileGateEnabled(process.env),
+    chromeStartupUrl: process.env.CHROME_STARTUP_URL?.trim() || "about:blank",
+    chromeFreshStart: process.env.CHROME_FRESH_START === "true",
+    chromeFreshProfile: resolveChromeFreshProfile(process.env),
+    observerPhase: (process.env.OBSERVER_PHASE?.trim() || "full") as ObserverPhase,
+    cdpPort: parseIntEnv("CDP_PORT", 9222),
     fixedBrowser: loadFixedBrowserSettings(),
     useChromeChannel: process.env.BROWSER_CHANNEL !== "chromium",
     preGotoDelayMs: parseIntEnv("PRE_GOTO_DELAY_MS", 2500),

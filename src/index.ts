@@ -1,7 +1,8 @@
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadSettings } from "./config/settings.js";
+import { loadSettings, type ObserverPhase } from "./config/settings.js";
+import { ProfileQueue } from "./profiles/profileQueue.js";
 import { Observer } from "./observer/observer.js";
 import { runPreflight } from "./preflight/preflightCheck.js";
 import { logger } from "./utils/logger.js";
@@ -16,6 +17,7 @@ interface CliArgs {
   listFlows: boolean;
   homeUrl?: string;
   pauseOnReady: boolean;
+  phase?: string;
 }
 
 function parseArgs(argv: string[]): CliArgs {
@@ -40,6 +42,8 @@ function parseArgs(argv: string[]): CliArgs {
       args.homeUrl = argv[++i];
     } else if (arg === "--pause") {
       args.pauseOnReady = true;
+    } else if (arg === "--phase") {
+      args.phase = argv[++i];
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       process.exit(0);
@@ -58,22 +62,26 @@ Kullanım:
 
 Seçenekler:
   -p, --profile <id|index>   Profil ID veya sıra numarası (örn: profile-1 veya 0)
-  -f, --flow <flow-id>       Test senaryosu / akış ID (örn: kosmos-bireysel-standart)
+  -f, --flow <flow-id>       Akış ID (örn: kosmos-observe-v1)
   -l, --list-profiles        Tanımlı profilleri listele
-      --list-flows           Tanımlı akışları (test senaryolarını) listele
-  -u, --url <url>            Ana sayfa URL'i (.env yerine geçersiz)
+      --list-flows           Tanımlı akışları listele
+  -u, --url <url>            Ana sayfa URL'i
       --pause                  Sayfa hazır olunca Enter ile devam et
+      --phase <full|chrome-profile>  Calisma asamasi (varsayilan: full)
   -h, --help                 Bu yardım metni
 
+Profil kuyruğu:
+  data/profile-queue.json    activeProfileId + sıra ( --profile verilmezse kullanılır)
+  data/profile-pool.json     İleride eklenecek profiller
+
 Örnekler:
-  npm run observer -- --profile profile-1
-  npm run observer -- --flow kosmos-bireysel-standart --profile profile-1
-  npm run observer -- -p 0 -f kosmos-bireysel-standart
+  npm run observer -- --profile profile-1 --phase chrome-profile --pause
+  OBSERVER_PHASE=full npm run observer -- --profile profile-1
   npm run observer -- --list-flows
 
-Profil / akış dosyaları:
-  data/profiles/manifest.json     Profil + form fixture tanımları
-  src/flows/*.flow.ts             Test senaryoları (akış spec'leri)
+Dosyalar:
+  docs/ARCHITECTURE.md       Mimari tasarım ve yol haritası
+  data/profiles/manifest.json
 `);
 }
 
@@ -93,7 +101,10 @@ async function main(): Promise<void> {
   }
 
   try {
-    const preflight = await runPreflight(PROJECT_ROOT, cli.profile, cli.flow);
+    const profileQueue = new ProfileQueue(PROJECT_ROOT);
+    const profileRef = profileQueue.resolveProfileRef(cli.profile);
+
+    const preflight = await runPreflight(PROJECT_ROOT, profileRef, cli.flow);
     for (const warning of preflight.warnings) {
       logger.warn(`[preflight] ${warning}`);
     }
@@ -106,11 +117,20 @@ async function main(): Promise<void> {
     logger.info("[preflight] Session dosyaları, profil ve akış yapılandırması hazır.");
 
     const state = await observer.start({
-      profileRef: cli.profile,
+      profileRef,
       flowRef: cli.flow,
       homeUrl: cli.homeUrl,
       pauseOnReady: cli.pauseOnReady,
+      phase: cli.phase as ObserverPhase | undefined,
     });
+
+    const activePhase = cli.phase ?? settings.observerPhase;
+
+    if (activePhase === "chrome-profile") {
+      logger.info("Chrome profil asamasi tamamlandi.");
+      await observer.stop({ keepBrowserPage: true });
+      return;
+    }
 
     logger.info(
       `Observer oturumu aktif (${state.profile.id}, akış: ${state.flowId}). Çıkış için Ctrl+C.`,
@@ -125,7 +145,8 @@ async function main(): Promise<void> {
     await new Promise<void>(() => {});
   } catch (error) {
     logger.error("Observer başlatılamadı.", error);
-    await observer.stop();
+    const activePhase = cli.phase ?? settings.observerPhase;
+    await observer.stop({ keepBrowserPage: activePhase === "chrome-profile" });
     process.exit(1);
   }
 }

@@ -38,7 +38,24 @@ export async function connectOverCdp(endpoint: string): Promise<{
 }
 
 export async function resolveCdpObserverPage(context: BrowserContext): Promise<Page> {
+  const pages = context.pages().filter((candidate) => !candidate.isClosed());
+
+  const reusable = pages.find((candidate) => {
+    const url = candidate.url();
+    return (
+      !url.startsWith("chrome-extension://") &&
+      !url.startsWith("devtools://") &&
+      !url.startsWith("chrome://settings/")
+    );
+  });
+
+  if (reusable) {
+    logger.info(`Mevcut Chrome sekmesi kullaniliyor: ${reusable.url() || "about:blank"}`);
+    await reusable.bringToFront();
+    return reusable;
+  }
+
   const page = await context.newPage();
-  logger.info("Observer sekmesi açıldı (CDP — mevcut Chrome oturumu).");
+  logger.info("Observer sekmesi acildi (CDP — yeni tab).");
   return page;
 }

@@ -24,9 +24,40 @@ function pickClickPoint(box: { x: number; y: number; width: number; height: numb
   const marginY = Math.min(box.height * 0.25, 10);
 
   return {
-    x: box.x + marginX + randomIn(0, box.width - marginX * 2),
-    y: box.y + marginY + randomIn(0, box.height - marginY * 2),
+    x: box.x + marginX + randomIn(0, Math.max(1, box.width - marginX * 2)),
+    y: box.y + marginY + randomIn(0, Math.max(1, box.height - marginY * 2)),
   };
+}
+
+function pickVisibleClickPoint(
+  box: { x: number; y: number; width: number; height: number },
+  viewport: { width: number; height: number },
+): { x: number; y: number } | null {
+  const left = Math.max(box.x, 0);
+  const top = Math.max(box.y, 0);
+  const right = Math.min(box.x + box.width, viewport.width);
+  const bottom = Math.min(box.y + box.height, viewport.height);
+  const visibleWidth = right - left;
+  const visibleHeight = bottom - top;
+
+  if (visibleWidth <= 4 || visibleHeight <= 4) {
+    return null;
+  }
+
+  const marginX = Math.min(visibleWidth * 0.2, 12);
+  const marginY = Math.min(visibleHeight * 0.25, 10);
+
+  return {
+    x: left + marginX + randomIn(0, Math.max(1, visibleWidth - marginX * 2)),
+    y: top + marginY + randomIn(0, Math.max(1, visibleHeight - marginY * 2)),
+  };
+}
+
+function isPointInViewport(
+  point: { x: number; y: number },
+  viewport: { width: number; height: number },
+): boolean {
+  return point.x >= 0 && point.y >= 0 && point.x <= viewport.width && point.y <= viewport.height;
 }
 
 export async function waitForLocatorReady(
@@ -77,7 +108,26 @@ export async function humanClickLocator(
     throw new Error("Tıklama hedefinin bounding box bilgisi alınamadı.");
   }
 
-  const target = pickClickPoint(box);
+  const viewport = await getPageViewport(page);
+  let target = pickClickPoint(box);
+
+  if (!isPointInViewport(target, viewport)) {
+    const visibleTarget = pickVisibleClickPoint(box, viewport);
+    if (visibleTarget) {
+      target = visibleTarget;
+      logger.info(
+        `Tıklama noktası viewport içine alındı: (${Math.round(target.x)}, ${Math.round(target.y)})`,
+      );
+    } else {
+      logger.warn(
+        `Hedef viewport dışında — Playwright click() kullanılıyor: ${options.label ?? "hedef"}`,
+      );
+      await locator.click({ timeout: waitTimeoutMs });
+      await page.waitForTimeout(options.postClickDelayMs ?? randomIn(120, 350));
+      return;
+    }
+  }
+
   logger.info(
     `İnsan benzeri fare hareketi — hedef: (${Math.round(target.x)}, ${Math.round(target.y)})`,
   );
@@ -95,7 +145,11 @@ export async function humanClickSelector(
   selector: string,
   options: HumanClickOptions = {},
 ): Promise<void> {
-  await humanClickLocator(page, page.locator(selector).first(), {
+  const visibleLocator = page.locator(selector).locator("visible=true").first();
+  const visibleCount = await page.locator(selector).locator("visible=true").count();
+  const locator = visibleCount > 0 ? visibleLocator : page.locator(selector).first();
+
+  await humanClickLocator(page, locator, {
     ...options,
     label: options.label ?? selector,
   });

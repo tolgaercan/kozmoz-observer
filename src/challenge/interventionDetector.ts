@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 
 import { detectChallenge } from "./challengeDetector.js";
+import { detectManualAuthStep } from "../auth/authStepDetector.js";
 
 export type InterventionType = "none" | "challenge" | "login" | "blocked";
 
@@ -140,9 +141,12 @@ export async function detectIntervention(page: Page): Promise<InterventionSignal
     return { type: "challenge", reasons: challenge.reasons };
   }
 
-  const login = await detectLogin(page);
-  if (login.isLogin) {
-    return { type: "login", reasons: login.reasons };
+  const manualAuth = await detectManualAuthStep(page);
+  if (manualAuth.required) {
+    return {
+      type: "login",
+      reasons: [`manual-auth:${manualAuth.kind}`, ...manualAuth.reasons],
+    };
   }
 
   return { type: "none", reasons: [] };
@@ -159,6 +163,11 @@ export async function isAppReady(page: Page, expectedOrigin: string): Promise<bo
       return false;
     }
   } catch {
+    return false;
+  }
+
+  const manualAuth = await detectManualAuthStep(page);
+  if (manualAuth.required) {
     return false;
   }
 

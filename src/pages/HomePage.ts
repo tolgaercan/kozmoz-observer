@@ -1,7 +1,9 @@
 import type { Page } from "playwright";
 
 import type { NavigationSettings } from "../config/settings.js";
-import { clickNavigationTarget } from "../navigation/targetNavigator.js";
+import { navigateKosmosAppointmentFlow } from "../navigation/kosmosPortalNav.js";
+import { resetMousePosition } from "../interaction/humanMouse.js";
+import { logger } from "../utils/logger.js";
 
 /** Ana sayfa — randevu akışına giriş navigasyonu */
 export class HomePage {
@@ -11,6 +13,6 @@ export class HomePage {
   ) {}
 
   async navigateToAppointmentForm(): Promise<void> {
-    await clickNavigationTarget(this.page, this.navigation);
+    await navigateKosmosAppointmentFlow(this.page, this.navigation);
   }
 }

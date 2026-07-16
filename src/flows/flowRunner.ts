@@ -48,7 +48,9 @@ export async function runFlowSetup(
       logger.info(
         `[flow:${flow.id}] [wizard ${round}/${maxRounds}] Form görünmüyor — randevu akışına gidiliyor.`,
       );
-      await clickNavigationTarget(page, navigation);
+      await clickNavigationTarget(page, navigation, {
+        homeUrl: settings.visaPortalHomeUrl,
+      });
       if (appointment.waitAfterNavMs > 0) {
         await page.waitForTimeout(appointment.waitAfterNavMs);
       }

@@ -1,12 +1,9 @@
 import { chromium } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 
-import type { ResolvedProfile } from "../profiles/profileManager.js";
 import type { AppSettings } from "../config/settings.js";
 import type { ExtensionSetupResult } from "../captcha/extensionLoader.js";
-
-type PersistentContextOptions = NonNullable<
-  Parameters<typeof chromium.launchPersistentContext>[1]
->;
+import type { ResolvedProfile } from "../profiles/profileManager.js";
 
 /** Playwright persistent context için anti-detection init script */
 export const STEALTH_INIT_SCRIPT = `
@@ -41,11 +38,37 @@ export const STEALTH_INIT_SCRIPT = `
 })();
 `;
 
+export async function applyStealthToContext(context: BrowserContext): Promise<void> {
+  await context.addInitScript(STEALTH_INIT_SCRIPT);
+
+  for (const page of context.pages()) {
+    if (page.isClosed()) {
+      continue;
+    }
+    await applyStealthToPage(page);
+  }
+}
+
+export async function applyStealthToPage(page: Page): Promise<void> {
+  await page.evaluate(STEALTH_INIT_SCRIPT).catch(() => undefined);
+}
+
+type PersistentContextOptions = NonNullable<
+  Parameters<typeof chromium.launchPersistentContext>[1]
+>;
+
 export const STEALTH_LAUNCH_ARGS = [
   "--disable-blink-features=AutomationControlled",
   "--disable-infobars",
   "--no-first-run",
   "--no-default-browser-check",
+];
+
+/** CDP ile acilan gercek Chrome icin (Playwright launch degil). enable-automation KULLANMA — Google reddeder. */
+export const STEALTH_CDP_LAUNCH_ARGS = [
+  ...STEALTH_LAUNCH_ARGS,
+  "--disable-session-crashed-bubble",
+  "--auto-accept-browser-signin-for-tests",
 ];
 
 export const STEALTH_IGNORE_DEFAULT_ARGS = [

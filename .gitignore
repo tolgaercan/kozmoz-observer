@@ -4,6 +4,7 @@ dist/
 .env.local
 .env.*.local
 data/profiles/*/user-data/
+data/chrome/
 data/sessions/
 data/cookies/
 data/config/captcha.runtime.json

@@ -3,6 +3,16 @@ import { resolve } from "node:path";
 
 import type { AppSettings } from "../config/settings.js";
 import type { SessionPaths } from "../session/sessionLoader.js";
+import { resolveProfileBrowserPaths, shouldUseManifestBrowserProfile } from "./profileBrowserResolver.js";
+
+export type ProfileMode = "observer" | "processor";
+
+export type ProfileLifecycleState =
+  | "ready"
+  | "observing"
+  | "booking"
+  | "cooldown"
+  | "banned";
 
 export interface ProfileFormData {
   appointmentCity: string;
@@ -11,24 +21,50 @@ export interface ProfileFormData {
   nationalityNumber: string;
 }
 
+export interface ProfileCredentialsRef {
+  email?: string;
+  password?: string;
+}
+
+export interface ProfileBrowserConfig {
+  cdpPort?: number;
+  userDataDir?: string;
+  profileDirectory?: string;
+  proxy?: string | null;
+}
+
+export interface ProfileSessionConfig {
+  cookiesFile?: string;
+  storageFile?: string;
+  maxAgeHours?: number;
+}
+
+export interface ProfileLifecycleConfig {
+  state?: ProfileLifecycleState;
+  cooldownUntil?: string | null;
+  lastBookingAt?: string | null;
+}
+
 export interface ProfileDefinition {
   id: string;
   name: string;
+  enabled?: boolean;
+  mode?: ProfileMode;
+  flowId?: string;
+  bootstrapFlowId?: string;
   userDataDir: string;
   cookiesFile: string;
   storageFile: string;
   userAgent: string;
-  /** Bağlı test senaryosu / akış ID (örn. kosmos-bireysel-standart) */
-  flowId?: string;
-  /** Form fixture — düz alanlar yerine tercih edilir */
+  credentials?: ProfileCredentialsRef;
   form?: Partial<ProfileFormData>;
-  /** @deprecated form.appointmentCity kullanın */
+  browser?: ProfileBrowserConfig;
+  session?: ProfileSessionConfig;
+  lifecycle?: ProfileLifecycleConfig;
+  /** @deprecated form.* kullanın */
   appointmentCity?: string;
-  /** @deprecated form.applicationType kullanın */
   applicationType?: string;
-  /** @deprecated form.appointmentStyle kullanın */
   appointmentStyle?: string;
-  /** @deprecated form.nationalityNumber veya .env kullanın */
   nationalityNumber?: string;
 }
 
@@ -40,6 +76,38 @@ export interface ResolvedProfile extends ProfileDefinition {
   absoluteUserDataDir: string;
   absoluteCookiesFile: string;
   absoluteStorageFile: string;
+  cdpEndpoint: string;
+}
+
+function normalizeProfile(raw: ProfileDefinition): ProfileDefinition {
+  const browserDir = raw.browser?.userDataDir ?? raw.userDataDir;
+  const cookiesFile = raw.session?.cookiesFile ?? raw.cookiesFile;
+  const storageFile = raw.session?.storageFile ?? raw.storageFile;
+
+  return {
+    ...raw,
+    enabled: raw.enabled ?? true,
+    mode: raw.mode ?? "observer",
+    userDataDir: browserDir,
+    cookiesFile,
+    storageFile,
+    browser: {
+      cdpPort: raw.browser?.cdpPort ?? 9222,
+      userDataDir: browserDir,
+      profileDirectory: raw.browser?.profileDirectory ?? "Default",
+      proxy: raw.browser?.proxy ?? null,
+    },
+    session: {
+      cookiesFile,
+      storageFile,
+      maxAgeHours: raw.session?.maxAgeHours ?? 72,
+    },
+    lifecycle: {
+      state: raw.lifecycle?.state ?? "ready",
+      cooldownUntil: raw.lifecycle?.cooldownUntil ?? null,
+      lastBookingAt: raw.lifecycle?.lastBookingAt ?? null,
+    },
+  };
 }
 
 export class ProfileManager {
@@ -53,17 +121,34 @@ export class ProfileManager {
   }
 
   listProfiles(): ProfileDefinition[] {
+    return this.profiles.filter((profile) => profile.enabled !== false);
+  }
+
+  listAllProfiles(): ProfileDefinition[] {
     return [...this.profiles];
   }
 
   resolveProfile(profileRef?: string, settings?: AppSettings): ResolvedProfile {
     const profile = this.findProfile(profileRef);
 
-    const isFixedBrowser = settings?.browserMode === "fixed" && settings.fixedBrowser !== null;
+    if (profile.enabled === false) {
+      throw new Error(`Profil devre dışı: ${profile.id}`);
+    }
 
-    const absoluteUserDataDir = isFixedBrowser
-      ? settings.fixedBrowser!.profilePath
-      : resolve(this.projectRoot, profile.userDataDir);
+    if (profile.lifecycle?.state === "cooldown" && profile.lifecycle.cooldownUntil) {
+      const until = Date.parse(profile.lifecycle.cooldownUntil);
+      if (!Number.isNaN(until) && until > Date.now()) {
+        throw new Error(
+          `Profil cooldown'da: ${profile.id} — ${profile.lifecycle.cooldownUntil} tarihine kadar bekleyin.`,
+        );
+      }
+    }
+
+    const browserPaths = resolveProfileBrowserPaths(this.projectRoot, profile, settings);
+    const useManifest = shouldUseManifestBrowserProfile(settings);
+    const isFixedBrowser = !useManifest && settings?.browserMode === "fixed" && settings.fixedBrowser !== null;
+
+    const absoluteUserDataDir = browserPaths.absoluteUserDataDir;
 
     if (isFixedBrowser && !existsSync(absoluteUserDataDir)) {
       throw new Error(
@@ -75,14 +160,15 @@ export class ProfileManager {
       mkdirSync(absoluteUserDataDir, { recursive: true });
     }
 
-    const absoluteCookiesFile = resolve(this.projectRoot, profile.cookiesFile);
-    const absoluteStorageFile = resolve(this.projectRoot, profile.storageFile);
+    const absoluteCookiesFile = browserPaths.absoluteCookiesFile;
+    const absoluteStorageFile = browserPaths.absoluteStorageFile;
 
     return {
       ...profile,
       absoluteUserDataDir,
       absoluteCookiesFile,
       absoluteStorageFile,
+      cdpEndpoint: browserPaths.cdpEndpoint,
     };
   }
 
@@ -106,7 +192,7 @@ export class ProfileManager {
         throw new Error("Manifest içinde en az bir profil tanımlı olmalı.");
       }
 
-      return manifest.profiles;
+      return manifest.profiles.map(normalizeProfile);
     } catch (error) {
       throw new Error(
         `Profil manifest okunamadı: ${error instanceof Error ? error.message : String(error)}`,
@@ -117,7 +203,7 @@ export class ProfileManager {
   private findProfile(profileRef?: string): ProfileDefinition {
     if (!profileRef) {
       throw new Error(
-        "Profil belirtilmedi. --profile <id|index> parametresi kullanın veya DEFAULT_PROFILE_ID ayarlayın.",
+        "Profil belirtilmedi. --profile <id|index> veya profile-queue.json activeProfileId kullanın.",
       );
     }
 
@@ -128,7 +214,7 @@ export class ProfileManager {
 
     const index = Number.parseInt(profileRef, 10);
     if (!Number.isNaN(index) && index >= 0 && index < this.profiles.length) {
-      return this.profiles[index];
+      return this.profiles[index]!;
     }
 
     const available = this.profiles
