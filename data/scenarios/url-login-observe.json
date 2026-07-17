@@ -1,0 +1,51 @@
+{
+  "id": "url-login-observe",
+  "name": "Davet URL + Randevu + Observer",
+  "description": "Kayıtlı kullanıcı — sistem Chrome profili + davet URL + Randevu İşlemleri + observer.",
+  "status": "active",
+  "note": "useSystemProfile=true: kisisel Chrome oturumu. Calistirmadan once normal Chrome'u kapatin.",
+  "steps": [
+    {
+      "phase": "chrome-connect",
+      "label": "Sistem Chrome profili (kisisel oturum)",
+      "params": {
+        "useSystemProfile": true,
+        "chromeProfileDirectory": "Default"
+      }
+    },
+    {
+      "phase": "chrome-login",
+      "label": "Google oturumu (reuse)",
+      "params": {
+        "allowReuseExisting": true
+      }
+    },
+    {
+      "phase": "portal-url-login",
+      "label": "Davet URL (email tracking link)",
+      "params": {
+        "portalUrlType": "register-form",
+        "portalUrlId": "profile-1-register-001",
+        "openOnly": true,
+        "reuseChromeSession": true,
+        "preferTracking": true
+      }
+    },
+    {
+      "phase": "portal-invite-gate",
+      "label": "OTP stub (kayıt doldurulmaz)"
+    },
+    {
+      "phase": "randevu-navigate",
+      "label": "Randevu İşlemleri → Randevu Al"
+    },
+    {
+      "phase": "observe",
+      "label": "Observer — wizard + slot tarama",
+      "params": {
+        "skipRegisterWizard": true,
+        "navAlreadyDone": true
+      }
+    }
+  ]
+}

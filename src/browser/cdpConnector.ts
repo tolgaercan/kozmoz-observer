@@ -40,14 +40,23 @@ export async function connectOverCdp(endpoint: string): Promise<{
 export async function resolveCdpObserverPage(context: BrowserContext): Promise<Page> {
   const pages = context.pages().filter((candidate) => !candidate.isClosed());
 
-  const reusable = pages.find((candidate) => {
+  const isUsable = (url: string): boolean =>
+    !url.startsWith("chrome-extension://") &&
+    !url.startsWith("devtools://") &&
+    !url.startsWith("chrome://settings/");
+
+  const portalPage = pages.find((candidate) => {
     const url = candidate.url();
-    return (
-      !url.startsWith("chrome-extension://") &&
-      !url.startsWith("devtools://") &&
-      !url.startsWith("chrome://settings/")
-    );
+    return isUsable(url) && /kosmosvize\.com\.tr/i.test(url);
   });
+
+  if (portalPage) {
+    logger.info(`Portal sekmesi kullaniliyor: ${portalPage.url()}`);
+    await portalPage.bringToFront();
+    return portalPage;
+  }
+
+  const reusable = pages.find((candidate) => isUsable(candidate.url()));
 
   if (reusable) {
     logger.info(`Mevcut Chrome sekmesi kullaniliyor: ${reusable.url() || "about:blank"}`);

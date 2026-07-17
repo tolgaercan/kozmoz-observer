@@ -3,7 +3,6 @@ import { stdin as input, stdout as output } from "node:process";
 
 import type { Page } from "playwright";
 
-import { isChromeProfileLinkedToGoogle } from "../browser/chromeProfileIdentity.js";
 import {
   isChromeInterceptDialogPresent,
   probeChromeInterceptDialog,
@@ -16,8 +15,8 @@ import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { logger } from "../utils/logger.js";
 import { maskEmail } from "../profiles/profileCredentials.js";
 
-const GOOGLE_HOME_URL = "https://www.google.com/";
-const GOOGLE_SIGNIN_URL =
+export const GOOGLE_HOME_URL = "https://www.google.com/";
+export const CHROME_GOOGLE_SIGNIN_URL =
   "https://accounts.google.com/v3/signin/identifier?continue=https://www.google.com/&flowName=GlifWebSignIn&flowEntry=ServiceLogin";
 
 const GOOGLE_SIGNED_IN_SELECTORS = [
@@ -53,7 +52,7 @@ function resolveChromeButtonFirstName(profileName: string): string {
   return trimmed.split(/\s+/)[0] ?? trimmed;
 }
 
-function isGoogleHomePage(url: string): boolean {
+export function isGoogleHomePage(url: string): boolean {
   try {
     const hostname = new URL(url).hostname.toLowerCase();
     return hostname === "www.google.com" || hostname === "google.com" || hostname === "www.google.com.tr";
@@ -62,11 +61,11 @@ function isGoogleHomePage(url: string): boolean {
   }
 }
 
-function isGoogleAccountsPage(url: string): boolean {
+export function isGoogleAccountsPage(url: string): boolean {
   return /accounts\.google\.com/i.test(url);
 }
 
-function isGoogleSignInRejected(url: string): boolean {
+export function isGoogleSignInRejected(url: string): boolean {
   return /signin\/rejected|signin\/challenge\/blocked/i.test(url);
 }
 
@@ -95,7 +94,7 @@ export async function detectGoogleSignedIn(page: Page): Promise<boolean> {
   return false;
 }
 
-async function isGoogleSignInLinkVisible(page: Page): Promise<boolean> {
+export async function isGoogleSignInLinkVisible(page: Page): Promise<boolean> {
   return page
     .getByRole("link", { name: /oturum aç|sign in|giriş yap/i })
     .first()
@@ -148,7 +147,23 @@ async function waitForGooglePasswordField(page: Page): Promise<boolean> {
   }
 }
 
-async function fillGoogleEmailIfNeeded(page: Page, googleEmail: string): Promise<void> {
+export async function isGoogleSignInEmailFieldVisible(page: Page): Promise<boolean> {
+  return page
+    .locator('input[type="email"], input[name="identifier"], input[autocomplete="username"]')
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false);
+}
+
+export async function isGoogleSignInPasswordFieldVisible(page: Page): Promise<boolean> {
+  return page
+    .locator('input[type="password"], input[name="Passwd"], input[name="password"]')
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false);
+}
+
+export async function fillGoogleEmailIfNeeded(page: Page, googleEmail: string): Promise<void> {
   const emailInput = page.locator(
     'input[type="email"], input[name="identifier"], input[autocomplete="username"]',
   ).first();
@@ -179,7 +194,7 @@ async function fillGoogleEmailIfNeeded(page: Page, googleEmail: string): Promise
   }
 }
 
-async function fillGooglePasswordIfNeeded(page: Page, password: string): Promise<boolean> {
+export async function fillGooglePasswordIfNeeded(page: Page, password: string): Promise<boolean> {
   if (!password) {
     logger.info("[chrome] Google sifre env'de yok — manuel girin.");
     return false;
@@ -371,7 +386,7 @@ export async function waitAndAcceptChromeProfileSyncPrompt(
   return false;
 }
 
-async function waitForGoogleSignInCompletion(
+export async function waitForGoogleSignInCompletion(
   page: Page,
   profileName: string,
 ): Promise<boolean> {
@@ -443,7 +458,9 @@ async function waitForGoogleSignInCompletion(
   });
 }
 
-function buildResult(partial: Partial<ChromeGoogleBootstrapResult>): ChromeGoogleBootstrapResult {
+export function buildChromeGoogleBootstrapResult(
+  partial: Partial<ChromeGoogleBootstrapResult>,
+): ChromeGoogleBootstrapResult {
   return {
     ready: false,
     signedInOnGoogle: false,
@@ -454,7 +471,7 @@ function buildResult(partial: Partial<ChromeGoogleBootstrapResult>): ChromeGoogl
   };
 }
 
-async function evaluateGoogleHomeReady(page: Page): Promise<boolean> {
+export async function evaluateGoogleHomeReady(page: Page): Promise<boolean> {
   if (await detectGoogleSignedIn(page)) {
     return true;
   }
@@ -467,7 +484,7 @@ async function evaluateGoogleHomeReady(page: Page): Promise<boolean> {
 
 /**
  * Asama 1: Chrome profil + Google oturumu.
- * Popup yoksa hata vermez; tekrar calistirmada mevcut oturumu kullanir.
+ * Self-healing dongu — hata veya yarim kalan adimda bulundugu yeri algilayip devam eder.
  */
 export async function runChromeGoogleBootstrap(
   page: Page,
@@ -475,107 +492,8 @@ export async function runChromeGoogleBootstrap(
   profile: ResolvedProfile,
   options: ChromeGoogleBootstrapOptions = {},
 ): Promise<ChromeGoogleBootstrapResult> {
-  const { email: googleEmail, password: googlePassword, profileName } = credentials;
-  const allowReuseExisting = options.allowReuseExisting ?? false;
-  const profileDirectory = profile.browser?.profileDirectory ?? "Default";
-  const linkedOnDisk = isChromeProfileLinkedToGoogle(
-    profile.absoluteUserDataDir,
-    profileDirectory,
-  );
-
-  logger.info("[chrome] Chrome profil / Google giris asamasi basliyor...");
-  if (!allowReuseExisting) {
-    logger.info("[chrome] Temiz profil modu — kayitli oturum atlanmayacak, giris akisi calisacak.");
-  }
-
-  await navigateToGoogleHome(page);
-
-  if (allowReuseExisting && linkedOnDisk && (await evaluateGoogleHomeReady(page))) {
-    const syncHandled = await tryAcceptChromeProfileSyncPrompt(page, profileName);
-    if (!syncHandled) {
-      logger.info("[chrome] Senkron popup yok — mevcut Chrome profili ile devam (normal).");
-    }
-    logger.info("[chrome] Kayitli Chrome/Google oturumu kullaniliyor — giris atlandi.");
-    return buildResult({
-      ready: true,
-      signedInOnGoogle: await detectGoogleSignedIn(page),
-      syncPromptHandled: syncHandled,
-      skippedExistingSession: true,
-    });
-  }
-
-  if (allowReuseExisting && (await evaluateGoogleHomeReady(page))) {
-    const syncHandled = await tryAcceptChromeProfileSyncPrompt(page, profileName);
-    if (!syncHandled) {
-      logger.info("[chrome] Senkron popup yok — google.com hazir (normal).");
-    }
-    return buildResult({
-      ready: true,
-      signedInOnGoogle: await detectGoogleSignedIn(page),
-      syncPromptHandled: syncHandled,
-    });
-  }
-
-  logger.info("[chrome] Google oturumu yok — giris sayfasina yonlendiriliyor.");
-  await page.goto(GOOGLE_SIGNIN_URL, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
-
-  if (isGoogleSignInRejected(page.url())) {
-    logger.error(
-      "[chrome] Google oturum acmayi reddetti (signin/rejected). " +
-        "Chrome'u kapatip 'npm run chrome:debug' ile yeniden baslatin; " +
-        "otomasyon banner'i (--enable-automation) olmamali. Gerekirse girisi bu pencerede manuel tamamlayin.",
-    );
-  }
-
-  if (googleEmail) {
-    try {
-      await fillGoogleEmailIfNeeded(page, googleEmail);
-      await fillGooglePasswordIfNeeded(page, googlePassword);
-    } catch (error) {
-      logger.warn(
-        `[chrome] Google giris otomasyonu kismen basarisiz — manuel devam: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
-    }
-  } else {
-    logger.warn("[chrome] GOOGLE_EMAIL_PROFILE_* tanimli degil — email manuel girilmeli.");
-  }
-
-  const confirmedByUser = await waitForGoogleSignInCompletion(page, profileName);
-
-  if (!isGoogleHomePage(page.url())) {
-    await navigateToGoogleHome(page);
-  }
-
-  const syncHandled = await waitAndAcceptChromeProfileSyncPrompt(page, profileName, {
-    timeoutMs: 25_000,
-  });
-
-  const signedInOnGoogle = await detectGoogleSignedIn(page);
-  const googleHomeReady = signedInOnGoogle || (await evaluateGoogleHomeReady(page));
-
-  if (googleHomeReady || confirmedByUser) {
-    return buildResult({
-      ready: true,
-      signedInOnGoogle,
-      syncPromptHandled: syncHandled,
-      confirmedByUser,
-    });
-  }
-
-  logger.warn(
-    "[chrome] Google oturumu otomatik dogrulanamadi — Enter ile devam ettiyseniz sorun yok.",
-  );
-  return buildResult({
-    ready: confirmedByUser,
-    signedInOnGoogle,
-    syncPromptHandled: syncHandled,
-    confirmedByUser,
-  });
+  const { runChromeBootstrapLoop } = await import("./chromeBootstrapRunner.js");
+  return runChromeBootstrapLoop(page, credentials, profile, options);
 }
 
 /** @deprecated tryAcceptChromeProfileSyncPrompt kullanin */

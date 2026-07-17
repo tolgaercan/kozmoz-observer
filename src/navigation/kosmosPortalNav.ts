@@ -149,20 +149,31 @@ async function findFirstVisibleNavLocator(
   return null;
 }
 
-async function navigateToPortalUrl(page: Page, targetUrl: string): Promise<void> {
-  logger.info(`[nav] Doğrudan URL geçişi (F5 yenileme değil): ${targetUrl}`);
+async function navigateToPortalUrl(
+  page: Page,
+  targetUrl: string,
+  settings?: NavigationSettings,
+): Promise<void> {
+  if (settings?.waitBetweenStepsMs) {
+    await page.waitForTimeout(settings.waitBetweenStepsMs);
+  }
+  logger.info(`[nav] Doğrudan URL (son çare): ${targetUrl}`);
   await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  if (settings?.waitAfterLoadMs) {
+    await page.waitForTimeout(settings.waitAfterLoadMs);
+  }
 }
 
-async function navigateSameOriginPath(page: Page, path: string, homeUrl?: string): Promise<void> {
+async function navigateSameOriginPath(page: Page, path: string, homeUrl?: string, settings?: NavigationSettings): Promise<void> {
   if (homeUrl) {
-    await navigateToPortalUrl(page, new URL(path, homeUrl).toString());
+    await navigateToPortalUrl(page, new URL(path, homeUrl).toString(), settings);
     return;
   }
   const origin = new URL(page.url()).origin;
   await navigateToPortalUrl(
     page,
     `${origin}${path.startsWith("/") ? path : `/${path}`}`,
+    settings,
   );
 }
 
@@ -231,23 +242,24 @@ async function tryNavSelectors(
 }
 
 function strategiesForProceduresRound(round: number): NavClickStrategy[] {
+  // İnsan benzeri: menü tıklaması önce, doğrudan URL en son (ban riski)
   if (round === 1) {
-    return ["goto", "playwright", "evaluate", "human"];
+    return ["human", "playwright", "evaluate", "goto"];
   }
   if (round === 2) {
-    return ["goto", "evaluate", "playwright"];
+    return ["human", "evaluate", "playwright", "goto"];
   }
-  return ["goto"];
+  return ["human", "goto"];
 }
 
 function strategiesForRandevuAlRound(round: number): NavClickStrategy[] {
   if (round === 1) {
-    return ["playwright", "evaluate", "human"];
+    return ["human", "playwright", "evaluate", "goto"];
   }
   if (round === 2) {
-    return ["goto", "playwright", "evaluate"];
+    return ["human", "playwright", "evaluate", "goto"];
   }
-  return ["goto"];
+  return ["human", "goto"];
 }
 
 async function ensureRandevuIslemleri(
@@ -267,9 +279,9 @@ async function ensureRandevuIslemleri(
   for (const strategy of strategies) {
     if (strategy === "goto") {
       if (proceduresUrl) {
-        await navigateToPortalUrl(page, proceduresUrl);
+        await navigateToPortalUrl(page, proceduresUrl, settings);
       } else {
-        await navigateSameOriginPath(page, "/appointmentProcedures");
+        await navigateSameOriginPath(page, "/appointmentProcedures", undefined, settings);
       }
     } else {
       const clicked = await tryNavSelectors(
@@ -321,9 +333,9 @@ async function ensureRandevuAl(
   for (const strategy of strategies) {
     if (strategy === "goto") {
       if (formUrl) {
-        await navigateToPortalUrl(page, formUrl);
+        await navigateToPortalUrl(page, formUrl, settings);
       } else {
-        await navigateSameOriginPath(page, "/appointmentForm");
+        await navigateSameOriginPath(page, "/appointmentForm", undefined, settings);
       }
     } else {
       const clicked = await tryNavSelectors(
@@ -404,7 +416,7 @@ export async function navigateKosmosAppointmentFlow(
     }
 
     if (state === "registerForm" || state === "portalHome" || state === "unknown") {
-      logger.info("[nav] Randevu İşlemleri sayfasına geçiliyor (doğrudan URL öncelikli).");
+      logger.info("[nav] Randevu İşlemleri — menü tıklaması öncelikli (URL son çare).");
       const opened = await ensureRandevuIslemleri(page, settings, round, homeUrl);
       if (!opened) {
         if (round === MAX_NAV_ROUNDS) {

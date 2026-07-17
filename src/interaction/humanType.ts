@@ -17,6 +17,10 @@ export interface HumanTypeOptions extends HumanClickOptions {
   clearBeforeType?: boolean;
 }
 
+function isKeyboardPressableChar(char: string): boolean {
+  return char.length === 1 && char.charCodeAt(0) >= 32 && char.charCodeAt(0) <= 126;
+}
+
 /** Input alanına odaklanıp karakter karakter insan benzeri yazım */
 export async function humanTypeIntoLocator(
   page: Page,
@@ -46,7 +50,11 @@ export async function humanTypeIntoLocator(
 
   for (let index = 0; index < text.length; index++) {
     const char = text[index]!;
-    await page.keyboard.press(char);
+    if (isKeyboardPressableChar(char)) {
+      await page.keyboard.press(char);
+    } else {
+      await page.keyboard.insertText(char);
+    }
     await page.waitForTimeout(randomIn(minCharDelayMs, maxCharDelayMs));
 
     const typedCount = index + 1;

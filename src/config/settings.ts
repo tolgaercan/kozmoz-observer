@@ -145,6 +145,8 @@ export interface AppSettings {
   chromeFreshStart: boolean;
   /** true: her chrome:debug'de user-data sifirlanir (temiz Chrome profili) */
   chromeFreshProfile: boolean;
+  /** true: kisisel Chrome User Data (JWT/cookies korunur) */
+  chromeUseSystemProfile: boolean;
   /** full = tum akis | chrome-profile = Chrome ac + Google giris + google.com */
   observerPhase: ObserverPhase;
   cdpPort: number;
@@ -315,6 +317,7 @@ export function loadSettings(projectRoot: string): AppSettings {
     chromeStartupUrl: process.env.CHROME_STARTUP_URL?.trim() || "about:blank",
     chromeFreshStart: process.env.CHROME_FRESH_START === "true",
     chromeFreshProfile: resolveChromeFreshProfile(process.env),
+    chromeUseSystemProfile: process.env.CHROME_USE_SYSTEM_PROFILE === "true",
     observerPhase: (process.env.OBSERVER_PHASE?.trim() || "full") as ObserverPhase,
     cdpPort: parseIntEnv("CDP_PORT", 9222),
     fixedBrowser: loadFixedBrowserSettings(),

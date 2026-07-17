@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "urls": [
+    {
+      "id": "profile-1-register-001",
+      "profileId": "profile-1",
+      "type": "register-form",
+      "label": "Kayıt formu davet linki",
+      "trackingUrl": "https://bv9zzdx3.r.eu-central-1.awstrack.me/L0/https:%2F%2Fbasvuru.kosmosvize.com.tr%2Fregisterform%3Fguid=42d9a7c6-4e30-4e6f-99b6-5b13063c883b/1/0107019f700b143e-c3e8104e-2164-4ced-b01f-e6bc895c74cb-000000/8C_8-_DVnXZMXabsbmbteLYMWd0=258",
+      "portalUrl": "https://basvuru.kosmosvize.com.tr/registerform?guid=42d9a7c6-4e30-4e6f-99b6-5b13063c883b",
+      "guid": "42d9a7c6-4e30-4e6f-99b6-5b13063c883b",
+      "status": "active",
+      "note": "İlk test — email tracking linki"
+    }
+  ]
+}

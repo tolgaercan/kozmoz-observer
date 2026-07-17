@@ -6,13 +6,13 @@ async function runBootstrapPlaceholder(ctx: FlowStepContext): Promise<Partial<Fl
 }
 
 /**
- * Portal bootstrap — mail/şifre + kayıt girişi (Adım B'de implement edilecek).
- * Observer ve Processor modları bu akışı paylaşır.
+ * Portal bootstrap — oturum + kayıt formu (registerForm wizard).
+ * Adım 1: Kimlik Doğrulama — runRegisterFormSetup (observer checkpoint).
  */
 export const kosmosPortalBootstrapFlow: FlowDefinition = {
   id: "kosmos-portal-bootstrap",
   name: "Kozmos Portal Bootstrap",
-  description: "Mail/şifre girişi → oturum kontrolü → kayıt/randevu giriş noktası (Adım B)",
+  description: "Portal girişi → Başvuru Formu kayıt wizard (Kimlik Doğrulama …)",
   observeTargetStep: 1,
   requiredProfileFields: [],
   handlers: {

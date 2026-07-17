@@ -1,0 +1,15 @@
+{
+  "id": "fresh-chrome-login",
+  "name": "Fresh Chrome + Google girişi",
+  "description": "Temiz Chrome profili açar, kullanıcı Google hesabı ile giriş yapar, google.com'da oturum hazır olunca durur.",
+  "steps": [
+    {
+      "phase": "chrome-fresh",
+      "label": "Temiz Chrome profili aç"
+    },
+    {
+      "phase": "chrome-login",
+      "label": "Google hesabı ile giriş"
+    }
+  ]
+}

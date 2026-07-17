@@ -1,0 +1,19 @@
+{
+  "id": "fresh-chrome-login-register",
+  "name": "Fresh Chrome + Google girişi + Kayıt",
+  "description": "Temiz Chrome profili, Google girişi, portal kayıt formu wizard Adım 1–9 (kod göndermez).",
+  "steps": [
+    {
+      "phase": "chrome-fresh",
+      "label": "Temiz Chrome profili aç"
+    },
+    {
+      "phase": "chrome-login",
+      "label": "Google hesabı ile giriş"
+    },
+    {
+      "phase": "register-wizard",
+      "label": "Kayıt formu wizard (Adım 9'a kadar)"
+    }
+  ]
+}

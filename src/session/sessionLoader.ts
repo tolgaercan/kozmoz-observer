@@ -2,6 +2,7 @@ import type { BrowserContext, Page } from "playwright";
 
 import { logger } from "../utils/logger.js";
 import { readCookiesFile, readStorageFile } from "./sessionReader.js";
+import { applyPortalLocalStorage } from "./sessionPersister.js";
 
 export interface SessionPaths {
   cookiesFile: string;
@@ -29,6 +30,8 @@ export interface SessionLoadOptions {
   /** Sabit Chrome profilinde profilin kendi çerezleri kullanılır */
   skipCookies?: boolean;
   skipStorage?: boolean;
+  /** true ise sayfa yüklendikten sonra localStorage doğrudan yazılır (init script yedek) */
+  applyStorageAfterNavigation?: boolean;
 }
 
 /**
@@ -79,4 +82,18 @@ export async function loadSession(
       `Session yüklenemedi: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+}
+
+/** Portal sayfası açıldıktan sonra storage enjekte et (origin doğru olmalı) */
+export async function applySessionStorageOnPage(
+  page: Page,
+  paths: SessionPaths,
+): Promise<number> {
+  const storageEntries = readStorageFile(paths.storageFile);
+  if (Object.keys(storageEntries).length === 0) {
+    return 0;
+  }
+  const applied = await applyPortalLocalStorage(page, storageEntries);
+  logger.info(`[session] ${applied} localStorage anahtarı sayfaya yazıldı (${page.url()}).`);
+  return applied;
 }

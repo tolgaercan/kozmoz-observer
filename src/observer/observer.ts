@@ -21,6 +21,7 @@ import { runChromeGoogleBootstrap, waitAndAcceptChromeProfileSyncPrompt } from "
 import { prepareChromeForAutomation } from "../browser/chromeStartupPrep.js";
 import { runPortalBootstrap } from "../auth/portalBootstrapRunner.js";
 import { runCheckpoint } from "../flows/flowCheckpoint.js";
+import { runRegisterFormSetup } from "../register/registerFormRunner.js";
 import { createPageCollection } from "../pages/PageFactory.js";
 import { startWizardStepGuard, type WizardStepGuardHandle } from "../appointment/wizardStepGuard.js";
 import type { AppointmentSlotWatcherHandle } from "../appointment/appointmentSlotWatcher.js";
@@ -214,9 +215,7 @@ export class Observer {
       }
 
       const portalEntryUrl = resolveAppointmentProceduresUrl(homeUrl);
-      await runCheckpoint("portal-anasayfa", () =>
-        this.navigateToHome(page, portalEntryUrl),
-      );
+      await runCheckpoint("portal-anasayfa", () => this.navigateToHome(page, homeUrl));
 
       await runCheckpoint(
         "portal-bootstrap",
@@ -234,6 +233,20 @@ export class Observer {
       );
 
       await runCheckpoint("sayfa-dogrulama", () => this.confirmPageLoaded(page, homeUrl));
+
+      await runCheckpoint(
+        "kayit-formu",
+        () =>
+          runRegisterFormSetup(page, profile, this.settings, {
+            homeUrl,
+            softValidate: true,
+          }),
+        { soft: true },
+      );
+
+      await runCheckpoint("portal-randevu-sayfasi", () =>
+        this.navigateToHome(page, portalEntryUrl),
+      );
 
       await runCheckpoint("randevu-navigasyon", () =>
         clickNavigationTarget(page, this.settings.navigation, { homeUrl }),

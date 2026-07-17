@@ -1,0 +1,28 @@
+{
+  "id": "fresh-chrome-login-register-observe",
+  "name": "Fresh Chrome + Kayıt + Observer",
+  "description": "Senaryo 2 üzerine observer ekler. OTP/email doğrulama otomatik olmadığı için şu an tam çalışmaz.",
+  "status": "experimental",
+  "note": "Mimari tamamlanınca kullanılacak. Adım 9 (email OTP) sonrası observer beklenen şekilde ilerlemez.",
+  "steps": [
+    {
+      "phase": "chrome-fresh",
+      "label": "Temiz Chrome profili aç"
+    },
+    {
+      "phase": "chrome-login",
+      "label": "Google hesabı ile giriş"
+    },
+    {
+      "phase": "register-wizard",
+      "label": "Kayıt formu wizard (Adım 9'a kadar)"
+    },
+    {
+      "phase": "observe",
+      "label": "Observer — wizard + slot tarama",
+      "params": {
+        "afterRegister": true
+      }
+    }
+  ]
+}

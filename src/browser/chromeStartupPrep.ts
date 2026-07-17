@@ -87,6 +87,35 @@ async function pageShowsRestoreBanner(page: Page): Promise<boolean> {
   return false;
 }
 
+function resolveChromeStartMaximized(): boolean {
+  return process.env.CHROME_START_MAXIMIZED?.trim().toLowerCase() !== "false";
+}
+
+/** CDP üzerinden Chrome penceresini maximize eder (--start-maximized yedek). */
+export async function maximizeChromeWindow(
+  page: Page,
+  context: BrowserContext,
+): Promise<boolean> {
+  if (!resolveChromeStartMaximized()) {
+    return false;
+  }
+
+  try {
+    const cdp = await context.newCDPSession(page);
+    const { windowId } = await cdp.send("Browser.getWindowForTarget");
+    await cdp.send("Browser.setWindowBounds", {
+      windowId,
+      bounds: { windowState: "maximized" },
+    });
+    logger.info("[chrome] Pencere tam ekran (maximized) yapıldı.");
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`[chrome] Pencere maximize edilemedi: ${message}`);
+    return false;
+  }
+}
+
 /**
  * CDP bağlantısından sonra Chrome'u otomasyon için hazırlar.
  * Izole modda profil seçim ekranı atlanır; doğrudan portal navigasyonuna geçilir.
@@ -98,6 +127,7 @@ export async function prepareChromeForAutomation(
 ): Promise<void> {
   await dismissSessionRestoreBubble(context);
   await page.bringToFront();
+  await maximizeChromeWindow(page, context);
 
   const currentUrl = page.url();
   logger.info(`[chrome] Aktif sekme: ${currentUrl || "about:blank"}`);

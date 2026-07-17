@@ -1,0 +1,299 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 1: Kimlik Doğrulama
+# Başlık: Kimlik Doğrulama | Pasaport bilgileriyle uyumlu doldurun
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Alan: Adı (input name=nameOriginal) — zorunlu — metin — pasaporttaki ad
+FIRST_NAME_PROFILE_1=Tolga
+
+# Alan: Soyadı (input name=surnameOriginal) — zorunlu — metin — pasaporttaki soyad
+LAST_NAME_PROFILE_1=Ercan
+
+# Alan: T.C. Kimlik Numarası (input name=nationalityNumber) — zorunlu — 11 rakam
+NATIONALITY_NUMBER_PROFILE_1=12562173658
+
+# Alan: Doğum Tarihi (input name=birthDate, type=date) — zorunlu — gg.aa.yyyy veya yyyy-mm-dd
+BIRTH_DATE_PROFILE_1=23.08.1993
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 2: Kişisel Bilgiler + Seyahat Belgesi (Pasaport)
+# Başlık: Kişisel Bilgiler (alt bölüm: Seyahat Belgesi Bilgileri)
+# Dropdown formatı (tüm select alanları): sayısal value (685) veya Türkçe etiket (Erkek)
+# İsteğe bağlı önek: value:685 | label:Erkek
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Alan: Doğum Yeri (input name=birthPlace) — zorunlu — metin
+BIRTH_PLACE_PROFILE_1=
+
+# Alan: Doğduğu Ülke (select name=birthCountryId) — zorunlu — dropdown
+# Türkiye = 685. Tam ülke listesi portalda ~300+ seçenek (value + ülke adı).
+# Örnek: 685 veya Türkiye
+BIRTH_COUNTRY_PROFILE_1=685
+
+# Alan: Cinsiyet (select name=genderId) — zorunlu — dropdown — 2 seçenek:
+#   9 = Kadın
+#  10 = Erkek
+GENDER_PROFILE_1=Erkek
+
+# Alan: Medeni Hal (select name=martialStatusId) — zorunlu — dropdown — 7 seçenek:
+#  35 = Bekar
+#  36 = Evli
+#  45 = Ayrı
+#  46 = Boşanmış
+#  47 = Dul
+# 148 = Diğer
+# 2337 = Kayıtlı Birliktelik
+MARITAL_STATUS_PROFILE_1=Bekar
+
+# Alan: Mevcut Uyruğunuz (select name=nationalityId) — zorunlu — dropdown
+# Doğduğu Ülke ile aynı liste. Türkiye = 685
+CURRENT_NATIONALITY_PROFILE_1=685
+
+# Alan: Seyahat belgesinin türü (select name=passportTypeId) — zorunlu — dropdown — 6 seçenek:
+#  48 = Normal Pasaport
+#  49 = Diplomatik Pasaport
+#  50 = Hizmet Pasaport
+#  51 = Resmi Pasaport
+#  52 = Hususi Pasaport
+#  53 = Diğer Seyahat Belgesi
+PASSPORT_TYPE_PROFILE_1=Normal Pasaport
+
+# Alan: Veriliş Tarihi (input name=passportIssueDate, type=date) — zorunlu — gg.aa.yyyy veya yyyy-mm-dd
+PASSPORT_ISSUE_DATE_PROFILE_1=
+
+# Alan: Geçerlilik Tarihi (input name=passportExpiryDate, type=date) — zorunlu — gg.aa.yyyy veya yyyy-mm-dd
+PASSPORT_EXPIRY_DATE_PROFILE_1=
+
+# Alan: Seyahat belgesi numarası (input name=passportNo) — zorunlu — metin, max 11 karakter
+PASSPORT_NO_PROFILE_1=
+
+# Alan: Belgeyi veren makam (input name=issuingAuthority) — zorunlu — metin
+ISSUING_AUTHORITY_PROFILE_1=
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 3: İletişim / İkamet Bilgileri
+# Başlık: Başvuru Sahibinin İletişim ve İkamet Bilgileri
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Alan: Ülkesi (select name=applicantCountryId) — zorunlu — dropdown
+# Türkiye = 685 (varsayılan seçili). Tam ülke listesi Adım 2 Doğduğu Ülke ile aynı.
+APPLICANT_COUNTRY_PROFILE_1=685
+
+# Alan: Şehri (select name=applicantCityId) — zorunlu — dropdown — Türkiye illeri (tam liste):
+#   2 = Istanbul
+#   7 = Artvin
+#   8 = Bartin
+#   9 = Bayburt
+#  10 = Bolu
+#  11 = Canakkale
+#  12 = Duzce
+#  13 = Giresun
+#  16 = Karabuk
+#  17 = Kastamonu
+#  18 = Kocaeli
+#  19 = Ordu
+#  20 = Rize
+#  21 = Sakarya
+#  22 = Samsun
+#  23 = Sinop
+#  24 = Trabzon
+#  25 = Yalova
+#  26 = Zonguldak
+#  27 = Diğer
+#  28 = Bursa
+#  29 = Afyon
+#  30 = Antalya
+#  31 = Aydın
+#  32 = Balıkesir
+#  33 = Burdur
+#  34 = Denizli
+#  35 = Isparta
+#  36 = Kutahya
+#  37 = Manisa
+#  38 = Mugla
+#  39 = Usak
+#  43 = Izmir
+#  44 = Ankara
+#  45 = Diğer
+#  46 = Diğer
+#  47 = Adana
+#  48 = Adıyaman
+#  49 = Agrı
+#  50 = Aksaray
+#  51 = Amasya
+#  52 = Ardahan
+#  53 = Batman
+#  54 = Bilecik
+#  55 = Bingöl
+#  56 = Bitlis
+#  57 = Cankiri
+#  58 = Corum
+#  59 = Diyarbakir
+#  61 = Elazig
+#  62 = Erzincan
+#  63 = Erzurum
+#  64 = Eskisehir
+#  65 = Gaziantep
+#  67 = Gümüshane
+#  68 = Hakkari
+#  69 = Hatay
+#  70 = Igdir
+#  71 = Kahramanmaras
+#  72 = Karaman
+#  73 = Kars
+#  74 = Kayseri
+#  75 = Kirikkale
+#  76 = Kirsehir
+#  77 = Kilis
+#  78 = Konya
+#  79 = Malatya
+#  80 = Mardin
+#  81 = Mersin
+#  82 = Mus
+#  83 = Nevsehir
+#  84 = Nigde
+#  85 = Osmaniye
+#  86 = Siirt
+#  87 = Sivas
+#  88 = Sanliurfa
+#  89 = Sirnak
+#  90 = Tokat
+#  91 = Tunceli
+#  92 = Van
+#  93 = Yozgat
+#  95 = Edirne
+#  96 = Kırklareli
+#  97 = Tekirdag
+#  98 = Diğer
+# Örnek: 44 veya Ankara
+APPLICANT_CITY_PROFILE_1=Ankara
+
+# Alan: Sokak ve Cadde (input name=street) — zorunlu — metin
+STREET_PROFILE_1=
+
+# Alan: Posta Kodu — isteğe bağlı — metin
+POSTAL_CODE_PROFILE_1=
+
+# Alan: Email (input name=eMail) — zorunlu — form doldurulduktan sonra güncellenemez
+# Boş bırakılırsa EMAIL_PROFILE_1 kullanılır
+REGISTER_EMAIL_PROFILE_1=
+
+# Alan: Telefon Numarası — zorunlu — başında 0 OLMADAN (5555555555)
+# Form doldurulduktan sonra güncellenemez
+PHONE_PROFILE_1=
+
+# Alan: Kendi ülkeniz olmayan bir ülkede mi ikamet ediyorsunuz? — radio — zorunlu
+# Hayır (varsayılan) veya Evet
+# Kabul edilen değerler: Hayır | hayir | false | 0 | Evet | evet | true | 1
+RESIDENCE_ABROAD_PROFILE_1=Hayır
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 4: Meslek Bilgileri
+# NOT: Çiftçi (375) dışı mesleklerde Firma İsmi / Telefon / Adres alanları açılır.
+#      Şimdilik varsayılan Çiftçi — diğer meslekler ileride desteklenecek.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Alan: Şu Anki Mesleğiniz (select name=jobId) — zorunlu — dropdown — 37 seçenek:
+# 375 = Ciftci
+# 376 = Mimar, ic Mimar
+# 377 = Zanaatkar
+# 378 = Avukat, Hakim, Hukuk Danışmanı
+# 379 = Sanatci
+# 380 = Bankacı
+# 381 = Esnaf
+# 382 = Menajer
+# 383 = Dini lider
+# 384 = Sofor, Kamyon surucusu
+# 385 = Bilimsel Arastirmaci
+# 386 = Ogretmen
+# 387 = Beyaz Yakali Calisan
+# 388 = Memur
+# 389 = Politikacı
+# 390 = Bilgisayar Uzmanı, Muhendisi
+# 391 = Elektronik Uzmani, Muhendisi
+# 392 = Kimyager, Kimya Muhendisi
+# 393 = Diger, Teknisyen
+# 394 = Gazeteci
+# 395 = Medikal ve Paramedikal meslek (doktor, cerrah, hemsire, veteriner)
+# 396 = Denizci
+# 397 = Mavi Yakali calisan
+# 398 = Serbest Meslek
+# 399 = Modaci, Kozmetikci
+# 400 = Polis, Asker
+# 401 = Emekli
+# 402 = Profesyonel Sporcu
+# 403 = Issiz
+# 404 = Ogrenci, Stajyer
+# 405 = Diplomat
+# 406 = Idari, teknik ve hizmet personeli (dipl.and konsolosluk)
+# 407 = Diplomat ozel hizmetkari
+# 408 = Yargic
+# 409 = Sirket yoneticisi
+# 410 = Diger
+# 411 = Uygulanamaz (0-6 yaş bebek)
+# Varsayılan: 375 = Ciftci (ek firma alanı yok)
+JOB_PROFILE_1=375
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 5: Seyahat Bilgileri
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Alan: Seyahat amacı (select name=traveltype) — Turistik | İş | Aile Veya Arkadaş Ziyareti | ...
+TRAVEL_TYPE_PROFILE_1=Turistik
+
+# Alan: Asıl gidilecek üye ülke (schDestinationCountryId) — 537 = Greece (tam liste .env örneğinde)
+SCH_DESTINATION_COUNTRY_PROFILE_1=537
+
+# Alan: İlk giriş ülkesi (schFirstEntryCountryId)
+SCH_FIRST_ENTRY_COUNTRY_PROFILE_1=537
+
+# Alan: Giriş sayısı (visaEntryTypeId) — 56=Tek Giriş | 57=Çift Giriş | 58=Çoklu Giriş
+VISA_ENTRY_TYPE_PROFILE_1=56
+
+# Alan: Giriş / çıkış tarihleri — gg.aa.yyyy veya yyyy-mm-dd
+VISA_ENTRY_DATE_PROFILE_1=
+VISA_RETURN_DATE_PROFILE_1=
+
+# Alan: Parmak izi (schengenVisaFingerPrint) — Hayır | Evet
+SCHENGEN_FINGERPRINT_PROFILE_1=Hayır
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 6: Kalacak Yer Bilgileri
+# Şimdilik zorunlu alan yok — bot doğrudan Sonraki'ye tıklar.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 7: Masraflar
+# EXPENSES_COVERED_BY_PROFILE_1=self | sponsor
+# APPLICANTS_LIVING_COSTS_PROFILE_1=Kredi Kartı  (self yolu)
+# SPONSOR_INFO_TYPE_PROFILE_1=3132  (sponsor yolu)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 8: KVKK Rıza Metni ve Sözleşmeler
+# 1) Metin otomatik sonuna kaydırılır (progress#file = 100)
+# 2) 3 checkbox sırayla tıklanır (doğrulanır, gerekirse tekrar)
+# 3) Yer + Tarih doldurulur → Sonraki
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Alan: Yer (input name=location) — zorunlu — varsayılan: APPLICANT_CITY veya Ankara
+KVKK_LOCATION_PROFILE_1=Ankara
+
+# Alan: Tarih (input name=locationDate) — gg.aa.yyyy veya yyyy-mm-dd — boş = bugün
+KVKK_LOCATION_DATE_PROFILE_1=
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# KAYIT FORMU — WIZARD ADIM 9: Email Doğrulama
+# Bot: email/telefon alanlarını doğrular — Kod Talep Et tıklanmaz (kota riski)
+# Tam akış için ileride: REGISTER_ENABLE_CODE_REQUEST=true
+# Email/telefon Adım 3'teki REGISTER_EMAIL_PROFILE_1 ve PHONE_PROFILE_1 kullanılır
+REGISTER_ENABLE_CODE_REQUEST=false
+# ═══════════════════════════════════════════════════════════════════════════════

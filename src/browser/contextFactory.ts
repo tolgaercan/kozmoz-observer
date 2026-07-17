@@ -24,18 +24,25 @@ export interface BrowserSession {
   viaCdp: boolean;
 }
 
+export interface LaunchOptions {
+  /** true ise cookies.json / storage.json enjekte edilmez (kisisel Chrome oturumu) */
+  skipSession?: boolean;
+  /** true ise CDP'ye stealth script enjekte edilmez (ban riskini azaltir) */
+  skipStealth?: boolean;
+}
+
 export class ContextFactory {
   constructor(
     private readonly profileManager: ProfileManager,
     private readonly settings: AppSettings,
   ) {}
 
-  async launch(profile: ResolvedProfile): Promise<BrowserSession> {
+  async launch(profile: ResolvedProfile, launchOptions: LaunchOptions = {}): Promise<BrowserSession> {
     try {
       if (this.settings.browserConnectMethod === "cdp") {
-        return this.launchViaCdp(profile);
+        return this.launchViaCdp(profile, launchOptions);
       }
-      return this.launchViaPlaywright(profile);
+      return this.launchViaPlaywright(profile, launchOptions);
     } catch (error) {
       throw new Error(
         `Browser context başlatılamadı: ${error instanceof Error ? error.message : String(error)}`,
@@ -43,7 +50,10 @@ export class ContextFactory {
     }
   }
 
-  private async launchViaCdp(profile: ResolvedProfile): Promise<BrowserSession> {
+  private async launchViaCdp(
+    profile: ResolvedProfile,
+    launchOptions: LaunchOptions = {},
+  ): Promise<BrowserSession> {
     const cdpEndpoint = profile.cdpEndpoint || this.settings.cdpEndpoint;
 
     logger.info("Mod: CDP — Playwright Chrome BAŞLATMAZ, açık Chrome'a bağlanır.");
@@ -52,17 +62,26 @@ export class ContextFactory {
     logger.info("  Chrome'u scripts/start-chrome-debug.ps1 -Profile <id> ile açmış olmalısınız.");
 
     const { browser, context } = await connectOverCdp(cdpEndpoint);
-    await applyStealthToContext(context);
-    logger.info("[stealth] CDP oturumuna anti-detection script uygulandi.");
+    if (!launchOptions.skipStealth) {
+      await applyStealthToContext(context);
+      logger.info("[stealth] CDP oturumuna anti-detection script uygulandi.");
+    } else {
+      logger.info("[stealth] CDP stealth atlandi (attach modu — mevcut Chrome oturumu).");
+    }
     const page = await resolveCdpObserverPage(context);
 
     const skipSession =
+      launchOptions.skipSession === true ||
       this.settings.chromeFreshProfile ||
       this.settings.chromeFreshStart ||
+      this.settings.chromeUseSystemProfile ||
       this.settings.observerPhase === "chrome-profile";
 
     if (this.settings.chromeFreshProfile) {
       logger.info("Mod: temiz Chrome profili — portal cerez/storage enjekte edilmeyecek.");
+    }
+    if (this.settings.chromeUseSystemProfile) {
+      logger.info("Mod: sistem Chrome profili — portal cerez/storage enjekte edilmeyecek (kisisel oturum).");
     }
 
     if (this.settings.chromeFreshStart) {
@@ -84,7 +103,10 @@ export class ContextFactory {
     };
   }
 
-  private async launchViaPlaywright(profile: ResolvedProfile): Promise<BrowserSession> {
+  private async launchViaPlaywright(
+    profile: ResolvedProfile,
+    launchOptions: LaunchOptions = {},
+  ): Promise<BrowserSession> {
     if (this.settings.browserMode === "fixed" && this.settings.fixedBrowser) {
       assertChromeClosed();
       logger.warn(
