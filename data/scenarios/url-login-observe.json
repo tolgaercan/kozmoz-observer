@@ -3,7 +3,8 @@
   "name": "Davet URL + Randevu + Observer",
   "description": "Kayıtlı kullanıcı — sistem Chrome profili + davet URL + Randevu İşlemleri + observer.",
   "status": "active",
-  "note": "useSystemProfile=true: kisisel Chrome oturumu. Calistirmadan once normal Chrome'u kapatin.",
+  "banSafe": true,
+  "note": "banSafe=true: observe-attach benzeri — CDP kill yok, Google goto yok, gereksiz nav atlanir. Ilk calistirmada: npm run chrome:debug (sistem profili), sonra senaryo.",
   "steps": [
     {
       "phase": "chrome-connect",
@@ -28,7 +29,7 @@
         "portalUrlId": "profile-1-register-001",
         "openOnly": true,
         "reuseChromeSession": true,
-        "preferTracking": true
+        "preferTracking": false
       }
     },
     {
@@ -44,7 +45,8 @@
       "label": "Observer — wizard + slot tarama",
       "params": {
         "skipRegisterWizard": true,
-        "navAlreadyDone": true
+        "navAlreadyDone": true,
+        "attachOnly": true
       }
     }
   ]

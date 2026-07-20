@@ -10,6 +10,8 @@ import { runObservePhase } from "./phases/observe.js";
 import { runPortalInviteGatePhase } from "./phases/portalInviteGate.js";
 import { runPortalUrlLoginPhase } from "./phases/portalUrlLogin.js";
 import { runRandevuNavigatePhase } from "./phases/randevuNavigate.js";
+import { runApiAuthBootstrapPhase } from "./phases/apiAuthBootstrap.js";
+import { runApiWatcherPhase } from "./phases/apiWatcher.js";
 import { runRegisterWizardPhase } from "./phases/registerWizard.js";
 import { loadScenario } from "./scenarioLoader.js";
 import { ScenarioRuntime } from "./scenarioRuntime.js";
@@ -48,9 +50,15 @@ export async function runScenario(
   runtime.scenarioUsesSystemProfile = scenario.steps.some(
     (step) => step.phase === "chrome-connect" && step.params?.useSystemProfile === true,
   );
+  runtime.banSafe = options.banSafe === true || scenario.banSafe === true;
 
   if (runtime.scenarioUsesSystemProfile) {
     logger.info("[scenario] Sistem Chrome profili — chrome-login oturum enjeksiyonu atlanacak.");
+  }
+  if (runtime.banSafe) {
+    logger.info(
+      "[scenario] banSafe modu — CDP kill/Google goto/gereksiz nav atlanir (observe-attach benzeri).",
+    );
   }
 
   if (scenario.steps.some((s) => s.phase === "register-wizard")) {
@@ -153,8 +161,14 @@ async function executePhase(
     case "chrome-fresh":
       return runChromeFreshPhase(projectRoot, runtime.profileId);
 
-    case "chrome-connect":
-      return runChromeConnectPhase(projectRoot, runtime.profileId, params);
+    case "chrome-connect": {
+      const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
+      return runChromeConnectPhase(projectRoot, runtime.profileId, {
+        ...params,
+        skipIfCdpReady: runtime.banSafe || params?.skipIfCdpReady === true,
+        cdpEndpoint: profile.cdpEndpoint || runtime.settings.cdpEndpoint,
+      });
+    }
 
     case "chrome-login":
       return runChromeLoginPhase(runtime, params);
@@ -172,7 +186,16 @@ async function executePhase(
       return runRegisterWizardPhase(runtime, params);
 
     case "observe":
-      return runObservePhase(runtime, params);
+      return runObservePhase(runtime, {
+        ...params,
+        attachOnly: params?.attachOnly === true || runtime.banSafe,
+      });
+
+    case "api-auth-bootstrap":
+      return runApiAuthBootstrapPhase(runtime, params);
+
+    case "api-watcher":
+      return runApiWatcherPhase(runtime, params);
 
     default: {
       const _exhaustive: never = phase;

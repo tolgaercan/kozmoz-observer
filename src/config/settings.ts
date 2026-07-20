@@ -83,7 +83,12 @@ export interface AppointmentSettings {
   slotAvailableCellSelector: string;
   slotNotifyOnChange: boolean;
   slotNotifyOnEmpty: boolean;
+  /** @deprecated slotNotifyEmptyCooldownMs / slotNotifySlotsCooldownMs kullanın */
   slotNotifyCooldownMs: number;
+  /** Müsait gün yok — en fazla bu aralıkta bir Telegram (varsayılan 30 dk) */
+  slotNotifyEmptyCooldownMs: number;
+  /** Müsait gün var — en fazla bu aralıkta bir Telegram (varsayılan 5 dk) */
+  slotNotifySlotsCooldownMs: number;
   /** Mevcut aydan kaç ay ileri taranacak (1 = mevcut + sonraki ay) */
   slotMonthsAhead: number;
   slotMonthNavWaitMs: number;
@@ -104,9 +109,18 @@ export interface AppointmentSettings {
   /** Çözülmüş token bu kadar taze ise proaktif ay oku yenilemesi yapılmaz */
   recaptchaProactiveMinTokenAgeMs: number;
   captchaRecoveryEnabled: boolean;
+  captchaRecoveryMode: "wizard-nav" | "prev-next";
+  /** wizard-nav modunda gidilecek sekme (varsayılan 2 = Bilgilerinizi Girin) */
+  captchaRecoveryWizardStep: number;
+  /** prev-next modunda boş alana tık (captcha widget'ını yeniden açabilir) */
+  captchaRecoveryBlankClick: boolean;
   captchaRecoveryTryPreviousNext: boolean;
   captchaRecoveryTryRefresh: boolean;
   captchaRecoveryStepWaitMs: number;
+  /** Captcha cozulmezse Önceki→Sonraki (varsayilan 2 dk) */
+  captchaEscapeMs: number;
+  /** Cozuldu sayilmadan once stabil bekleme */
+  captchaStableSolveMs: number;
   wizardPreviousLocator: string;
   minStepDelayMs: number;
   maxStepDelayMs: number;
@@ -124,6 +138,39 @@ export interface PostCityFlowResult {
 export type BrowserConnectMethod = "launch" | "cdp";
 
 export type ObserverPhase = "full" | "chrome-profile";
+
+export interface ApiWatcherSettings {
+  enabled: boolean;
+  baseUrl: string;
+  getClosedDateUrl: string;
+  /** GetAppointmentHourQoutaInfo — {cityId} {appointmentTypeId} {applicationTypeId} {appointmentDate} */
+  getHourQuotaUrl: string;
+  /** Saat kotası sorgusu — varsayılan kapalı (checkHourQuota hazır, watcher tetiklemez) */
+  hourQuotaEnabled: boolean;
+  referer: string;
+  /** GetClosedDate — portal dealerId (Ankara=1014) */
+  defaultDealerId: string;
+  /** Kapalı gün aralığı — maxDate = date + N gün (portal ~43) */
+  closedDateRangeDays: number;
+  defaultCityId: string;
+  /** Başvuru şekli fallback ID — Standart=16, EEA AB Eşi=2339 */
+  defaultAppointmentTypeId: string;
+  /** Başvuru şekli fallback etiket — manifest/APPOINTMENT_STYLE ile eşlenir */
+  defaultAppointmentStyle: string;
+  /** Başvuru tipi fallback ID — Bireysel=1, Aile=2 */
+  defaultApplicationTypeId: string;
+  /** Başvuru tipi fallback etiket — manifest/APPLICATION_TYPE ile eşlenir */
+  defaultApplicationType: string;
+  /** GetClosedDate poll aralığı — varsayılan 120000ms (2 dk ≈ 30 istek/saat) */
+  pollIntervalMs: number;
+  openNotifyCooldownMs: number;
+  tokenCaptureWaitMs: number;
+  fallbackToBrowserOnCaptcha: boolean;
+  /** API watcher Telegram özeti — varsayılan açık (TELEGRAM_* yapılandırılmalı) */
+  telegramReportEnabled: boolean;
+  /** Aynı liste tekrar gönderim aralığı — ms */
+  telegramReportIntervalMs: number;
+}
 
 export interface AppSettings {
   visaPortalHomeUrl: string;
@@ -157,6 +204,7 @@ export interface AppSettings {
   intervention: InterventionSettings;
   navigation: NavigationSettings;
   appointment: AppointmentSettings;
+  apiWatcher: ApiWatcherSettings;
 }
 
 export interface FixedBrowserSettings {
@@ -220,6 +268,14 @@ function parseRecaptchaProactiveMode(
     return "off";
   }
   return "month-nav";
+}
+
+function parseCaptchaRecoveryMode(raw: string | undefined): "wizard-nav" | "prev-next" {
+  const value = raw?.trim().toLowerCase();
+  if (value === "prev-next" || value === "previous-next" || value === "onceki-sonraki") {
+    return "prev-next";
+  }
+  return "wizard-nav";
 }
 
 function parseSlotVerifyMode(raw: string | undefined): "always" | "single-only" | "never" {
@@ -327,7 +383,7 @@ export function loadSettings(projectRoot: string): AppSettings {
       enabled: process.env.TELEGRAM_ENABLED !== "false",
       botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
       chatId: process.env.TELEGRAM_CHAT_ID ?? "",
-      notifyOnResolved: process.env.TELEGRAM_NOTIFY_ON_RESOLVED !== "false",
+      notifyOnResolved: process.env.TELEGRAM_NOTIFY_ON_RESOLVED === "true",
       notifyCooldownMs: parseIntEnv("TELEGRAM_NOTIFY_COOLDOWN_MS", 300_000),
       tlsInsecure: process.env.TELEGRAM_TLS_INSECURE === "true",
     },
@@ -412,8 +468,10 @@ export function loadSettings(projectRoot: string): AppSettings {
       slotAvailableCellSelector:
         process.env.SLOT_AVAILABLE_CELL_SELECTOR?.trim() ?? ".dp__cell_inner.dp__pointer",
       slotNotifyOnChange: process.env.SLOT_NOTIFY_ON_CHANGE === "true",
-      slotNotifyOnEmpty: process.env.SLOT_NOTIFY_ON_EMPTY === "true",
-      slotNotifyCooldownMs: parseIntEnv("SLOT_NOTIFY_COOLDOWN_MS", 120_000),
+      slotNotifyOnEmpty: process.env.SLOT_NOTIFY_ON_EMPTY !== "false",
+      slotNotifyCooldownMs: parseIntEnv("SLOT_NOTIFY_COOLDOWN_MS", 300_000),
+      slotNotifyEmptyCooldownMs: parseIntEnv("SLOT_NOTIFY_EMPTY_COOLDOWN_MS", 1_800_000),
+      slotNotifySlotsCooldownMs: parseIntEnv("SLOT_NOTIFY_SLOTS_COOLDOWN_MS", 300_000),
       slotMonthsAhead: parseIntEnv("SLOT_MONTHS_AHEAD", 1),
       slotMonthNavWaitMs: parseIntEnv("SLOT_MONTH_NAV_WAIT_MS", 800),
       slotCalendarNextLocator:
@@ -434,7 +492,7 @@ export function loadSettings(projectRoot: string): AppSettings {
         process.env.SLOT_EMPTY_TIME_MESSAGE_LOCATOR?.trim() ??
         "text=Bu gün için randevu bulunmamaktadır",
       recaptchaWaitMs: parseIntEnv("RECAPTCHA_WAIT_MS", 90_000),
-      recaptchaPollIntervalMs: parseIntEnv("RECAPTCHA_POLL_INTERVAL_MS", 2500),
+      recaptchaPollIntervalMs: parseIntEnv("RECAPTCHA_POLL_INTERVAL_MS", 3000),
       recaptchaProactiveRefreshEnabled: process.env.RECAPTCHA_PROACTIVE_REFRESH_ENABLED !== "false",
       recaptchaProactiveRefreshIntervalMs: parseIntEnv("RECAPTCHA_PROACTIVE_REFRESH_INTERVAL_MS", 45_000),
       recaptchaProactiveRefreshMode: parseRecaptchaProactiveMode(
@@ -443,15 +501,47 @@ export function loadSettings(projectRoot: string): AppSettings {
       recaptchaProactiveWaitMs: parseIntEnv("RECAPTCHA_PROACTIVE_WAIT_MS", 30_000),
       recaptchaProactiveMinTokenAgeMs: parseIntEnv("RECAPTCHA_PROACTIVE_MIN_TOKEN_AGE_MS", 50_000),
       captchaRecoveryEnabled: process.env.CAPTCHA_RECOVERY_ENABLED !== "false",
+      captchaRecoveryMode: parseCaptchaRecoveryMode(process.env.CAPTCHA_RECOVERY_MODE),
+      captchaRecoveryWizardStep: parseIntEnv("CAPTCHA_RECOVERY_WIZARD_STEP", 2),
+      captchaRecoveryBlankClick: process.env.CAPTCHA_RECOVERY_BLANK_CLICK === "true",
       captchaRecoveryTryPreviousNext: process.env.CAPTCHA_RECOVERY_TRY_PREV_NEXT !== "false",
       captchaRecoveryTryRefresh: process.env.CAPTCHA_RECOVERY_TRY_REFRESH !== "false",
       captchaRecoveryStepWaitMs: parseIntEnv("CAPTCHA_RECOVERY_STEP_WAIT_MS", 1500),
+      captchaEscapeMs: parseIntEnv("CAPTCHA_ESCAPE_MS", 60_000),
+      captchaStableSolveMs: parseIntEnv("CAPTCHA_STABLE_SOLVE_MS", 1000),
       wizardPreviousLocator:
         process.env.WIZARD_PREVIOUS_LOCATOR?.trim() ??
         "button.wizard-btn:has-text('Önceki')|.wizard-footer-left button:has-text('Önceki')|role=button[name='Önceki']",
       minStepDelayMs: parseIntEnv("HUMAN_MOUSE_MIN_STEP_MS", 4),
       maxStepDelayMs: parseIntEnv("HUMAN_MOUSE_MAX_STEP_MS", 14),
       overshootProbability: parseFloatEnv("HUMAN_MOUSE_OVERSHOOT_PROB", 0.18),
+    },
+    apiWatcher: {
+      enabled: process.env.API_WATCHER_ENABLED !== "false",
+      baseUrl: process.env.API_BASE_URL?.trim() ?? "https://api.kosmosvize.com.tr",
+      getClosedDateUrl:
+        process.env.API_GET_CLOSED_DATE_URL?.trim() ??
+        "https://api.kosmosvize.com.tr/api/AppointmentClosedDates/GetClosedDate?dealerId={dealerId}&date={date}&maxDate={maxDate}&appointmentTypeId={appointmentTypeId}",
+      getHourQuotaUrl:
+        process.env.API_GET_HOUR_QUOTA_URL?.trim() ??
+        "https://api.kosmosvize.com.tr/api/Appointment/GetAppointmentHourQoutaInfo?cityId={cityId}&appointmentTypeId={appointmentTypeId}&applicationTypeId={applicationTypeId}&appointmentDate={appointmentDate}",
+      hourQuotaEnabled: process.env.API_HOUR_QUOTA_ENABLED === "true",
+      referer:
+        process.env.API_REFERER?.trim() ??
+        "https://basvuru.kosmosvize.com.tr/appointmentForm",
+      defaultDealerId: process.env.API_DEALER_ID?.trim() ?? "1014",
+      closedDateRangeDays: parseIntEnv("API_CLOSED_DATE_RANGE_DAYS", 43),
+      defaultCityId: process.env.API_CITY_ID?.trim() ?? "1",
+      defaultAppointmentTypeId: process.env.API_APPOINTMENT_TYPE_ID?.trim() ?? "16",
+      defaultAppointmentStyle: process.env.APPOINTMENT_STYLE?.trim() ?? "Standart",
+      defaultApplicationTypeId: process.env.API_APPLICATION_TYPE_ID?.trim() ?? "1",
+      defaultApplicationType: process.env.APPLICATION_TYPE?.trim() ?? "Bireysel",
+      pollIntervalMs: parseIntEnv("API_POLL_INTERVAL_MS", 120_000),
+      openNotifyCooldownMs: parseIntEnv("API_OPEN_NOTIFY_COOLDOWN_MS", 300_000),
+      tokenCaptureWaitMs: parseIntEnv("API_TOKEN_CAPTURE_WAIT_MS", 45_000),
+      fallbackToBrowserOnCaptcha: process.env.API_CAPTCHA_FALLBACK_BROWSER === "true",
+      telegramReportEnabled: process.env.API_TELEGRAM_REPORT_ENABLED !== "false",
+      telegramReportIntervalMs: parseIntEnv("API_TELEGRAM_REPORT_INTERVAL_MS", 120_000),
     },
   };
 }

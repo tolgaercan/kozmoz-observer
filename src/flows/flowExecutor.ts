@@ -31,6 +31,13 @@ export async function executeProfileFlow(
 ): Promise<FlowSetupResult> {
   const flowId = resolveFlowId(options.flowRef, profile.flowId, settings.defaultFlowId);
   const flow = getFlow(flowId);
+
+  if (flow.mode === "api") {
+    throw new Error(
+      `[flow:${flowId}] API akışı wizard executor ile çalışmaz — scenario:api-watcher-attach kullanın.`,
+    );
+  }
+
   const form = resolveProfileForm(profile, settings);
 
   const formErrors = validateProfileFormForFlow(

@@ -9,7 +9,7 @@ Her JSON dosyası bir **tarif**: hangi adımlar sırayla çalışacak.
 | 1 | `fresh-chrome-login` | active | Temiz Chrome + Google girişi |
 | 2 | `fresh-chrome-login-register` | active | + kayıt wizard Adım 1–9 |
 | 3 | `fresh-chrome-login-register-observe` | experimental | + observer — **OTP yok, şu an çalışmaz** |
-| 4 | `url-login-observe` | **active (ana)** | Davet URL → OTP stub → **Randevu İşlemleri** → observer (kayıt YOK) |
+| 4 | `url-login-observe` | **active (ana)** | Davet URL → OTP stub → **Randevu İşlemleri** → observer (**banSafe**, kayıt YOK) |
 
 Mimari (supervisor, paralel, lifecycle) bitince **3. senaryo** da devreye alınacak.
 
@@ -53,6 +53,25 @@ Senaryo 4 bu dosyadan profil için `active` kaydı okur.
 | `portalUrl` | Doğrudan portal adresi (tercih edilen) |
 | `trackingUrl` | Email redirect linki (yedek) |
 | `status` | `active` \| `used` \| `expired` |
+
+## banSafe (senaryo 4)
+
+`url-login-observe.json` icinde `"banSafe": true` — observe-attach ile ayni mantik:
+
+| Adim | banSafe davranisi |
+|------|-------------------|
+| chrome-connect | CDP aciksa Chrome **kill etmez** |
+| chrome-login | Google'a **gitmez**, stealth/session enjekte etmez |
+| portal-url-login | Portal zaten aciksa **goto atlar**; tracking URL yerine dogrudan portalUrl |
+| randevu-navigate | Wizard aciksa **nav atlar** |
+| observe | attachOnly — mudahale dongusu yok |
+
+**Onerilen akis:**
+1. `$env:CHROME_USE_SYSTEM_PROFILE="true"; npm run chrome:debug -- -Profile profile-1`
+2. Elle: davet URL / dogrulama / Randevu Al (gerekirse)
+3. `npm run scenario:url-observe` — eksik adimlari tamamlar, observer baslar
+
+Zaten Randevu Al'daysaniz: `npm run scenario:observe-attach`
 
 ## Çalıştırma
 

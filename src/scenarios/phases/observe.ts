@@ -1,12 +1,23 @@
 import { loadCaptchaRuntime } from "../../captcha/captchaConfig.js";
+import { resolveCdpObserverPageWithWizard } from "../../browser/cdpConnector.js";
 import { isAppReady } from "../../challenge/interventionDetector.js";
 import { InterventionWatcher } from "../../challenge/interventionWatcher.js";
 import { executeProfileFlow } from "../../flows/flowExecutor.js";
 import { resolveFlowId } from "../../flows/flowRegistry.js";
-import { resolveAppointmentProceduresUrl } from "../../navigation/kosmosPortalNav.js";
+import { bootstrapFromKosmosHome } from "../../navigation/kosmosHomeEntry.js";
 import { clickNavigationTarget } from "../../navigation/targetNavigator.js";
+import {
+  detectPortalNavState,
+  resolveAppointmentProceduresUrl,
+} from "../../navigation/kosmosPortalNav.js";
+import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
 import { createPageCollection } from "../../pages/PageFactory.js";
 import { startWizardStepGuard } from "../../appointment/wizardStepGuard.js";
+import {
+  formatWizardStepLog,
+  isObserveTargetReady,
+} from "../../appointment/wizardStepDetector.js";
+import { isBasvuruPortalUrl, isKosmosMarketingHome, isKosmosPortalUrl } from "../../portal/kosmosOrigin.js";
 import { resolveProfileCredentials } from "../../profiles/profileCredentials.js";
 import { runRegisterFormSetup } from "../../register/registerFormRunner.js";
 import { logger } from "../../utils/logger.js";
@@ -53,7 +64,7 @@ export async function runObservePhase(
     );
   }
 
-  const { page, context } = runtime.session;
+  let { page, context } = runtime.session;
   const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
   const credentials = resolveProfileCredentials(profile);
   const homeUrl = runtime.settings.visaPortalHomeUrl;
@@ -70,19 +81,36 @@ export async function runObservePhase(
   runtime.observeHandles.interventionWatcher = interventionWatcher;
 
   if (attachOnly) {
+    const appointment = runtime.settings.appointment;
+
+    const marketingTab = context.pages().find(
+      (candidate) => !candidate.isClosed() && isKosmosMarketingHome(candidate.url()),
+    );
+    if (marketingTab) {
+      page = marketingTab;
+      logger.info(`[scenario] observe — attach: ana sayfa sekmesi: ${page.url()}`);
+    } else {
+      page = await resolveCdpObserverPageWithWizard(context, appointment.wizardNavLocator);
+    }
+    runtime.session.page = page;
+
     const url = page.url();
-    if (!/kosmosvize\.com\.tr/i.test(url)) {
+    if (!isKosmosPortalUrl(url)) {
       throw new Error(
-        `[scenario] observe — attach: portal sekmesi yok (${url}). Once Randevu Al sayfasini acin, sonra tekrar deneyin.`,
+        `[scenario] observe — attach: Kosmos sekmesi yok (${url}). kosmosvize.com.tr veya basvuru portalini acin.`,
       );
     }
+
+    page = await bootstrapFromKosmosHome(page, context, runtime.settings);
+    runtime.session.page = page;
+
     const ready = await isAppReady(page, expectedOrigin);
     if (!ready) {
       logger.warn(
         "[scenario] observe — attach: sayfa tam hazir degil (dogrulama/challenge olabilir). Elle cozun, sonra devam ediliyor.",
       );
     } else {
-      logger.info("[scenario] observe — attach: portal hazir, mudahale dongusu atlandi.");
+      logger.info(`[scenario] observe — attach: portal hazir (${page.url()}).`);
     }
   } else {
     await interventionWatcher.waitUntilReady(page, context, sessionPaths, expectedOrigin);
@@ -101,6 +129,20 @@ export async function runObservePhase(
     const portalEntryUrl = resolveAppointmentProceduresUrl(homeUrl);
     await page.goto(portalEntryUrl, { waitUntil: "domcontentloaded", timeout: 120_000 });
     await clickNavigationTarget(page, runtime.settings.navigation, { homeUrl });
+  } else if (attachOnly) {
+    const portalState = detectPortalNavState(page.url());
+    if (
+      isKosmosMarketingHome(page.url()) ||
+      portalState === "registerForm" ||
+      (isBasvuruPortalUrl(page.url()) && portalState !== "appointmentForm")
+    ) {
+      logger.info(
+        `[scenario] observe — attach: randevu akisina geciliyor (${portalState}).`,
+      );
+      await clickNavigationTarget(page, runtime.settings.navigation, { homeUrl });
+    } else {
+      logger.info("[scenario] observe — randevu navigasyonu atlandı (mevcut sayfa uygun).");
+    }
   } else {
     logger.info("[scenario] observe — randevu navigasyonu atlandı (önceki adımda yapıldı).");
   }
@@ -108,38 +150,85 @@ export async function runObservePhase(
   let observeTargetReached = false;
   let appointmentCity: string | undefined;
 
-  try {
-    const flowResult = await executeProfileFlow(page, profile, runtime.settings, {
-      softValidate: true,
-    });
-    observeTargetReached = flowResult.observeTargetReached;
-    appointmentCity = flowResult.city;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (afterRegister) {
-      logger.warn(`[scenario] observe — wizard kurulumu tamamlanamadı: ${message}`);
-      return {
-        ok: false,
-        detail: "OTP/email doğrulama eksik — observer başlatılamadı",
-      };
+  const runWizardAutomation = async (): Promise<void> => {
+    try {
+      const flowResult = await executeProfileFlow(page, profile, runtime.settings, {
+        softValidate: true,
+        flowRef: flowId,
+      });
+      observeTargetReached = flowResult.observeTargetReached;
+      appointmentCity = flowResult.city;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (afterRegister) {
+        logger.warn(`[scenario] observe — wizard kurulumu tamamlanamadı: ${message}`);
+        throw error;
+      }
+      if (attachOnly) {
+        logger.warn(`[scenario] observe — attach: wizard otomasyonu kısmen tamamlandı: ${message}`);
+      } else {
+        throw error;
+      }
     }
-    throw error;
+  };
+
+  if (attachOnly) {
+    logger.info(
+      "[scenario] observe — attach: Randevu İşlemleri / wizard otomasyonu başlıyor (takvime kadar).",
+    );
+    await runWizardAutomation();
+
+    const appointment = runtime.settings.appointment;
+    const readiness = await isObserveTargetReady(
+      page,
+      appointment.wizardNavLocator,
+      appointment.slotCalendarLocator,
+    );
+    if (readiness.ready) {
+      observeTargetReached = true;
+    }
+    logger.info(
+      `[scenario] observe — attach: ${readiness.state ? formatWizardStepLog(readiness.state) : "wizard yok"} | takvim=${readiness.calendarVisible} | slot watcher=${observeTargetReached}`,
+    );
+  } else {
+    await runWizardAutomation();
   }
 
   interventionWatcher.startContinuousWatch(page, context, sessionPaths, expectedOrigin);
 
+  const pages = createPageCollection(page, runtime.settings);
+
+  const startSlotWatcherIfNeeded = (): void => {
+    if (runtime.observeHandles.slotWatcher) {
+      return;
+    }
+    runtime.observeHandles.slotWatcher = pages.calendar.startSlotWatcher(
+      profile,
+      appointmentCity,
+    );
+    observeTargetReached = true;
+    logger.info("[scenario] observe — slot watcher aktif (Telegram bildirimi açık).");
+  };
+
   runtime.observeHandles.wizardStepGuard = startWizardStepGuard(page, profile, runtime.settings, {
     targetReached: observeTargetReached,
     flowRef: flowId,
+    onObserveTargetReady: startSlotWatcherIfNeeded,
   });
 
   if (observeTargetReached) {
-    const pages = createPageCollection(page, runtime.settings);
-    runtime.observeHandles.slotWatcher = pages.calendar.startSlotWatcher(profile, appointmentCity);
-    logger.info("[scenario] observe — slot watcher aktif (Telegram bildirimi açık).");
+    startSlotWatcherIfNeeded();
   } else {
-    logger.warn("[scenario] observe — hedef wizard adımına ulaşılamadı; slot watcher başlatılmadı.");
+    logger.warn(
+      "[scenario] observe — takvim henüz hazır değil; wizard guard otomasyonu sürdürecek.",
+    );
   }
+
+  const telegram = new TelegramNotifier(runtime.settings.telegram);
+  const startupDetail = observeTargetReached
+    ? "Takvim gözlemi aktif."
+    : "Wizard otomasyonu çalışıyor — takvime ulaşınca tarama başlayacak.";
+  await telegram.sendStartupPing(profile.id, startupDetail);
 
   logger.info("════════════════════════════════════════════");
   logger.info("[scenario] observe — Observer çalışıyor. Durdurmak için Ctrl+C.");
@@ -153,9 +242,11 @@ export async function runObservePhase(
   await waitUntilInterrupted();
 
   return {
-    ok: observeTargetReached,
+    ok: attachOnly || observeTargetReached,
     detail: observeTargetReached
       ? "Observer durduruldu (slot watcher kapatıldı)"
-      : "Observer wizard hedefine ulaşamadan durdu",
+      : attachOnly
+        ? "Observer durduruldu (takvim bekleniyordu)"
+        : "Observer wizard hedefine ulaşamadan durdu",
   };
 }

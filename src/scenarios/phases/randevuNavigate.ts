@@ -1,4 +1,4 @@
-import { navigateKosmosAppointmentFlow } from "../../navigation/kosmosPortalNav.js";
+import { navigateKosmosAppointmentFlow, isAppointmentWizardReady } from "../../navigation/kosmosPortalNav.js";
 import { humanPause } from "../../interaction/humanPacing.js";
 import { logger } from "../../utils/logger.js";
 import type { ScenarioRuntime } from "../scenarioRuntime.js";
@@ -23,6 +23,15 @@ export async function runRandevuNavigatePhase(
   const homeUrl = runtime.settings.visaPortalHomeUrl;
 
   logger.info(`[scenario] randevu-navigate — başlangıç: ${page.url()}`);
+
+  if (runtime.banSafe && (await isAppointmentWizardReady(page))) {
+    logger.info("[scenario] randevu-navigate — banSafe: randevu wizard zaten acik, navigasyon atlandi.");
+    return {
+      ok: true,
+      detail: "Randevu wizard zaten hazir — navigasyon atlandi",
+    };
+  }
+
   await humanPause(page, 2000, 5000, "Randevu menusu oncesi");
   await navigateKosmosAppointmentFlow(page, runtime.settings.navigation, { homeUrl });
   await humanPause(page, 1500, 3000, "Randevu wizard sonrasi");

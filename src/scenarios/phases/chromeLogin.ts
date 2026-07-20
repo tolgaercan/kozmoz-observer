@@ -24,24 +24,30 @@ export async function runChromeLoginPhase(
   params?: ScenarioStepParams,
 ): Promise<ChromeLoginPhaseResult> {
   const attachOnly = params?.attachOnly === true;
+  const banSafe = runtime.banSafe;
+  const liteConnect = attachOnly || banSafe;
   const allowReuseExisting = params?.allowReuseExisting === true;
   const skipSessionInject =
-    params?.skipSessionInject === true || runtime.scenarioUsesSystemProfile === true || attachOnly;
+    params?.skipSessionInject === true ||
+    runtime.scenarioUsesSystemProfile === true ||
+    liteConnect;
   const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
   const googleCredentials = resolveChromeGoogleCredentials(profile);
 
-  if (!attachOnly && !googleCredentials.email) {
+  if (!liteConnect && !googleCredentials.email) {
     throw new Error(
       `[scenario] chrome-login — GOOGLE_EMAIL_${runtime.profileId.replace(/-/g, "_").toUpperCase()} .env'de yok.`,
     );
   }
 
-  if (attachOnly) {
-    logger.info("[scenario] chrome-login — attach modu: mevcut CDP sekmesine baglaniliyor.");
+  if (liteConnect) {
+    logger.info(
+      `[scenario] chrome-login — ${attachOnly ? "attach" : "banSafe"} modu: CDP'ye baglaniliyor (Google goto yok).`,
+    );
     const cdpEndpoint = profile.cdpEndpoint || runtime.settings.cdpEndpoint;
     if (!(await isCdpEndpointReady(cdpEndpoint))) {
       throw new Error(
-        "[scenario] chrome-login — CDP hazir degil. Chrome'u kapatmadan CDP modunda acik tutun (port 9222).",
+        "[scenario] chrome-login — CDP hazir degil. Once: npm run chrome:debug (sistem profili) veya banSafe icin acik CDP tutun.",
       );
     }
   } else {
@@ -53,18 +59,18 @@ export async function runChromeLoginPhase(
   const contextFactory = new ContextFactory(runtime.profileManager, runtime.settings);
   runtime.session = await contextFactory.launch(profile, {
     skipSession: skipSessionInject,
-    skipStealth: attachOnly,
+    skipStealth: liteConnect,
   });
 
   const { page, context } = runtime.session;
 
-  if (attachOnly) {
+  if (liteConnect) {
     await page.bringToFront();
     const url = page.url();
-    logger.info(`[scenario] chrome-login — attach: aktif sekme ${url}`);
+    logger.info(`[scenario] chrome-login — lite: aktif sekme ${url}`);
     if (!/kosmosvize\.com\.tr/i.test(url)) {
       logger.warn(
-        "[scenario] chrome-login — attach: portal sekmesi gorunmuyor. Randevu Al sekmesini one getirin.",
+        "[scenario] chrome-login — lite: portal sekmesi henuz yok; sonraki adim URL acacak veya elle acin.",
       );
     }
     if (skipSessionInject) {
@@ -72,7 +78,7 @@ export async function runChromeLoginPhase(
     }
     return {
       ok: true,
-      detail: `Mevcut sayfadan devam (${url})`,
+      detail: `${attachOnly ? "Attach" : "banSafe"} — CDP baglandi (${url})`,
     };
   }
 

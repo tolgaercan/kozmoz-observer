@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 
 import { detectRecaptchaState } from "../appointment/recaptchaGate.js";
+import { isKosmosPortalUrl } from "../portal/kosmosOrigin.js";
 
 export interface ChallengeSignals {
   isChallenge: boolean;
@@ -48,9 +49,20 @@ export async function detectChallenge(page: Page): Promise<ChallengeSignals> {
 
   for (const selector of CHALLENGE_SELECTORS) {
     try {
-      const count = await page.locator(selector).count();
-      if (count > 0) {
-        reasons.push(`selector:${selector}`);
+      const locator = page.locator(selector);
+      const count = await locator.count();
+      for (let index = 0; index < count; index++) {
+        const item = locator.nth(index);
+        let visible = false;
+        try {
+          visible = await item.isVisible();
+        } catch {
+          visible = false;
+        }
+        if (visible) {
+          reasons.push(`selector:${selector}`);
+          break;
+        }
       }
     } catch {
       // sayfa geçişinde locator hata verebilir — yoksay
@@ -105,6 +117,10 @@ export async function isPageAccessible(page: Page, expectedOrigin: string): Prom
   const url = page.url();
   if (!url || url === "about:blank") {
     return false;
+  }
+
+  if (isKosmosPortalUrl(url)) {
+    return true;
   }
 
   try {

@@ -12,6 +12,8 @@ const KNOWN_PHASES = new Set<ScenarioPhaseId>([
   "randevu-navigate",
   "register-wizard",
   "observe",
+  "api-auth-bootstrap",
+  "api-watcher",
 ]);
 
 export function resolveScenariosDir(projectRoot: string): string {

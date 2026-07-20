@@ -16,7 +16,9 @@ export type ScenarioPhaseId =
   | "portal-invite-gate"
   | "randevu-navigate"
   | "register-wizard"
-  | "observe";
+  | "observe"
+  | "api-auth-bootstrap"
+  | "api-watcher";
 
 /** Senaryo adımına özel parametreler */
 export type ScenarioStepParams = Record<string, unknown>;
@@ -36,6 +38,8 @@ export interface ScenarioDefinition {
   /** active = günlük kullanım, experimental = henüz tam çalışmaz */
   status?: ScenarioStatus;
   note?: string;
+  /** observe-attach benzeri: CDP kill yok, Google goto yok, gereksiz navigasyon atlanir */
+  banSafe?: boolean;
   steps: ScenarioStep[];
 }
 
@@ -52,6 +56,8 @@ export interface ScenarioRunOptions {
   openUrlOnly?: boolean;
   /** Mevcut CDP Chrome sekmesine bağlan — chrome-connect atlanır, navigasyon yok */
   attach?: boolean;
+  /** Senaryo JSON'daki banSafe'i override eder */
+  banSafe?: boolean;
 }
 
 export interface ScenarioStepResult {

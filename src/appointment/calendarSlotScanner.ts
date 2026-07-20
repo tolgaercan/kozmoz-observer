@@ -141,9 +141,12 @@ export function buildMultiMonthSlotTextSummary(
     ? `Müsait randevu günleri — ${city} (${profileLabel})`
     : `Müsait randevu günleri — ${profileLabel}`;
 
+  const scannedMonths =
+    monthGroups.length > 0 ? monthGroups.map((group) => group.monthLabel).join(", ") : "—";
   const allDays = monthGroups.flatMap((group) => group.days);
+
   if (allDays.length === 0) {
-    return `${header}\n\nŞu an müsait gün yok (taranan aylar: ${monthGroups.map((g) => g.monthLabel).join(", ") || "—"}).`;
+    return `${header}\n\nTaranan aylar: ${scannedMonths}\n\nŞu an müsait gün yok.`;
   }
 
   const sections = monthGroups.map((group) => {
@@ -159,7 +162,16 @@ export function buildMultiMonthSlotTextSummary(
     return `${group.monthLabel}:\n${lines.join("\n")}`;
   });
 
-  return [header, "", ...sections, "", `Toplam: ${allDays.length} gün`].join("\n").trim();
+  return [
+    header,
+    `\nTaranan aylar: ${scannedMonths}`,
+    "",
+    ...sections,
+    "",
+    `Toplam: ${allDays.length} gün (${monthGroups.length} ay)`,
+  ]
+    .join("\n")
+    .trim();
 }
 
 export async function scanAvailableCalendarDays(

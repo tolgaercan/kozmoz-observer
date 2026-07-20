@@ -2,9 +2,9 @@
   "profiles": [
     {
       "id": "profile-2",
-      "enabled": false,
+      "enabled": true,
       "mode": "observer",
-      "note": "Havuz — manifest'e taşınmadan önce .env credentials ekleyin"
+      "note": "manifest'te aktif — flowId: kosmos-eea-ab-esi-v1, .env: *_PROFILE_2"
     },
     {
       "id": "profile-3",

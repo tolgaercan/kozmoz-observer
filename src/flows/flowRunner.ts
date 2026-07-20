@@ -1,7 +1,11 @@
 import type { FlowDefinition, FlowRunContext, FlowRunOptions, FlowSetupResult, FlowStepContext } from "./types.js";
 import { clickNavigationTarget } from "../navigation/targetNavigator.js";
 import { logger } from "../utils/logger.js";
-import type { WizardStepId } from "../appointment/wizardStepDetector.js";
+import {
+  detectViewStepFromContent,
+  type WizardStepId,
+  type WizardStepState,
+} from "../appointment/wizardStepDetector.js";
 
 function emptyResult(): FlowSetupResult {
   return { observeTargetReached: false };
@@ -20,6 +24,16 @@ function mergeResult(
   if (partial.observeTargetReached !== undefined) {
     target.observeTargetReached = partial.observeTargetReached;
   }
+}
+
+function resolveWizardActionStep(
+  state: WizardStepState,
+  contentStep: WizardStepId | null,
+): WizardStepId | null {
+  if (contentStep !== null) {
+    return contentStep;
+  }
+  return state.progressStep ?? state.viewStep ?? null;
 }
 
 /**
@@ -79,7 +93,15 @@ export async function runFlowSetup(
 
     state = await pages.wizard.syncViewWithProgress(state);
 
-    const step = state.progressStep;
+    const contentStep = await detectViewStepFromContent(page);
+    const actionStep = resolveWizardActionStep(state, contentStep);
+    if (contentStep !== null && contentStep !== state.progressStep) {
+      logger.info(
+        `[flow:${flow.id}] Ekran adımı=${contentStep}, nav ilerleme=${state.progressStep ?? "?"} — handler adım ${actionStep}.`,
+      );
+    }
+
+    const step = actionStep;
     if (!step) {
       logger.warn(`[flow:${flow.id}] İlerleme adımı belirlenemedi — durduruldu.`);
       result.wizardStep = undefined;

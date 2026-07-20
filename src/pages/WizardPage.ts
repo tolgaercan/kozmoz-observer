@@ -1,7 +1,8 @@
 import type { Page } from "playwright";
 
 import type { AppointmentSettings } from "../config/settings.js";
-import { clickWizardNextButton } from "../appointment/wizardNavigation.js";
+import { advanceWizardAfterAutofill } from "../appointment/wizardStepAutofill.js";
+import type { ResolvedProfile } from "../profiles/profileManager.js";
 import {
   detectWizardStep,
   ensureWizardViewMatchesProgress,
@@ -39,8 +40,8 @@ export class WizardPage {
     await navigateToWizardViewStep(this.page, step, this.navLocator);
   }
 
-  async clickNext(): Promise<void> {
-    await clickWizardNextButton(this.page, this.settings);
+  async clickNext(profile: ResolvedProfile): Promise<void> {
+    await advanceWizardAfterAutofill(this.page, profile, this.settings);
   }
 
   async waitAfterStep(): Promise<void> {

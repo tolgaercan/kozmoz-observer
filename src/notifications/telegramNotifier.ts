@@ -47,11 +47,11 @@ export class TelegramNotifier {
     return Boolean(this.settings.enabled && this.settings.botToken && this.settings.chatId);
   }
 
-  async sendStartupPing(profileId: string): Promise<boolean> {
+  async sendStartupPing(profileId: string, detail?: string): Promise<boolean> {
     const text = [
       `<b>✅ Observer başladı</b>`,
       `<b>Profil:</b> ${escapeHtml(profileId)}`,
-      `Telegram bildirimleri aktif.`,
+      detail ? escapeHtml(detail) : "Telegram bildirimleri aktif.",
     ].join("\n");
 
     return this.send(text, "startup:ping", true);
@@ -125,6 +125,46 @@ export class TelegramNotifier {
     await this.send(text, `manual:${details.reason.slice(0, 40)}`);
   }
 
+  /** GetClosedDate API watcher — aktif gün özeti */
+  async notifyApiAvailability(details: {
+    profileId: string;
+    city?: string;
+    appointmentStyle?: string;
+    textSummary: string;
+    activeDates: string[];
+    isEmpty: boolean;
+    hasNewDays?: boolean;
+    periodicReport?: boolean;
+  }): Promise<void> {
+    const emoji = details.isEmpty ? "📭" : details.hasNewDays ? "🟢" : "📅";
+    const title = details.isEmpty
+      ? "API — aktif gün yok"
+      : details.hasNewDays
+        ? "API — YENİ aktif gün(ler)!"
+        : "API — aktif günler";
+    const styleLine = details.appointmentStyle
+      ? `<b>Şekil:</b> ${escapeHtml(details.appointmentStyle)}`
+      : "";
+    const text = [
+      `<b>${emoji} ${title}</b>`,
+      details.city ? `<b>İl:</b> ${escapeHtml(details.city)}` : "",
+      styleLine,
+      `<b>Profil:</b> ${escapeHtml(details.profileId)}`,
+      "",
+      escapeHtml(details.textSummary),
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const dedupeKey = details.isEmpty
+      ? `api:empty:${details.profileId}`
+      : details.hasNewDays
+        ? `api:new:${details.profileId}`
+        : `api:active:${details.profileId}`;
+
+    await this.send(text, dedupeKey, details.periodicReport === true);
+  }
+
   async notifyAvailableSlots(details: {
     profileId: string;
     city?: string;
@@ -132,6 +172,8 @@ export class TelegramNotifier {
     dates?: string[];
     isEmpty: boolean;
     hasConfirmedTimes?: boolean;
+    /** Watcher kendi aralığını yönetiyorsa Telegram cooldown atlanır */
+    periodicReport?: boolean;
   }): Promise<void> {
     const emoji = details.isEmpty ? "📭" : details.hasConfirmedTimes ? "🟢" : "📅";
     const title = details.isEmpty
@@ -151,9 +193,9 @@ export class TelegramNotifier {
 
     const dedupeKey = details.isEmpty
       ? `slots:empty:${details.profileId}`
-      : `slots:${details.profileId}:${(details.dates ?? []).slice(0, 5).join(",")}`;
+      : `slots:found:${details.profileId}`;
 
-    await this.send(text, dedupeKey);
+    await this.send(text, dedupeKey, details.periodicReport === true);
   }
 
   private async send(text: string, dedupeKey: string, skipCooldown = false): Promise<boolean> {

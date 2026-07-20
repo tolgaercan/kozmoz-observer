@@ -13,8 +13,15 @@ export interface RecaptchaState {
 
 let lastCaptchaSolvedAtMs = 0;
 
+/** g-recaptcha-response dolu sayılır — iframe görünür kalsa bile geç */
+export const RECAPTCHA_TOKEN_SOLVED_MIN_LENGTH = 20;
+
 export function markRecaptchaSolved(atMs = Date.now()): void {
   lastCaptchaSolvedAtMs = atMs;
+}
+
+export function isRecaptchaTokenReady(tokenLength: number): boolean {
+  return tokenLength > RECAPTCHA_TOKEN_SOLVED_MIN_LENGTH;
 }
 
 const TOKEN_FIELD_SELECTORS = [
@@ -84,46 +91,83 @@ async function isRecaptchaCheckboxChecked(page: Page): Promise<boolean> {
 }
 
 async function isRecaptchaPresent(page: Page): Promise<boolean> {
-  if ((await page.locator('iframe[src*="recaptcha"], iframe[title*="reCAPTCHA"]').count()) > 0) {
-    return true;
+  const iframeSelectors = [
+    'iframe[src*="recaptcha"]',
+    'iframe[title*="reCAPTCHA"]',
+  ];
+
+  for (const selector of iframeSelectors) {
+    const frames = page.locator(selector);
+    const count = await frames.count();
+    for (let index = 0; index < count; index++) {
+      try {
+        if (await frames.nth(index).isVisible()) {
+          return true;
+        }
+      } catch {
+        // geçiş anında locator kopabilir
+      }
+    }
   }
-  if ((await page.locator(".g-recaptcha, [data-sitekey]").count()) > 0) {
-    return true;
+
+  const widgets = page.locator(".g-recaptcha, [data-sitekey]");
+  const widgetCount = await widgets.count();
+  for (let index = 0; index < widgetCount; index++) {
+    try {
+      const widget = widgets.nth(index);
+      if (await widget.isVisible()) {
+        const box = await widget.boundingBox();
+        if (box && box.width > 4 && box.height > 4) {
+          return true;
+        }
+      }
+    } catch {
+      // yoksay
+    }
   }
+
   return false;
 }
 
 export async function detectRecaptchaState(page: Page): Promise<RecaptchaState> {
-  const present = await isRecaptchaPresent(page);
-
-  if (!present) {
-    return {
-      present: false,
-      solved: true,
-      solvedAtMs: lastCaptchaSolvedAtMs,
-      tokenLength: 0,
-      checkboxChecked: false,
-      solvedVia: "none",
-    };
-  }
-
   const tokenLength = await readTokenLengthFromDom(page);
   const checkboxChecked = await isRecaptchaCheckboxChecked(page);
-  const solvedByToken = tokenLength > 20;
+  const solvedByToken = isRecaptchaTokenReady(tokenLength);
   const solvedByCheckbox = checkboxChecked;
   const solved = solvedByToken || solvedByCheckbox;
 
   if (solved) {
     markRecaptchaSolved();
+    return {
+      // Token/checkbox hazırsa iframe DOM'da kalsa bile kilitleme
+      present: solvedByToken ? false : await isRecaptchaPresent(page),
+      solved: true,
+      solvedAtMs: lastCaptchaSolvedAtMs,
+      tokenLength,
+      checkboxChecked,
+      solvedVia: solvedByToken ? "token" : "checkbox",
+    };
+  }
+
+  const present = await isRecaptchaPresent(page);
+  if (!present) {
+    return {
+      present: false,
+      solved: true,
+      solvedAtMs: lastCaptchaSolvedAtMs,
+      tokenLength,
+      checkboxChecked,
+      solvedVia: "none",
+    };
   }
 
   return {
     present,
-    solved,
+    solved: false,
     solvedAtMs: lastCaptchaSolvedAtMs,
     tokenLength,
     checkboxChecked,
-    solvedVia: solvedByToken ? "token" : solvedByCheckbox ? "checkbox" : "none",
+    solvedVia: "none",
   };
 }
 

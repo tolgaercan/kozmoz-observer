@@ -12,7 +12,7 @@ import {
   applyStealthToContext,
   buildContextOptions,
 } from "./stealth.js";
-import { connectOverCdp, resolveCdpObserverPage } from "./cdpConnector.js";
+import { connectOverCdp, resolveCdpObserverPageWithWizard } from "./cdpConnector.js";
 import { resolveObserverPage } from "./pageResolver.js";
 import { assertChromeClosed, warnIfChromeRunning } from "./chromeProcessCheck.js";
 
@@ -68,7 +68,10 @@ export class ContextFactory {
     } else {
       logger.info("[stealth] CDP stealth atlandi (attach modu — mevcut Chrome oturumu).");
     }
-    const page = await resolveCdpObserverPage(context);
+    const page = await resolveCdpObserverPageWithWizard(
+      context,
+      this.settings.appointment.wizardNavLocator,
+    );
 
     const skipSession =
       launchOptions.skipSession === true ||

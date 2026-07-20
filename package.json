@@ -24,16 +24,28 @@
     "scenario:url-observe": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --id url-login-observe --profile profile-1",
     "scenario:url-open": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --id url-login-observe --profile profile-1 --stop-after portal-invite-gate --open-url-only",
     "scenario:url-randevu": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --id url-login-observe --profile profile-1 --stop-after randevu-navigate",
-    "scenario:observe-attach": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --attach --profile profile-1 --no-wait"
+    "scenario:observe-attach": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --attach --profile profile-1 --no-wait",
+    "scenario:eea-observe-attach": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --id eea-observe-attach --profile profile-2 --no-wait",
+    "scenario:api-watcher-attach": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --id api-watcher-attach --profile profile-api --no-wait",
+    "scenario:api-watcher-eea": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --id api-watcher-attach --profile profile-2 --no-wait",
+    "chrome:debug:profile-2": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1 -Profile profile-2",
+    "chrome:debug:profile-api": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1 -Profile profile-api"
   },
-  "keywords": ["playwright", "observer", "visa", "automation"],
+  "keywords": [
+    "playwright",
+    "observer",
+    "visa",
+    "automation"
+  ],
   "license": "MIT",
   "devDependencies": {
+    "@types/crypto-js": "^4.2.2",
     "@types/node": "^22.10.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   },
   "dependencies": {
+    "crypto-js": "^4.2.0",
     "playwright": "^1.49.1"
   }
 }

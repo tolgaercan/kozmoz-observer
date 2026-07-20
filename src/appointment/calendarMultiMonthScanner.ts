@@ -13,10 +13,8 @@ import {
   scanAvailableCalendarDays,
 } from "./calendarSlotScanner.js";
 import { verifyCandidateDays } from "./calendarDayVerifier.js";
-import {
-  detectRecaptchaState,
-  waitForRecaptchaSolution,
-} from "./recaptchaGate.js";
+import { detectRecaptchaState } from "./recaptchaGate.js";
+import { ensureStableRecaptchaOrEscape } from "./captchaSession.js";
 
 export interface MonthSlotGroup {
   monthLabel: string;
@@ -35,16 +33,38 @@ async function ensureRecaptchaBeforeScan(
 ): Promise<boolean> {
   const state = await detectRecaptchaState(page);
   if (!state.present || state.solved) {
+    if (state.solved && state.present) {
+      return ensureStableRecaptchaOrEscape(page, settings);
+    }
     return true;
   }
 
-  logger.info("[takvim] reCAPTCHA bekleniyor (eklenti)...");
-  const ok = await waitForRecaptchaSolution(
-    page,
-    settings.recaptchaWaitMs,
-    settings.recaptchaPollIntervalMs,
-  );
-  return ok;
+  logger.info("[takvim] reCAPTCHA bekleniyor (captcha-lock)...");
+  return ensureStableRecaptchaOrEscape(page, settings);
+}
+
+async function clickCalendarNextMonthWithRetry(
+  page: Page,
+  settings: AppointmentSettings,
+  maxAttempts = 2,
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (await clickCalendarNextMonth(page, settings)) {
+      return true;
+    }
+
+    if (attempt < maxAttempts) {
+      logger.info(
+        `[takvim] İleri ay tıklanamadı (deneme ${attempt}/${maxAttempts}) — captcha kontrolü...`,
+      );
+      if (!(await ensureRecaptchaBeforeScan(page, settings))) {
+        return false;
+      }
+      await page.waitForTimeout(settings.slotMonthNavWaitMs);
+    }
+  }
+
+  return false;
 }
 
 /** Mevcut ay + slotMonthsAhead kadar ileri ay tarar, sonra başlangıç ayına döner */
@@ -58,7 +78,9 @@ export async function scanAvailableCalendarMonths(
   const seenDates = new Set<string>();
 
   const baseMonth = (await getCalendarMonthLabel(page)) ?? "Ay-0";
-  logger.info(`[takvim] Tarama başlıyor — baz ay: ${baseMonth}, +${monthsAhead} ay`);
+  logger.info(
+    `[takvim] Çoklu ay taraması — baz: ${baseMonth}, +${monthsAhead} ay (ileri tarama + baz aya dönüş).`,
+  );
 
   if (!(await ensureRecaptchaBeforeScan(page, settings))) {
     return { availableDays: [], monthGroups: [], calendarFound: false };
@@ -66,7 +88,7 @@ export async function scanAvailableCalendarMonths(
 
   const appendScan = async (scan: Awaited<ReturnType<typeof scanAvailableCalendarDays>>) => {
     if (!scan.calendarFound) {
-      return;
+      return false;
     }
     const label = scan.monthLabel ?? "Bilinmeyen ay";
 
@@ -84,6 +106,7 @@ export async function scanAvailableCalendarMonths(
     });
     monthGroups.push({ monthLabel: label, days: uniqueDays });
     allDays.push(...uniqueDays);
+    return true;
   };
 
   const firstScan = await scanAvailableCalendarDays(page, settings);
@@ -94,15 +117,18 @@ export async function scanAvailableCalendarMonths(
 
   let advanced = 0;
   for (let index = 0; index < monthsAhead; index++) {
-    const moved = await clickCalendarNextMonth(page, settings);
+    const moved = await clickCalendarNextMonthWithRetry(page, settings);
     if (!moved) {
+      logger.warn(
+        `[takvim] ${index + 1}. ileri ay açılamadı — kalan aylar atlanıyor (baz: ${baseMonth}).`,
+      );
       break;
     }
     advanced++;
 
     const afterMove = await detectRecaptchaState(page);
     if (afterMove.present && !afterMove.solved) {
-      logger.info("[takvim] Ay geçişi sonrası reCAPTCHA yenilendi — eklenti bekleniyor...");
+      logger.info("[takvim] Ay geçişi sonrası reCAPTCHA — bekleniyor...");
       if (!(await ensureRecaptchaBeforeScan(page, settings))) {
         break;
       }
@@ -113,12 +139,13 @@ export async function scanAvailableCalendarMonths(
   }
 
   if (advanced > 0) {
-    logger.info(`[takvim] Başlangıç ayına dönülüyor (${advanced} adım geri)...`);
+    logger.info(`[takvim] Baz aya dönülüyor (${advanced} adım geri)...`);
     await returnToCalendarBaseMonth(page, settings, advanced);
   }
 
+  const scannedLabels = monthGroups.map((group) => group.monthLabel).join(", ");
   logger.info(
-    `[takvim] Çoklu ay taraması bitti — ${allDays.length} müsait gün (${monthGroups.length} ay).`,
+    `[takvim] Tarama bitti — ${allDays.length} müsait gün | taranan: ${scannedLabels || baseMonth}.`,
   );
 
   return {
@@ -137,22 +164,14 @@ export async function refreshRecaptchaViaMonthNav(
 
   const movedNext = await clickCalendarNextMonth(page, settings);
   if (movedNext) {
-    await waitForRecaptchaSolution(
-      page,
-      settings.recaptchaProactiveWaitMs,
-      settings.recaptchaPollIntervalMs,
-    );
+    await ensureStableRecaptchaOrEscape(page, settings);
     await clickCalendarPrevMonth(page, settings);
   } else {
     const movedPrev = await clickCalendarPrevMonth(page, settings);
     if (!movedPrev) {
       return false;
     }
-    await waitForRecaptchaSolution(
-      page,
-      settings.recaptchaProactiveWaitMs,
-      settings.recaptchaPollIntervalMs,
-    );
+    await ensureStableRecaptchaOrEscape(page, settings);
     await clickCalendarNextMonth(page, settings);
   }
 

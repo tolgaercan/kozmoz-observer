@@ -1,21 +1,17 @@
 import type { Page } from "playwright";
 
 import type { AppSettings } from "../config/settings.js";
-import { waitForRecaptchaSolution } from "./recaptchaGate.js";
+import type { ResolvedProfile } from "../profiles/profileManager.js";
+import { logger } from "../utils/logger.js";
+import { ensureStableRecaptchaOrEscape } from "./captchaSession.js";
 import {
   detectWizardStep,
   navigateToWizardViewStep,
   WIZARD_OBSERVE_TARGET_STEP,
 } from "./wizardStepDetector.js";
 import { ensureObserveTargetStep } from "./wizardOrchestrator.js";
-import {
-  clickWizardNextButton,
-  clickWizardPreviousButton,
-} from "./wizardNavigation.js";
-import type { ResolvedProfile } from "../profiles/profileManager.js";
-import { logger } from "../utils/logger.js";
 
-/** reCAPTCHA takılınca Önceki→Sonraki veya refresh + wizard kurtarma */
+/** @deprecated ensureStableRecaptchaOrEscape kullanın — geriye dönük uyumluluk */
 export async function recoverCalendarPageAccess(
   page: Page,
   profile: ResolvedProfile,
@@ -27,39 +23,9 @@ export async function recoverCalendarPageAccess(
     return false;
   }
 
-  const solved = await waitForRecaptchaSolution(
-    page,
-    appointmentSettings.recaptchaWaitMs,
-    appointmentSettings.recaptchaPollIntervalMs,
-  );
-  if (solved) {
+  const ok = await ensureStableRecaptchaOrEscape(page, appointmentSettings);
+  if (ok) {
     return true;
-  }
-
-  logger.warn("reCAPTCHA çözülmedi — kurtarma adımları deneniyor.");
-
-  if (appointmentSettings.captchaRecoveryTryPreviousNext) {
-    try {
-      await clickWizardPreviousButton(page, appointmentSettings);
-      await page.waitForTimeout(appointmentSettings.captchaRecoveryStepWaitMs);
-
-      await clickWizardNextButton(page, appointmentSettings);
-      await page.waitForTimeout(appointmentSettings.captchaRecoveryStepWaitMs);
-
-      const ok = await waitForRecaptchaSolution(
-        page,
-        appointmentSettings.recaptchaWaitMs,
-        appointmentSettings.recaptchaPollIntervalMs,
-      );
-      if (ok) {
-        logger.info("reCAPTCHA kurtarıldı (Önceki → Sonraki).");
-        return true;
-      }
-    } catch (error) {
-      logger.warn(
-        `Önceki/Sonraki kurtarma başarısız: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
   }
 
   if (appointmentSettings.captchaRecoveryTryRefresh) {
@@ -78,17 +44,7 @@ export async function recoverCalendarPageAccess(
       );
     }
 
-    await page.waitForTimeout(appointmentSettings.captchaRecoveryStepWaitMs);
-
-    const afterRefresh = await waitForRecaptchaSolution(
-      page,
-      appointmentSettings.recaptchaWaitMs,
-      appointmentSettings.recaptchaPollIntervalMs,
-    );
-    if (afterRefresh) {
-      logger.info("reCAPTCHA kurtarıldı (sayfa yenileme + wizard).");
-      return true;
-    }
+    return ensureStableRecaptchaOrEscape(page, appointmentSettings);
   }
 
   logger.error("reCAPTCHA kurtarma başarısız — manuel müdahale gerekebilir.");

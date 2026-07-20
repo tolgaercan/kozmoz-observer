@@ -1,4 +1,7 @@
 import type { FlowDefinition, FlowSetupResult, FlowStepContext } from "./types.js";
+import { logger } from "../utils/logger.js";
+import { advanceWizardAfterAutofill, ensureVisibleWizardFieldsFilled } from "../appointment/wizardStepAutofill.js";
+import { detectViewStepFromContent } from "../appointment/wizardStepDetector.js";
 
 export const KOSMOS_BIREYSEL_STANDART_FLOW_ID = "kosmos-bireysel-standart";
 
@@ -10,29 +13,43 @@ async function runStep1(ctx: FlowStepContext): Promise<Partial<FlowSetupResult>>
   };
 }
 
-async function runStep2(ctx: FlowStepContext): Promise<Partial<FlowSetupResult>> {
-  const partial = await ctx.pages.wizardStep2.fillFormAndNext(ctx.profile);
+/** Portal adım 2 — Şube (form alanları yoksa Sonraki) */
+async function runStep2Branch(ctx: FlowStepContext): Promise<Partial<FlowSetupResult>> {
+  const contentStep = await detectViewStepFromContent(ctx.page);
+  if (contentStep !== null && contentStep >= 3) {
+    logger.info("[flow][step-2] Ekranda bilgi formu — adım 3 handler'a yönlendiriliyor.");
+    return runStep3Form(ctx);
+  }
+
+  logger.info("[flow][step-2] Şube / ara adım — boş alan kontrolü → Sonraki");
+  await ensureVisibleWizardFieldsFilled(ctx.page, ctx.profile, ctx.appointment);
+  await advanceWizardAfterAutofill(ctx.page, ctx.profile, ctx.appointment);
+  return { wizardStep: 2 };
+}
+
+/** Portal adım 3 — Bilgilerinizi Girin */
+async function runStep3Form(ctx: FlowStepContext): Promise<Partial<FlowSetupResult>> {
+  logger.info("[flow][step-3] Bilgiler formu — boş alan kontrolü → Sonraki");
+  await ensureVisibleWizardFieldsFilled(ctx.page, ctx.profile, ctx.appointment);
+  await advanceWizardAfterAutofill(ctx.page, ctx.profile, ctx.appointment);
+
   return {
-    city: partial.city,
-    applicationType: partial.applicationType,
-    nationalityNumber: partial.nationalityNumber,
-    appointmentStyle: partial.appointmentStyle,
-    wizardStep: partial.wizardStep,
+    wizardStep: 3,
+    city: ctx.profile.appointmentCity,
+    applicationType: ctx.profile.applicationType,
+    nationalityNumber: ctx.profile.nationalityNumber,
+    appointmentStyle: ctx.profile.appointmentStyle,
   };
 }
 
 /**
  * Spec: Kozmos vize portalı — Bireysel / Standart — takvim gözlemi
- *
- * Arrange: profil form verileri (manifest + .env)
- * Act:     wizard adım 1 → 2 → 3
- * Assert:  adım 3'e ulaş → slot watcher (observe fazı)
  */
 export const kosmosBireyselStandartFlow: FlowDefinition = {
   id: KOSMOS_BIREYSEL_STANDART_FLOW_ID,
   name: "Kozmos Bireysel Standart",
-  description: "İkamet → Bireysel/TC/Standart form → takvim slot gözlemi",
-  observeTargetStep: 3,
+  description: "İkamet → Şube → Bireysel/TC/Standart → takvim slot gözlemi",
+  observeTargetStep: 4,
   requiredProfileFields: [
     "appointmentCity",
     "applicationType",
@@ -41,6 +58,7 @@ export const kosmosBireyselStandartFlow: FlowDefinition = {
   ],
   handlers: {
     1: runStep1,
-    2: runStep2,
+    2: runStep2Branch,
+    3: runStep3Form,
   },
 };

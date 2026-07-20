@@ -1,4 +1,5 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 
 import type { Page } from "playwright";
 
@@ -73,6 +74,7 @@ export async function persistPortalStorage(
     return 0;
   }
 
+  mkdirSync(dirname(storageFilePath), { recursive: true });
   writeFileSync(storageFilePath, `${JSON.stringify(persistable, null, 2)}\n`, "utf-8");
   const jwtKeys = keys.filter((k) => persistable[k]?.startsWith("eyJ"));
   logger.info(

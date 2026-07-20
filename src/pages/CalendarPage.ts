@@ -8,7 +8,7 @@ import {
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { logger } from "../utils/logger.js";
 
-/** Wizard adım 3 — Takvim / slot gözlemi */
+/** Wizard adım 4 — Takvim / slot gözlemi */
 export class CalendarPage {
   constructor(
     private readonly page: Page,

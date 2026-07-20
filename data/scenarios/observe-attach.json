@@ -3,7 +3,7 @@
   "name": "Observer — mevcut sayfadan devam",
   "description": "Elle acilmis Randevu Al / wizard sayfasina CDP ile baglanir; navigasyon tekrarlanmaz.",
   "status": "active",
-  "note": "Chrome CDP modunda acik olmali (port 9222). Normal Chrome degil — npm run chrome:debug ile acin veya onceki senaryo Enter beklemeden birakilsin.",
+  "note": "Chrome CDP modunda acik olmali. Ana sayfa (kosmosvize.com.tr/tr) veya basvuru portalini acin — popup kapatma + registerform otomatik.",
   "steps": [
     {
       "phase": "chrome-login",

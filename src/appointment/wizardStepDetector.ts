@@ -5,8 +5,11 @@ import { logger } from "../utils/logger.js";
 
 export type WizardStepId = 1 | 2 | 3 | 4 | 5;
 
-/** Randevu slot gözlemi bu ilerleme adımında başlar */
-export const WIZARD_OBSERVE_TARGET_STEP = 3 as WizardStepId;
+/**
+ * Randevu slot gözlemi bu ilerleme adımında başlar.
+ * Portal 5 adımlı: 1 İkamet, 2 Şube, 3 Bilgiler, 4 Takvim, 5 Onay/OTP.
+ */
+export const WIZARD_OBSERVE_TARGET_STEP = 4 as WizardStepId;
 
 export interface WizardStepItem {
   step: WizardStepId;
@@ -132,9 +135,9 @@ function buildWizardStateFromNav(rawItems: RawNavItem[]): WizardStepState {
     .filter((item): item is WizardStepItem => item !== null);
 
   const viewItem =
-    rawItems.find((item) => item.hasViewContainer) ??
     rawItems.find((item) => item.isTitleActive) ??
-    rawItems.find((item) => item.isNavActive);
+    rawItems.find((item) => item.isNavActive) ??
+    rawItems.find((item) => item.hasViewContainer);
   const checkedItems = rawItems.filter((item) => item.isChecked);
   const highestChecked =
     checkedItems.length > 0
@@ -160,28 +163,33 @@ function buildWizardStateFromNav(rawItems: RawNavItem[]): WizardStepState {
     progressTitle,
     isViewingPastStep,
     items,
-    observeTargetReached: (progressStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP,
+    observeTargetReached:
+      (progressStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP &&
+      (viewStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP,
     detectedVia: "nav",
     activeStep: progressStep,
     activeTitle: progressTitle,
   };
 }
 
-/** Ekrandaki form içeriğine göre görünüm adımı (ekran görüntülerinden doğrulandı) */
+/** Ekrandaki form içeriğine göre görünüm adımı (5 adımlı Kosmos randevu wizard) */
 export async function detectViewStepFromContent(page: Page): Promise<WizardStepId | null> {
   const checks: Array<{ step: WizardStepId; selector: string }> = [
     { step: 5, selector: "text=Telefonuma Doğrulama Kodu Gönder" },
     { step: 5, selector: "text=sms kodu talep edin" },
-    { step: 4, selector: "text=Hizmet Teminat Bedeli" },
-    { step: 4, selector: "text=Ön bilgilendirme formunu okudum" },
-    { step: 4, selector: "text=Randevu Bilgileri" },
-    { step: 3, selector: "text=Randevu Tarihi Seçimi" },
-    { step: 3, selector: "text=Randevu Tarihi Seçin" },
-    { step: 3, selector: "text=Randevu Saatini seçiniz" },
-    { step: 2, selector: "select[name='applicationTypeId']" },
-    { step: 2, selector: "input[name='nationalityNumber']" },
-    { step: 2, selector: "select[name='appointmentTypeId']" },
+    { step: 4, selector: "text=Randevu Tarihi Seçimi" },
+    { step: 4, selector: "text=Randevu Tarihi Seçin" },
+    { step: 4, selector: "text=Randevu Saatini seçiniz" },
+    { step: 4, selector: ".dp__calendar" },
+    { step: 4, selector: "div.dp__main" },
+    { step: 3, selector: "text=Bilgilerinizi Girin" },
+    { step: 3, selector: "select[name='applicationTypeId']" },
+    { step: 3, selector: "input[name='nationalityNumber']" },
+    { step: 3, selector: "select[name='appointmentTypeId']" },
+    { step: 2, selector: "text=Şube Seçimi" },
+    { step: 2, selector: "text=Başvuru Şubesi" },
     { step: 1, selector: "text=Yetki Alanları" },
+    { step: 1, selector: "text=İkamet Yerini Seçin" },
     { step: 1, selector: "#cities" },
     { step: 1, selector: "select[name='cities']" },
     { step: 1, selector: "text=Seçilen İl" },
@@ -204,6 +212,64 @@ export async function detectViewStepFromContent(page: Page): Promise<WizardStepI
   return highest;
 }
 
+function splitLocatorList(raw: string): string[] {
+  return raw
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+/** Takvim DOM ekranda görünüyor mu — slot watcher yalnızca buna güvenmeli */
+export async function isCalendarStepVisible(
+  page: Page,
+  calendarLocator = ".dp__calendar|div.dp__main",
+): Promise<boolean> {
+  for (const selector of splitLocatorList(calendarLocator)) {
+    const locator = page.locator(selector).first();
+    try {
+      if (await locator.isVisible({ timeout: 300 })) {
+        return true;
+      }
+    } catch {
+      // görünür değil
+    }
+  }
+
+  const textChecks = [
+    "text=Randevu Tarihi Seçimi",
+    "text=Randevu Tarihi Seçin",
+    "text=Randevu Saatini seçiniz",
+  ];
+  for (const selector of textChecks) {
+    const locator = page.locator(selector).first();
+    try {
+      if (await locator.isVisible({ timeout: 200 })) {
+        return true;
+      }
+    } catch {
+      // görünür değil
+    }
+  }
+
+  return false;
+}
+
+/** Slot gözlemi için hem ilerleme hem takvim içeriği gerekli */
+export async function isObserveTargetReady(
+  page: Page,
+  navLocator: string,
+  calendarLocator: string,
+): Promise<{ ready: boolean; state: WizardStepState | null; calendarVisible: boolean }> {
+  const state = await detectWizardStep(page, navLocator);
+  const calendarVisible = await isCalendarStepVisible(page, calendarLocator);
+  const progress = state?.progressStep ?? 0;
+  const ready =
+    calendarVisible ||
+    (progress >= WIZARD_OBSERVE_TARGET_STEP &&
+      (state?.viewStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP);
+  return { ready, state, calendarVisible };
+}
+
 export async function detectWizardStep(
   page: Page,
   navLocator = "ul.wizard-nav-pills",
@@ -224,6 +290,9 @@ export async function detectWizardStep(
         viewTitle: contentTitle,
         isViewingPastStep:
           viewFromContent < (fromNav.progressStep ?? viewFromContent),
+        observeTargetReached:
+          (fromNav.progressStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP &&
+          viewFromContent >= WIZARD_OBSERVE_TARGET_STEP,
         detectedVia: "merged",
       };
     }

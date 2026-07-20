@@ -68,12 +68,13 @@ export async function runPortalUrlLoginPhase(
   const credentials = resolveProfileCredentials(profile);
   const { url: entryUrl, label: urlSource } = resolveEntryUrl(runtime, params);
   const reuseChromeSession = params?.reuseChromeSession === true;
+  const banSafe = runtime.banSafe;
 
   const sessionPaths = runtime.profileManager.toSessionPaths(profile);
 
-  if (reuseChromeSession) {
+  if (reuseChromeSession || banSafe) {
     logger.info(
-      "[scenario] portal-url-login — reuseChromeSession: Chrome user-data oturumu kullanılacak (storage.json enjekte edilmez).",
+      "[scenario] portal-url-login — Chrome user-data oturumu (storage.json enjekte edilmez).",
     );
     await loadSession(context, page, sessionPaths, {
       skipCookies: true,
@@ -89,6 +90,26 @@ export async function runPortalUrlLoginPhase(
 
   logger.info(`[scenario] portal-url-login — kaynak=${urlSource}`);
   logger.info(`[scenario] portal-url-login — ${entryUrl}`);
+
+  const currentUrl = page.url();
+  if (
+    banSafe &&
+    /kosmosvize\.com\.tr/i.test(currentUrl) &&
+    /registerform|appointmentform|appointmentprocedures/i.test(currentUrl)
+  ) {
+    logger.info(
+      `[scenario] portal-url-login — banSafe: portal zaten acik, goto atlandi (${currentUrl}).`,
+    );
+    await logPortalPageState(page, "portal-url-login (skip goto)");
+    const live = await readPortalLocalStorage(page);
+    logger.info(
+      `[scenario] portal-url-login — JWT=${hasJwtInStorage(live) ? "var" : "yok"} (${Object.keys(live).length} anahtar)`,
+    );
+    return {
+      ok: true,
+      detail: `Portal zaten acik — goto atlandi (${urlSource})`,
+    };
+  }
 
   if (runtime.settings.preGotoDelayMs > 0) {
     await page.waitForTimeout(runtime.settings.preGotoDelayMs);
@@ -112,16 +133,22 @@ export async function runPortalUrlLoginPhase(
       `[scenario] portal-url-login — Chrome localStorage JWT=${hasJwt ? "var" : "yok"} (${Object.keys(live).length} anahtar)`,
     );
     if (!hasJwt) {
-      const fileStorage = readStorageFile(sessionPaths.storageFile);
-      if (hasJwtInStorage(fileStorage)) {
+      if (banSafe) {
         logger.warn(
-          "[scenario] portal-url-login — Chrome'da JWT yok; storage.json'dan yedek enjekte ediliyor.",
+          "[scenario] portal-url-login — banSafe: JWT yok; storage.json enjekte EDILMEZ — elle giris veya ayni Chrome oturumu kullanin.",
         );
-        await applySessionStorageOnPage(page, sessionPaths);
       } else {
-        logger.warn(
-          "[scenario] portal-url-login — JWT bulunamadı. Aynı Chrome'da kayıt tamamlayın veya storage.json güncelleyin.",
-        );
+        const fileStorage = readStorageFile(sessionPaths.storageFile);
+        if (hasJwtInStorage(fileStorage)) {
+          logger.warn(
+            "[scenario] portal-url-login — Chrome'da JWT yok; storage.json'dan yedek enjekte ediliyor.",
+          );
+          await applySessionStorageOnPage(page, sessionPaths);
+        } else {
+          logger.warn(
+            "[scenario] portal-url-login — JWT bulunamadı. Aynı Chrome'da kayıt tamamlayın veya storage.json güncelleyin.",
+          );
+        }
       }
     }
   }

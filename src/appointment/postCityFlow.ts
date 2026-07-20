@@ -1,10 +1,6 @@
 import type { Page } from "playwright";
 
 import type { AppointmentSettings } from "../config/settings.js";
-import { selectApplicationType } from "./applicationTypeSelector.js";
-import { selectAppointmentStyle } from "./appointmentStyleSelector.js";
-import { fillNationalityNumber } from "./nationalityNumberInput.js";
-import { clickWizardNextButton } from "./wizardNavigation.js";
 import { clickAppointmentLocationButton } from "./locationButton.js";
 import { resolveAppointmentCity } from "./citySelector.js";
 import { dismissOpenOverlay } from "../interaction/dismissOverlay.js";
@@ -12,6 +8,10 @@ import { humanScrollToLocator } from "../interaction/humanScroll.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { logger } from "../utils/logger.js";
 import type { WizardStepId } from "./wizardStepDetector.js";
+import {
+  advanceWizardAfterAutofill,
+  ensureVisibleWizardFieldsFilled,
+} from "./wizardStepAutofill.js";
 
 function parseLocatorList(raw: string): string[] {
   return raw
@@ -114,52 +114,31 @@ export async function runStep1AfterCitySelection(
   });
 
   await clickAppointmentLocationButton(page, city, settings);
-  await clickWizardNextButton(page, settings);
+  await ensureVisibleWizardFieldsFilled(page, profile, settings);
+  await advanceWizardAfterAutofill(page, profile, settings);
 
   return { city, wizardStep: 1 };
 }
 
-/** Adım 2 — başvuru tipi, TC, başvuru şekli → Sonraki */
+/** Adım 3 — başvuru tipi, TC, başvuru şekli → Sonraki (boş alan kontrolü ile) */
 export async function runStep2InformationFlow(
   page: Page,
   profile: ResolvedProfile,
   settings: AppointmentSettings,
 ): Promise<WizardFlowResult> {
   const city = resolveAppointmentCity(profile, settings.defaultCity) ?? undefined;
-  const result: WizardFlowResult = { city, wizardStep: 2 };
+  const result: WizardFlowResult = { city, wizardStep: 3 };
+
+  await ensureVisibleWizardFieldsFilled(page, profile, settings);
 
   try {
-    result.applicationType = await selectApplicationType(page, profile, settings);
+    result.applicationType = profile.applicationType ?? settings.defaultApplicationType;
+    result.nationalityNumber = profile.nationalityNumber ?? settings.defaultNationalityNumber;
+    result.appointmentStyle = profile.appointmentStyle ?? settings.defaultAppointmentStyle;
+    await advanceWizardAfterAutofill(page, profile, settings);
   } catch (error) {
     logger.error(
-      "Başvuru tipi seçimi başarısız — observer devam ediyor.",
-      error instanceof Error ? error.message : error,
-    );
-  }
-
-  try {
-    result.nationalityNumber = await fillNationalityNumber(page, profile, settings);
-  } catch (error) {
-    logger.error(
-      "TC Kimlik girişi başarısız — observer devam ediyor.",
-      error instanceof Error ? error.message : error,
-    );
-  }
-
-  try {
-    result.appointmentStyle = await selectAppointmentStyle(page, profile, settings);
-  } catch (error) {
-    logger.error(
-      "Başvuru şekli seçimi başarısız — observer devam ediyor.",
-      error instanceof Error ? error.message : error,
-    );
-  }
-
-  try {
-    await clickWizardNextButton(page, settings);
-  } catch (error) {
-    logger.error(
-      "Başvuru şekli sonrası Sonraki tıklaması başarısız — observer devam ediyor.",
+      "Bilgi formu / Sonraki başarısız — observer devam ediyor.",
       error instanceof Error ? error.message : error,
     );
   }

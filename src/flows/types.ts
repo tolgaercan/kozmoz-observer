@@ -26,11 +26,15 @@ export interface FlowStepContext {
   wizardState: WizardStepState;
 }
 
+export type FlowMode = "wizard" | "api";
+
 export interface FlowDefinition {
   id: string;
   name: string;
   description?: string;
-  /** Gözlem hedefi wizard adımı (varsayılan 3 = takvim) */
+  /** wizard = takvim DOM | api = HTTP watcher (handler yok) */
+  mode?: FlowMode;
+  /** Gözlem hedefi wizard adımı (api modunda kullanılmaz) */
   observeTargetStep: WizardStepId;
   /** Profilden zorunlu form alanları */
   requiredProfileFields: (keyof ProfileFormData)[];

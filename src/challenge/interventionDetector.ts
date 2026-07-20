@@ -2,6 +2,7 @@ import type { Page } from "playwright";
 
 import { detectChallenge } from "./challengeDetector.js";
 import { detectManualAuthStep } from "../auth/authStepDetector.js";
+import { portalOriginsMatch } from "../portal/kosmosOrigin.js";
 
 export type InterventionType = "none" | "challenge" | "login" | "blocked";
 
@@ -158,11 +159,7 @@ export async function isAppReady(page: Page, expectedOrigin: string): Promise<bo
     return false;
   }
 
-  try {
-    if (!url.startsWith(new URL(expectedOrigin).origin)) {
-      return false;
-    }
-  } catch {
+  if (!portalOriginsMatch(url, expectedOrigin)) {
     return false;
   }
 

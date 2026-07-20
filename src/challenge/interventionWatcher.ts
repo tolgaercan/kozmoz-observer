@@ -157,7 +157,7 @@ export class InterventionWatcher {
             elapsed >= this.settings.intervention.challengeMaxWaitMs
           ) {
             challengeNotifiedTimeout = true;
-            await this.telegram.notifyManualHelpRequired({
+            await this.notifyManualHelpOnce({
               profileId: this.profileId,
               url: page.url(),
               reason: "Doğrulama süresi uzadı — eklenti veya manuel müdahale kontrol edin.",
@@ -172,7 +172,7 @@ export class InterventionWatcher {
         }
 
         if (signals.type === "challenge") {
-          await this.telegram.notifyManualHelpRequired({
+          await this.notifyManualHelpOnce({
             profileId: this.profileId,
             url: page.url(),
             reason: "Doğrulama çözülemedi — sistem beklemeye devam ediyor.",
@@ -256,6 +256,20 @@ export class InterventionWatcher {
   }
 
   private notifiedTypes = new Set<InterventionAlertType>();
+  private manualHelpNotified = new Set<string>();
+
+  private async notifyManualHelpOnce(details: {
+    profileId: string;
+    url: string;
+    reason: string;
+  }): Promise<void> {
+    const key = details.reason.slice(0, 80);
+    if (this.manualHelpNotified.has(key)) {
+      return;
+    }
+    this.manualHelpNotified.add(key);
+    await this.telegram.notifyManualHelpRequired(details);
+  }
 
   private async notifyOnce(
     type: InterventionAlertType,
@@ -278,5 +292,6 @@ export class InterventionWatcher {
 
   private resetNotifications(): void {
     this.notifiedTypes.clear();
+    this.manualHelpNotified.clear();
   }
 }

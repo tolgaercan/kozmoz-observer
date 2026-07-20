@@ -1,5 +1,10 @@
 import type { FlowDefinition } from "./types.js";
 import { kosmosBireyselStandartFlow } from "./kosmosBireyselStandart.flow.js";
+import {
+  kosmosEeaAbEsiObserveV1Flow,
+  kosmosEeaAbEsiStandartFlow,
+} from "./kosmosEeaAbEsi.flow.js";
+import { kosmosApiWatcherV1Flow } from "./kosmosApiWatcherV1.flow.js";
 import { kosmosObserveV1Flow } from "./kosmosObserveV1.flow.js";
 import { kosmosPortalBootstrapFlow } from "./kosmosPortalBootstrap.flow.js";
 
@@ -15,6 +20,9 @@ function registerFlow(flow: FlowDefinition): void {
 registerFlow(kosmosPortalBootstrapFlow);
 registerFlow(kosmosObserveV1Flow);
 registerFlow(kosmosBireyselStandartFlow);
+registerFlow(kosmosEeaAbEsiStandartFlow);
+registerFlow(kosmosEeaAbEsiObserveV1Flow);
+registerFlow(kosmosApiWatcherV1Flow);
 
 export const DEFAULT_FLOW_ID = kosmosObserveV1Flow.id;
 export const DEFAULT_BOOTSTRAP_FLOW_ID = kosmosPortalBootstrapFlow.id;

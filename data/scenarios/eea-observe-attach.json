@@ -1,0 +1,26 @@
+{
+  "id": "eea-observe-attach",
+  "name": "EEA AB Eşi — observer attach",
+  "description": "profile-2: Ankara + Bireysel + EEA AB Eşi (başvuru şekli) → takvim tarama (slot algoritma doğrulama).",
+  "status": "active",
+  "note": "npm run chrome:debug -- -Profile profile-2 sonra npm run scenario:eea-observe-attach. profile-1'e dokunulmaz.",
+  "steps": [
+    {
+      "phase": "chrome-login",
+      "label": "CDP baglan (profile-2)",
+      "params": {
+        "attachOnly": true,
+        "skipSessionInject": true
+      }
+    },
+    {
+      "phase": "observe",
+      "label": "EEA AB Eşi wizard + slot tarama",
+      "params": {
+        "skipRegisterWizard": true,
+        "navAlreadyDone": true,
+        "attachOnly": true
+      }
+    }
+  ]
+}

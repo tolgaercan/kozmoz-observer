@@ -1,5 +1,6 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
+import { detectWizardStepFromNav } from "../appointment/wizardStepDetector.js";
 import { logger } from "../utils/logger.js";
 
 export async function isCdpEndpointReady(endpoint: string): Promise<boolean> {
@@ -37,26 +38,72 @@ export async function connectOverCdp(endpoint: string): Promise<{
   return { browser, context };
 }
 
+function isUsableTabUrl(url: string): boolean {
+  return (
+    !url.startsWith("chrome-extension://") &&
+    !url.startsWith("devtools://") &&
+    !url.startsWith("chrome://settings/")
+  );
+}
+
+/** Randevu / wizard sekmesini ana siteye tercih et */
+export function scorePortalTabUrl(url: string): number {
+  if (!url || !isUsableTabUrl(url)) {
+    return -1;
+  }
+
+  if (!/kosmosvize\.com\.tr/i.test(url)) {
+    return 0;
+  }
+
+  let score = 10;
+
+  if (/basvuru\.kosmosvize\.com\.tr/i.test(url)) {
+    score += 50;
+  }
+  if (/appointmentProcedures/i.test(url)) {
+    score += 20;
+  }
+  if (/appointmentForm/i.test(url)) {
+    score += 60;
+  }
+  if (/registerForm/i.test(url)) {
+    score += 20;
+  }
+  if (/^https?:\/\/(www\.)?kosmosvize\.com\.tr(\/tr)?\/?$/i.test(url.replace(/#.*$/, ""))) {
+    score += 18;
+  }
+  if (/randevu/i.test(url)) {
+    score += 15;
+  }
+  if (/\/#\s*$/.test(url) || url.endsWith("#")) {
+    score -= 8;
+  }
+
+  return score;
+}
+
 export async function resolveCdpObserverPage(context: BrowserContext): Promise<Page> {
   const pages = context.pages().filter((candidate) => !candidate.isClosed());
 
-  const isUsable = (url: string): boolean =>
-    !url.startsWith("chrome-extension://") &&
-    !url.startsWith("devtools://") &&
-    !url.startsWith("chrome://settings/");
+  let best: Page | null = null;
+  let bestScore = -1;
 
-  const portalPage = pages.find((candidate) => {
-    const url = candidate.url();
-    return isUsable(url) && /kosmosvize\.com\.tr/i.test(url);
-  });
-
-  if (portalPage) {
-    logger.info(`Portal sekmesi kullaniliyor: ${portalPage.url()}`);
-    await portalPage.bringToFront();
-    return portalPage;
+  for (const candidate of pages) {
+    const score = scorePortalTabUrl(candidate.url());
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
   }
 
-  const reusable = pages.find((candidate) => isUsable(candidate.url()));
+  if (best && bestScore > 0) {
+    logger.info(`Portal sekmesi kullaniliyor (skor=${bestScore}): ${best.url()}`);
+    await best.bringToFront();
+    return best;
+  }
+
+  const reusable = pages.find((candidate) => isUsableTabUrl(candidate.url()));
 
   if (reusable) {
     logger.info(`Mevcut Chrome sekmesi kullaniliyor: ${reusable.url() || "about:blank"}`);
@@ -67,4 +114,69 @@ export async function resolveCdpObserverPage(context: BrowserContext): Promise<P
   const page = await context.newPage();
   logger.info("Observer sekmesi acildi (CDP — yeni tab).");
   return page;
+}
+
+/** Wizard nav görünen en uygun sekmeyi seç (attach modu) */
+export async function resolveCdpObserverPageWithWizard(
+  context: BrowserContext,
+  wizardNavLocator = "ul.wizard-nav-pills",
+): Promise<Page> {
+  const pages = context.pages().filter((candidate) => !candidate.isClosed());
+
+  let wizardPage: Page | null = null;
+  let wizardScore = -1;
+
+  for (const candidate of pages) {
+    const score = scorePortalTabUrl(candidate.url());
+    if (score < 0) {
+      continue;
+    }
+
+    try {
+      const state = await detectWizardStepFromNav(candidate, wizardNavLocator);
+      if (state?.isOnWizard && score >= wizardScore) {
+        wizardPage = candidate;
+        wizardScore = score + 100;
+      }
+    } catch {
+      // sekme geçişinde yoksay
+    }
+  }
+
+  if (wizardPage) {
+    logger.info(`Wizard sekmesi kullaniliyor (skor=${wizardScore}): ${wizardPage.url()}`);
+    await wizardPage.bringToFront();
+    return wizardPage;
+  }
+
+  return resolveCdpObserverPage(context);
+}
+
+/** GetClosedDate poll — appointmentForm sekmesini registerForm wizard'dan önce seç */
+export async function resolveCdpApiWatcherPage(context: BrowserContext): Promise<Page> {
+  const pages = context.pages().filter((candidate) => !candidate.isClosed());
+
+  let appointmentPage: Page | null = null;
+  let bestScore = -1;
+
+  for (const candidate of pages) {
+    const score = scorePortalTabUrl(candidate.url());
+    if (score < 0 || !/\/appointmentForm\b/i.test(candidate.url())) {
+      continue;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      appointmentPage = candidate;
+    }
+  }
+
+  if (appointmentPage) {
+    logger.info(
+      `[api-watcher] appointmentForm sekmesi kullaniliyor (skor=${bestScore}): ${appointmentPage.url()}`,
+    );
+    await appointmentPage.bringToFront();
+    return appointmentPage;
+  }
+
+  return resolveCdpObserverPageWithWizard(context);
 }
