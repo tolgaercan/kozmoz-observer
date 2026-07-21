@@ -44,6 +44,7 @@ export function extractRawForm(profile: ProfileDefinition): Partial<ProfileFormD
   const nested = profile.form ?? {};
   return {
     appointmentCity: nested.appointmentCity ?? profile.appointmentCity,
+    appointmentOffice: nested.appointmentOffice ?? profile.appointmentOffice,
     applicationType: nested.applicationType ?? profile.applicationType,
     appointmentStyle: nested.appointmentStyle ?? profile.appointmentStyle,
     nationalityNumber: nested.nationalityNumber ?? profile.nationalityNumber,
@@ -81,6 +82,7 @@ export function resolveProfileForm(
 
   return {
     appointmentCity: appointmentCity ?? "",
+    appointmentOffice: raw.appointmentOffice?.trim() || undefined,
     applicationType: applicationType ?? "",
     nationalityNumber: nationalityNumber ?? "",
     appointmentStyle: appointmentStyle ?? "",

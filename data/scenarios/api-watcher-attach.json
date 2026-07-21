@@ -1,10 +1,10 @@
 {
   "id": "api-watcher-attach",
   "name": "API GetClosedDate watcher (attach)",
-  "description": "Kosmos ana sayfa → registerform → JWT/Authorization → GetClosedDate HTTP poll. DOM takvim watcher ile karışmaz.",
+  "description": "CDP attach → JWT oku → GetClosedDate poll. Navigasyon/wizard yok; ofis ve başvuru şekli yalnızca API parametresi.",
   "status": "experimental",
   "banSafe": true,
-  "note": "npm run chrome:debug -- -Profile profile-api  →  npm run scenario:api-watcher-attach. Mevcut observe akışlarına dokunulmaz.",
+  "note": "Chrome debug acik + portal oturumu → panelden ofis/şekil sec → API Watcher. Sayfa degistirilmez.",
   "steps": [
     {
       "phase": "chrome-login",
@@ -16,12 +16,17 @@
     },
     {
       "phase": "api-auth-bootstrap",
-      "label": "Register sayfasından token yakala"
+      "label": "JWT oku (navigasyon yok)",
+      "params": {
+        "apiOnly": true
+      }
     },
     {
       "phase": "api-watcher",
       "label": "GetClosedDate API poll",
-      "params": {}
+      "params": {
+        "apiOnly": true
+      }
     }
   ]
 }

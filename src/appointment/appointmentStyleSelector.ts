@@ -15,6 +15,11 @@ export function resolveAppointmentStyle(
     return fromProfileEnv;
   }
 
+  const fromGlobal = process.env.APPOINTMENT_STYLE?.trim();
+  if (fromGlobal) {
+    return fromGlobal;
+  }
+
   const fromProfile = profile.appointmentStyle?.trim();
   if (fromProfile) {
     return fromProfile;

@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kozmoz Control Panel</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div class="brand">
+          <div class="brand-mark">K</div>
+          <div>
+            <h1>Kozmoz Observer</h1>
+            <p class="subtitle">Profil · IP · API · Süreç yönetimi</p>
+          </div>
+        </div>
+        <div class="header-actions">
+          <span class="badge" id="panelStatus">Bağlanıyor…</span>
+          <button type="button" class="btn btn-ghost" id="btnRefreshAll">Yenile</button>
+        </div>
+      </header>
+
+      <div class="ban-banner" id="banBanner" hidden></div>
+
+      <main class="layout">
+        <section class="card card-profile">
+          <div class="card-head">
+            <h2>Profil</h2>
+            <span class="hint">Chrome oturumu bu profile bağlı kalır</span>
+          </div>
+          <label class="field">
+            <span>Aktif profil</span>
+            <select id="profileSelect"></select>
+          </label>
+          <div class="profile-meta" id="profileMeta"></div>
+          <div class="chrome-status" id="chromeStatus"></div>
+        </section>
+
+        <section class="card card-network">
+          <div class="card-head">
+            <h2>Ağ / IP</h2>
+            <span class="hint">Şimdilik ev interneti; ileride proxy havuzu</span>
+          </div>
+
+          <div class="ip-grid">
+            <div class="ip-box">
+              <span class="ip-label">Şu anki public IP</span>
+              <strong id="currentIp">—</strong>
+            </div>
+            <div class="ip-box ip-box-accent">
+              <span class="ip-label">Kilitli IP (worker)</span>
+              <strong id="lockedIp">—</strong>
+            </div>
+          </div>
+
+          <label class="field">
+            <span>Bağlantı modu</span>
+            <select id="proxyMode">
+              <option value="direct">Doğrudan (ev interneti)</option>
+              <option value="proxy">Proxy (ileride)</option>
+            </select>
+          </label>
+
+          <label class="field" id="proxyUrlField" hidden>
+            <span>Proxy URL</span>
+            <select id="proxyUrl">
+              <option value="">— Seç —</option>
+            </select>
+          </label>
+
+          <div class="inline-actions">
+            <button type="button" class="btn btn-secondary" id="btnLockCurrentIp">
+              Mevcut IP'yi kilitle
+            </button>
+            <button type="button" class="btn btn-secondary" id="btnSaveNetwork">
+              Ağ ayarını kaydet
+            </button>
+          </div>
+        </section>
+
+        <section class="card card-api">
+          <div class="card-head">
+            <h2>API parametreleri</h2>
+            <span class="hint">GetClosedDate sorgusu için</span>
+          </div>
+
+          <label class="field">
+            <span>Başvuru noktası (dealerOffice)</span>
+            <select id="dealerOffice"></select>
+          </label>
+
+          <label class="field">
+            <span>Başvuru şekli (appointmentStyle)</span>
+            <select id="appointmentStyle"></select>
+          </label>
+
+          <div class="api-preview" id="apiPreview"></div>
+
+          <button type="button" class="btn btn-secondary" id="btnSaveApi">API ayarını kaydet</button>
+        </section>
+
+        <section class="card card-actions">
+          <div class="card-head">
+            <h2>İşlemler</h2>
+            <span class="hint">Chrome aç → attach → watcher başlat</span>
+          </div>
+
+          <div class="action-grid">
+            <button type="button" class="btn btn-primary" id="btnStartChrome">
+              Chrome (debug) başlat
+            </button>
+            <button type="button" class="btn btn-accent" id="btnRunApiWatcher">
+              API Watcher çalıştır
+            </button>
+            <button type="button" class="btn btn-accent" id="btnRunDomObserver">
+              DOM Observer çalıştır
+            </button>
+          </div>
+
+          <p class="note">
+            Diğer Chrome pencereleri kapatılmaz. CDP portu hazırsa mevcut oturum kullanılır.
+          </p>
+        </section>
+
+        <section class="card card-ban-overview span-2">
+          <div class="card-head row-between">
+            <div>
+              <h2>Ban / rate limit özeti</h2>
+              <span class="hint">Hangi profil hangi IP ile ban yedi — tüm profiller</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Profil</th>
+                  <th>CDP</th>
+                  <th>Ban IP</th>
+                  <th>Kilitli IP</th>
+                  <th>Durum</th>
+                  <th>Kalan</th>
+                  <th>Ofis / şekil</th>
+                </tr>
+              </thead>
+              <tbody id="banOverviewBody">
+                <tr class="empty-row">
+                  <td colspan="7">Yükleniyor…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="card card-api-health span-2">
+          <div class="card-head row-between">
+            <div>
+              <h2>API sağlığı</h2>
+              <span class="hint">GetClosedDate poll durumu, rate limit ve ban takibi</span>
+            </div>
+            <span class="status-pill" id="apiHealthBadge">—</span>
+          </div>
+          <div class="api-health-grid" id="apiHealthPanel">
+            <p class="note">Watcher başlatıldığında son poll sonuçları burada görünür.</p>
+          </div>
+        </section>
+
+        <section class="card card-processes span-2">
+          <div class="card-head row-between">
+            <div>
+              <h2>Aktif süreçler</h2>
+              <span class="hint">Panel üzerinden başlatılan Chrome ve watcher'lar</span>
+            </div>
+            <button type="button" class="btn btn-ghost" id="btnRefreshProcesses">Süreçleri yenile</button>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tür</th>
+                  <th>Profil</th>
+                  <th>Etiket</th>
+                  <th>Durum</th>
+                  <th>PID</th>
+                  <th>Başlangıç</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="processTableBody">
+                <tr class="empty-row">
+                  <td colspan="7">Henüz süreç yok</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <span id="lastUpdated">—</span>
+        <span>Port: <code id="panelPort">8787</code></span>
+      </footer>
+    </div>
+
+    <div class="toast-stack" id="toastStack"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

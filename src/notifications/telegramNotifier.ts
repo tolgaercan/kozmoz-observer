@@ -147,7 +147,7 @@ export class TelegramNotifier {
       : "";
     const text = [
       `<b>${emoji} ${title}</b>`,
-      details.city ? `<b>İl:</b> ${escapeHtml(details.city)}` : "",
+      details.city ? `<b>Ofis:</b> ${escapeHtml(details.city)}` : "",
       styleLine,
       `<b>Profil:</b> ${escapeHtml(details.profileId)}`,
       "",

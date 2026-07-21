@@ -12,11 +12,12 @@ export interface ClosedDatePollResult {
   summary: string;
   raw?: unknown;
   closedDates?: string[];
-  /** Portal ile uyumlu seçilebilir günler (bookableStart..maxDate − kapalı) */
+  /** Portal ile uyumlu seçilebilir günler (bookableStart..bookableEnd − kapalı) */
   activeDates?: string[];
   /** Geriye dönük alias — activeDates ile aynı */
   openDates?: string[];
   bookableStart?: string;
+  bookableEnd?: string;
   closedInRange?: string[];
   unauthorized?: boolean;
   /** HTTP 429 — çok sık poll */

@@ -76,9 +76,28 @@ function Set-ChromeCleanExitState {
   Write-Host "Chrome cikis durumu temizlendi."
 }
 
-Write-Host "Mevcut Chrome surecleri kapatiliyor..."
-Get-Process chrome -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Seconds 2
+Write-Host "CDP kontrol ediliyor (port $port)..."
+$endpoint = "http://127.0.0.1:$port/json/version"
+$alreadyRunning = $false
+try {
+  $resp = Invoke-WebRequest -Uri $endpoint -UseBasicParsing -TimeoutSec 2
+  if ($resp.StatusCode -eq 200) {
+    $alreadyRunning = $true
+  }
+} catch {
+  # port bos — yeni Chrome acilacak
+}
+
+if ($alreadyRunning) {
+  Write-Host ""
+  Write-Host "CDP zaten hazir — yeni Chrome acilmadi (diger Chrome pencereleri korundu)." -ForegroundColor Green
+  Write-Host "  Profil ID : $ProfileId"
+  Write-Host "  Port      : $port"
+  Write-Host ""
+  exit 0
+}
+
+Write-Host "Bu profil icin yeni Chrome aciliyor (diger Chrome surecleri kapatilmiyor)..."
 
 $freshProfile = $false
 if ($env:CHROME_FRESH_PROFILE -eq "true") {

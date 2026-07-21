@@ -8,6 +8,7 @@ data/chrome/
 data/sessions/
 data/cookies/
 data/config/captcha.runtime.json
+data/control-panel/
 *.log
 
 # GitHub Desktop ile yanlışlıkla oluşturulan iç içe boş repo klasörü

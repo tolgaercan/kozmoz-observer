@@ -5,7 +5,6 @@ import { persistPortalStorage } from "../../session/sessionPersister.js";
 import { capturePortalAuthorizationToken } from "../../api/token/networkTokenCapture.js";
 import { extractJwtFromStorage } from "../../api/token/jwtExtractor.js";
 import {
-  bearerFromRecord,
   loadApiToken,
   saveApiToken,
 } from "../../api/token/tokenStore.js";
@@ -22,9 +21,88 @@ export interface ApiAuthBootstrapResult {
   detail: string;
 }
 
+function isApiOnlyMode(params?: ScenarioStepParams): boolean {
+  return params?.apiOnly === true || params?.noNavigate === true;
+}
+
+async function readTokenFromPortalPage(
+  runtime: ScenarioRuntime,
+  page: import("playwright").Page,
+): Promise<string | null> {
+  const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
+  const sessionPaths = runtime.profileManager.toSessionPaths(profile);
+
+  await persistPortalStorage(page, sessionPaths.storageFile);
+  const storage = readStorageFile(sessionPaths.storageFile);
+  return extractJwtFromStorage(storage);
+}
+
+/**
+ * apiOnly: navigasyon yok — açık portal sekmesinden / cache'den JWT oku.
+ */
+async function runApiAuthBootstrapPassive(
+  runtime: ScenarioRuntime,
+): Promise<ApiAuthBootstrapResult> {
+  const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
+
+  const cached = loadApiToken(runtime.projectRoot, profile.id);
+  if (cached) {
+    setRuntimeBearerToken(cached.authorization);
+    return {
+      ok: true,
+      detail: `api-token.json (${cached.capturedAt}) — navigasyon yok`,
+    };
+  }
+
+  const fromEnv = resolveBearerToken(runtime.projectRoot, profile.id);
+  if (fromEnv) {
+    return { ok: true, detail: "Token .env / RAM — navigasyon yok" };
+  }
+
+  if (!runtime.session?.context) {
+    return { ok: false, detail: "CDP oturumu gerekli" };
+  }
+
+  const { context } = runtime.session;
+  const portalPages = context.pages().filter(
+    (candidate) => !candidate.isClosed() && isBasvuruPortalUrl(candidate.url()),
+  );
+
+  for (const candidate of portalPages) {
+    runtime.session.page = candidate;
+    const jwt = await readTokenFromPortalPage(runtime, candidate);
+    if (jwt) {
+      const record = saveApiToken(runtime.projectRoot, profile.id, jwt, "localStorage");
+      setRuntimeBearerToken(record.authorization);
+      logger.info(`[api-auth] JWT okundu (${candidate.url()}) — navigasyon yok`);
+      return {
+        ok: true,
+        detail: `Token localStorage (${new URL(candidate.url()).pathname}) — navigasyon yok`,
+      };
+    }
+  }
+
+  const marketingPage = context.pages().find(
+    (candidate) => !candidate.isClosed() && isKosmosMarketingHome(candidate.url()),
+  );
+  if (marketingPage) {
+    runtime.session.page = marketingPage;
+    logger.info(
+      `[api-auth] Portal home açık (${marketingPage.url()}) — JWT için basvuru sekmesi gerekli`,
+    );
+  }
+
+  return {
+    ok: false,
+    detail:
+      "JWT bulunamadi — once portalda giris yapin (apiOnly: sayfa degistirilmedi). basvuru.kosmosvize.com.tr acik olmali.",
+  };
+}
+
 /**
  * Phase: api-auth-bootstrap
- * Kosmos ana sayfa → registerform → Authorization/JWT yakala → api-token.json + RAM
+ * Varsayilan (apiOnly): cache / acik sekme JWT — navigasyon yok.
+ * Tam mod: Kosmos ana sayfa → registerform → token yakala.
  */
 export async function runApiAuthBootstrapPhase(
   runtime: ScenarioRuntime,
@@ -32,6 +110,11 @@ export async function runApiAuthBootstrapPhase(
 ): Promise<ApiAuthBootstrapResult> {
   if (!runtime.session) {
     return { ok: false, detail: "CDP oturumu gerekli — önce chrome-login" };
+  }
+
+  if (isApiOnlyMode(params)) {
+    logger.info("[api-auth] apiOnly modu — navigasyon atlandi, mevcut oturum kullaniliyor.");
+    return runApiAuthBootstrapPassive(runtime);
   }
 
   const { page, context } = runtime.session;
@@ -134,8 +217,7 @@ export function getBearerTokenForProfile(runtime: ScenarioRuntime): string | nul
 }
 
 /**
- * appointmentForm / portal sekmesinden JWT yenile — UI oturumu açıkken hızlı yol.
- * Navigasyon yapmaz; localStorage + kısa network dinlemesi.
+ * appointmentForm / portal sekmesinden JWT yenile — navigasyon yapmaz.
  */
 export async function tryRefreshTokenFromActivePage(
   runtime: ScenarioRuntime,
@@ -146,44 +228,42 @@ export async function tryRefreshTokenFromActivePage(
   }
 
   const pages = session.context.pages().filter((candidate) => !candidate.isClosed());
-  let page =
-    pages.find((candidate) => /\/appointmentForm\b/i.test(candidate.url())) ??
-    (session.page && !session.page.isClosed() ? session.page : pages[0]);
+  const candidates = [
+    ...pages.filter((candidate) => /\/appointmentForm\b/i.test(candidate.url())),
+    ...pages.filter((candidate) => isBasvuruPortalUrl(candidate.url())),
+    ...(session.page && !session.page.isClosed() ? [session.page] : []),
+  ];
 
-  if (!page || page.isClosed() || !isBasvuruPortalUrl(page.url())) {
-    return null;
-  }
+  const seen = new Set<import("playwright").Page>();
+  for (const page of candidates) {
+    if (seen.has(page) || page.isClosed() || !isBasvuruPortalUrl(page.url())) {
+      continue;
+    }
+    seen.add(page);
+    session.page = page;
 
-  session.page = page;
+    const jwt = await readTokenFromPortalPage(runtime, page);
+    if (jwt) {
+      const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
+      const record = saveApiToken(runtime.projectRoot, profile.id, jwt, "localStorage");
+      setRuntimeBearerToken(record.authorization);
+      logger.info(`[api-auth] JWT yenilendi (${page.url()}).`);
+      return record.authorization;
+    }
 
-  const { context } = session;
-
-  const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
-  const sessionPaths = runtime.profileManager.toSessionPaths(profile);
-
-  logger.info(`[api-auth] Aktif portal sekmesinden JWT yenileniyor: ${page.url()}`);
-  await persistPortalStorage(page, sessionPaths.storageFile);
-
-  const storage = readStorageFile(sessionPaths.storageFile);
-  const fromStorage = extractJwtFromStorage(storage);
-  if (fromStorage) {
-    const record = saveApiToken(runtime.projectRoot, profile.id, fromStorage, "localStorage");
-    setRuntimeBearerToken(record.authorization);
-    logger.info("[api-auth] JWT localStorage'dan yenilendi.");
-    return record.authorization;
-  }
-
-  const captured = await capturePortalAuthorizationToken(page, context, 5_000);
-  if (captured) {
-    const record = saveApiToken(
-      runtime.projectRoot,
-      profile.id,
-      captured.token,
-      captured.source,
-    );
-    setRuntimeBearerToken(record.authorization);
-    logger.info(`[api-auth] JWT yakalandi (${captured.source}).`);
-    return record.authorization;
+    const captured = await capturePortalAuthorizationToken(page, session.context, 5_000);
+    if (captured) {
+      const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
+      const record = saveApiToken(
+        runtime.projectRoot,
+        profile.id,
+        captured.token,
+        captured.source,
+      );
+      setRuntimeBearerToken(record.authorization);
+      logger.info(`[api-auth] JWT yakalandi (${captured.source}).`);
+      return record.authorization;
+    }
   }
 
   return null;

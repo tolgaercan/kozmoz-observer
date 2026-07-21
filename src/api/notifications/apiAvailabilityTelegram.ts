@@ -16,6 +16,7 @@ export interface ApiAvailabilitySummaryInput {
   cityLabel?: string;
   appointmentStyleLabel?: string;
   bookableStart: string;
+  bookableEnd?: string;
   maxDate: string;
   activeDates: string[];
   closedDates: string[];
@@ -27,7 +28,8 @@ export function buildApiAvailabilityTextSummary(input: ApiAvailabilitySummaryInp
     : input.profileId;
   const cityLine = input.cityLabel ? ` — ${input.cityLabel}` : "";
   const header = `API müsait günler${cityLine} — ${styleLine}`;
-  const rangeLine = `Aralık: ${input.bookableStart} → ${input.maxDate}`;
+  const rangeEnd = input.bookableEnd ?? input.maxDate;
+  const rangeLine = `Aralık: ${input.bookableStart} → ${rangeEnd}`;
 
   if (input.activeDates.length === 0) {
     return [

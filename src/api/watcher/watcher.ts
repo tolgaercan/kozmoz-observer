@@ -1,27 +1,29 @@
 import type { Page } from "playwright";
 
+import { ApiHealthStore } from "../../control-panel/apiHealthStore.js";
 import type { ApiWatcherSettings, AppSettings, TelegramSettings } from "../../config/settings.js";
 import { buildApiAvailabilityTextSummary } from "../notifications/apiAvailabilityTelegram.js";
-import { listDatesInRange } from "../client/availabilityDates.js";
 import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
 import { logger } from "../../utils/logger.js";
 import type { ApiWatcherHandle, ClosedDatePollResult } from "../types.js";
 import { checkAvailability } from "../client/checkAvailability.js";
 import type { ApiServiceContext } from "../client/apiService.js";
 import type { ApiQueryParams } from "../client/resolveApiQueryParams.js";
+import { formatDurationTr, resolveRateLimitBackoffMs } from "../client/rateLimitPolicy.js";
+import { detectPublicIp } from "../../control-panel/chromeLauncher.js";
 
 export interface AvailabilityWatcherOptions {
   projectRoot: string;
   profileId: string;
+  profileName?: string;
+  lockedIp?: string;
+  cdpPort?: number;
   settings: AppSettings;
   queryParams: ApiQueryParams;
   getBearerToken: () => string | null;
   onUnauthorized: () => Promise<string | null>;
-  /** Cloudflare bypass — açık portal sekmesinden fetch */
   page?: Page;
-  /** Her poll öncesi appointmentForm sekmesini yeniden seç */
   resolvePage?: () => Promise<Page | undefined>;
-  /** Her poll'da güncel date/maxDate (bugün) */
   resolveQueryParams?: () => ApiQueryParams;
 }
 
@@ -45,8 +47,23 @@ function activeDatesEqual(left: string[], right: string[]): boolean {
   return left.every((date) => rightSet.has(date));
 }
 
+function rawBodyText(raw: unknown): string | undefined {
+  if (typeof raw === "string") {
+    return raw;
+  }
+  if (raw && typeof raw === "object") {
+    try {
+      return JSON.stringify(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 /**
- * checkAvailability() — varsayılan 2 dk aralıkla (API_POLL_INTERVAL_MS, ~30 istek/saat).
+ * checkAvailability() — varsayılan 2 dk aralıkla.
+ * 429/ban: tek istek, uzun backoff, panelde görünür.
  */
 export function startAvailabilityWatcher(
   options: AvailabilityWatcherOptions,
@@ -58,6 +75,7 @@ export function startAvailabilityWatcher(
     return { stop: () => undefined };
   }
 
+  const healthStore = new ApiHealthStore(options.projectRoot);
   const telegram = new TelegramNotifier(telegramSettings);
   let running = false;
   let stopped = false;
@@ -67,82 +85,129 @@ export function startAvailabilityWatcher(
   let lastTelegramReportAt = 0;
   let rateLimitUntil = 0;
   let lastRateLimitLogAt = 0;
+  let rateLimitTelegramSentAt = 0;
+  let requestsLastHour = 0;
+  let hourWindowStart = Date.now();
   const pollMs = apiSettings.pollIntervalMs;
-  const rateLimitBackoffMs = Math.max(pollMs * 6, 30_000);
   const telegramReportMs = Math.min(apiSettings.telegramReportIntervalMs, pollMs);
+  let watcherPublicIp = options.lockedIp || "unknown";
+  void detectPublicIp().then((ip) => {
+    if (ip !== "unknown") {
+      watcherPublicIp = ip;
+    }
+  });
+
+  const recordHealth = (patch: Parameters<ApiHealthStore["update"]>[1]): void => {
+    healthStore.update(options.profileId, {
+      profileName: options.profileName,
+      publicIp: watcherPublicIp,
+      lockedIp: options.lockedIp,
+      cdpPort: options.cdpPort,
+      pollIntervalMs: pollMs,
+      requestsLastHour,
+      dealerOffice: options.queryParams.dealerOfficeLabel,
+      appointmentStyle: options.queryParams.appointmentStyleLabel,
+      appointmentTypeId: options.queryParams.appointmentTypeId,
+      ...patch,
+    });
+  };
 
   logger.info(
-    `[api-watcher] checkAvailability her ${pollMs}ms — profil: ${options.profileId}`,
+    `[api-watcher] checkAvailability her ${pollMs}ms — profil: ${options.profileId} (tek istek/poll)`,
   );
-  if (apiSettings.telegramReportEnabled) {
-    logger.info(
-      telegram.isConfigured()
-        ? `[api-watcher] Telegram özeti her ${Math.round(telegramReportMs / 1000)}s (poll ile hizalı).`
-        : "[api-watcher] Telegram özeti açık ama TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID eksik.",
-    );
-  }
 
-  const processPollResult = async (
-    result: ClosedDatePollResult,
-  ): Promise<"done" | "retry-auth"> => {
+  const processPollResult = async (result: ClosedDatePollResult): Promise<void> => {
+    const queryParams = options.resolveQueryParams?.() ?? options.queryParams;
+    const nowIso = new Date().toISOString();
+
+    if (result.rateLimited) {
+      const bodyText = rawBodyText(result.raw);
+      const backoffMs = resolveRateLimitBackoffMs({
+        pollIntervalMs: pollMs,
+        bodyText,
+      });
+      rateLimitUntil = Date.now() + backoffMs;
+      const banUntil = new Date(rateLimitUntil).toISOString();
+      const summary =
+        backoffMs >= 3_600_000
+          ? `Portal ban — ${formatDurationTr(backoffMs)} bekleyin`
+          : `HTTP 429 — ${formatDurationTr(backoffMs)} bekleyin`;
+
+      if (Date.now() - lastRateLimitLogAt >= 60_000) {
+        lastRateLimitLogAt = Date.now();
+        logger.warn(`[api-watcher] ${summary}`);
+      }
+
+      recordHealth({
+        status: backoffMs >= 3_600_000 ? "banned" : "rate_limited",
+        lastPollAt: nowIso,
+        lastHttpStatus: result.status,
+        lastError: bodyText?.slice(0, 500) ?? result.summary,
+        lastSummary: summary,
+        backoffUntil: banUntil,
+        portalBanUntil: backoffMs >= 3_600_000 ? banUntil : undefined,
+      });
+
+      if (telegram.isConfigured() && Date.now() - rateLimitTelegramSentAt >= 3_600_000) {
+        rateLimitTelegramSentAt = Date.now();
+        const ipNote = watcherPublicIp !== "unknown" ? ` · IP: ${watcherPublicIp}` : "";
+        await telegram.notifyManualHelpRequired({
+          profileId: options.profileId,
+          url: "GetClosedDate API",
+          reason: `${summary}${ipNote}`,
+        });
+      }
+      return;
+    }
+
     if (result.unauthorized) {
-      logger.warn("[api-watcher] Yetkisiz yanıt — token geçersiz.");
-      return "retry-auth";
+      logger.warn("[api-watcher] 401 — token yenileme yapıldı, aynı poll'da ikinci istek YOK.");
+      recordHealth({
+        status: "unauthorized",
+        lastPollAt: nowIso,
+        lastHttpStatus: result.status,
+        lastError: result.summary,
+        lastSummary: result.summary,
+      });
+      return;
     }
 
     if (!result.ok) {
-      if (result.rateLimited) {
-        rateLimitUntil = Date.now() + rateLimitBackoffMs;
-        const now = Date.now();
-        if (now - lastRateLimitLogAt >= rateLimitBackoffMs) {
-          lastRateLimitLogAt = now;
-          logger.warn(
-            `[api-watcher] HTTP 429 — ${Math.round(rateLimitBackoffMs / 1000)}s bekleniyor`,
-          );
-        }
-      } else {
-        logger.warn(`[api-watcher] Poll hatası: ${result.summary}`);
-      }
-      return "done";
+      logger.warn(`[api-watcher] Poll hatası: ${result.summary}`);
+      recordHealth({
+        status: "error",
+        lastPollAt: nowIso,
+        lastHttpStatus: result.status,
+        lastError: result.summary,
+        lastSummary: result.summary,
+      });
+      return;
     }
 
     logger.info(`[api-watcher] ${result.summary}`);
 
     const activeDates = result.activeDates ?? result.openDates ?? [];
     const currentClosed = result.closedDates ?? [];
-    const queryParams = options.resolveQueryParams?.() ?? options.queryParams;
     const bookableStart = result.bookableStart ?? queryParams.date;
-    const closedInRangeCount = result.closedInRange?.length ?? 0;
-    const bookableRangeLen = listDatesInRange(
-      bookableStart,
-      queryParams.maxDate,
-    ).length;
-    const suspiciousAllClosed =
-      activeDates.length === 0 &&
-      closedInRangeCount >= bookableRangeLen &&
-      bookableRangeLen > 0;
+    const bookableEnd = result.bookableEnd ?? queryParams.maxDate;
 
-    if (suspiciousAllClosed) {
-      logger.warn(
-        `[api-watcher] Tüm randevu aralığı kapalı (${closedInRangeCount}/${bookableRangeLen}) — appointmentForm JWT yenileniyor.`,
-      );
-      await options.onUnauthorized();
-      return "retry-auth";
-    }
+    recordHealth({
+      status: activeDates.length > 0 ? "ok" : "empty",
+      lastPollAt: nowIso,
+      lastOkAt: nowIso,
+      lastHttpStatus: result.status,
+      lastSummary: result.summary,
+      lastError: undefined,
+      backoffUntil: undefined,
+    });
 
     if (activeDates.length > 0) {
       logger.info(
-        `[api-watcher] Aktif günler (${activeDates.length}, ${bookableStart} → ${queryParams.maxDate}): ${activeDates.join(", ")}`,
+        `[api-watcher] Aktif günler (${activeDates.length}, ${bookableStart} → ${bookableEnd}): ${activeDates.join(", ")}`,
       );
     } else {
       logger.info(
-        `[api-watcher] Aktif gün yok — ${bookableStart} → ${queryParams.maxDate} aralığında seçilebilir gün kalmadı.`,
-      );
-    }
-
-    if (currentClosed.length > 0) {
-      logger.info(
-        `[api-watcher] Kapalı günler (API, ${currentClosed.length}): ${currentClosed.join(", ")}`,
+        `[api-watcher] Aktif gün yok — ${bookableStart} → ${bookableEnd} aralığında seçilebilir gün kalmadı.`,
       );
     }
 
@@ -165,11 +230,13 @@ export function startAvailabilityWatcher(
         periodicTelegramDue;
 
       if (shouldSendTelegram) {
+        const officeLabel = queryParams.dealerOfficeLabel ?? queryParams.cityLabel;
         const textSummary = buildApiAvailabilityTextSummary({
           profileId: options.profileId,
-          cityLabel: queryParams.cityLabel,
+          cityLabel: officeLabel,
           appointmentStyleLabel: queryParams.appointmentStyleLabel,
           bookableStart,
+          bookableEnd,
           maxDate: queryParams.maxDate,
           activeDates,
           closedDates: currentClosed,
@@ -177,7 +244,7 @@ export function startAvailabilityWatcher(
 
         await telegram.notifyApiAvailability({
           profileId: options.profileId,
-          city: queryParams.cityLabel,
+          city: officeLabel,
           appointmentStyle: queryParams.appointmentStyleLabel,
           textSummary,
           activeDates,
@@ -204,8 +271,6 @@ export function startAvailabilityWatcher(
         );
       }
     }
-
-    return "done";
   };
 
   const runPoll = async (): Promise<void> => {
@@ -215,8 +280,18 @@ export function startAvailabilityWatcher(
     running = true;
 
     try {
+      const blocked = healthStore.isBlocked(options.profileId);
+      if (blocked.blocked && blocked.until) {
+        rateLimitUntil = Math.max(rateLimitUntil, Date.parse(blocked.until));
+      }
+
       if (Date.now() < rateLimitUntil) {
         return;
+      }
+
+      if (Date.now() - hourWindowStart >= 3_600_000) {
+        hourWindowStart = Date.now();
+        requestsLastHour = 0;
       }
 
       let bearer = options.getBearerToken();
@@ -225,40 +300,39 @@ export function startAvailabilityWatcher(
       }
       if (!bearer) {
         logger.warn("[api-watcher] Token yok — poll atlandı.");
+        recordHealth({
+          status: "error",
+          lastPollAt: new Date().toISOString(),
+          lastError: "Token yok",
+          lastSummary: "Token yok — poll atlandı",
+        });
         return;
       }
 
       const queryParams = options.resolveQueryParams?.() ?? options.queryParams;
       const page = options.resolvePage ? await options.resolvePage() : options.page;
 
-      let result = await checkAvailability(
+      const result = await checkAvailability(
         buildApiContext(options, apiSettings),
         queryParams,
         page,
       );
+      requestsLastHour += 1;
 
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (result.unauthorized) {
-          logger.warn("[api-watcher] 401 — token yenileniyor...");
-          await options.onUnauthorized();
-        }
-
-        const outcome = await processPollResult(result);
-        if (outcome === "retry-auth") {
-          const retryPage = options.resolvePage ? await options.resolvePage() : page;
-          result = await checkAvailability(
-            buildApiContext(options, apiSettings),
-            queryParams,
-            retryPage,
-          );
-          continue;
-        }
-        break;
+      if (result.unauthorized) {
+        await options.onUnauthorized();
       }
+
+      await processPollResult(result);
     } catch (error) {
-      logger.warn(
-        `[api-watcher] ${error instanceof Error ? error.message : String(error)}`,
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`[api-watcher] ${message}`);
+      recordHealth({
+        status: "error",
+        lastPollAt: new Date().toISOString(),
+        lastError: message,
+        lastSummary: message,
+      });
     } finally {
       running = false;
     }
@@ -279,5 +353,4 @@ export function startAvailabilityWatcher(
   };
 }
 
-/** Geriye dönük alias */
 export { startAvailabilityWatcher as startClosedDateWatcher };

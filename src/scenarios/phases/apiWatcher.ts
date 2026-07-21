@@ -1,12 +1,14 @@
 import { startAvailabilityWatcher } from "../../api/watcher/watcher.js";
 import { closedDateUrl } from "../../api/client/apiService.js";
-import { resolveCdpApiWatcherPage } from "../../browser/cdpConnector.js";
+import { resolveCdpApiPollPage } from "../../browser/cdpConnector.js";
 import {
   logResolvedApiQueryParams,
   resolveApiQueryParams,
   type ApiQueryParamOverrides,
 } from "../../api/client/resolveApiQueryParams.js";
 import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
+import { WorkerConfigStore } from "../../control-panel/workerConfigStore.js";
+import { detectPublicIp } from "../../control-panel/chromeLauncher.js";
 import { logger } from "../../utils/logger.js";
 import type { ScenarioRuntime } from "../scenarioRuntime.js";
 import type { ScenarioStepParams } from "../types.js";
@@ -36,10 +38,12 @@ function waitUntilInterrupted(): Promise<void> {
 function readParamOverrides(params?: ScenarioStepParams): ApiQueryParamOverrides {
   return {
     dealerId: params?.dealerId as string | undefined,
+    dealerOffice: params?.dealerOffice as string | undefined,
     date: params?.date as string | undefined,
     maxDate: params?.maxDate as string | undefined,
     cityId: params?.cityId as string | undefined,
     appointmentTypeId: params?.appointmentTypeId as string | undefined,
+    appointmentStyle: params?.appointmentStyle as string | undefined,
     applicationTypeId: params?.applicationTypeId as string | undefined,
     appointmentDate: params?.appointmentDate as string | undefined,
   };
@@ -47,7 +51,7 @@ function readParamOverrides(params?: ScenarioStepParams): ApiQueryParamOverrides
 
 /**
  * Phase: api-watcher
- * checkAvailability() poll — DOM/takvim watcher ile karışmaz.
+ * GetClosedDate HTTP poll — parametreler panel/env'den; wizard navigasyonu yok.
  */
 export async function runApiWatcherPhase(
   runtime: ScenarioRuntime,
@@ -77,8 +81,11 @@ export async function runApiWatcherPhase(
   }
 
   if (runtime.session?.context) {
-    runtime.session.page = await resolveCdpApiWatcherPage(runtime.session.context);
-    logger.info(`[api-watcher] Poll sekmesi: ${runtime.session.page.url()}`);
+    runtime.session.page = await resolveCdpApiPollPage(runtime.session.context);
+    logger.info(
+      `[api-watcher] Poll sekmesi (navigasyon yok): ${runtime.session.page.url()} — ` +
+        `dealerId=${queryParams.dealerId}, typeId=${queryParams.appointmentTypeId}`,
+    );
   }
 
   const resolveFreshQueryParams = (): ReturnType<typeof resolveApiQueryParams> =>
@@ -94,6 +101,11 @@ export async function runApiWatcherPhase(
     queryParams,
   );
   logger.info(`[api-watcher] Poll URL: ${pollUrl}`);
+
+  const workerStore = new WorkerConfigStore(runtime.projectRoot);
+  const publicIp = await detectPublicIp();
+  const worker = workerStore.getWorker(profile.id, publicIp);
+
   if (!apiSettings.hourQuotaEnabled) {
     logger.debug(
       "[api-watcher] Saat kotası modülü hazır (checkHourQuota) — API_HOUR_QUOTA_ENABLED=false, tetiklenmiyor.",
@@ -104,6 +116,9 @@ export async function runApiWatcherPhase(
     {
       projectRoot: runtime.projectRoot,
       profileId: profile.id,
+      profileName: profile.name,
+      lockedIp: worker.lockedIp || publicIp,
+      cdpPort: profile.browser?.cdpPort,
       settings: runtime.settings,
       queryParams,
       page: runtime.session?.page,
@@ -113,7 +128,7 @@ export async function runApiWatcherPhase(
         if (!runtime.session?.context) {
           return runtime.session?.page;
         }
-        runtime.session.page = await resolveCdpApiWatcherPage(runtime.session.context);
+        runtime.session.page = await resolveCdpApiPollPage(runtime.session.context);
         return runtime.session.page;
       },
       onUnauthorized: async () => {
@@ -121,12 +136,16 @@ export async function runApiWatcherPhase(
         if (quick) {
           return quick;
         }
-        const refreshed = await runApiAuthBootstrapPhase(runtime, params);
+        const refreshed = await runApiAuthBootstrapPhase(runtime, {
+          ...params,
+          apiOnly: true,
+          noNavigate: true,
+        });
         if (!refreshed.ok) {
           return null;
         }
         if (runtime.session?.context) {
-          runtime.session.page = await resolveCdpApiWatcherPage(runtime.session.context);
+          runtime.session.page = await resolveCdpApiPollPage(runtime.session.context);
         }
         return getBearerTokenForProfile(runtime);
       },
@@ -138,7 +157,8 @@ export async function runApiWatcherPhase(
   if (runtime.settings.apiWatcher.telegramReportEnabled && telegram.isConfigured()) {
     await telegram.sendStartupPing(
       profile.id,
-      `API watcher — ${queryParams.appointmentStyleLabel ?? "Standart"} (typeId=${queryParams.appointmentTypeId})`,
+      `API watcher — ${queryParams.dealerOfficeLabel ?? queryParams.cityLabel ?? "?"} / ` +
+        `${queryParams.appointmentStyleLabel ?? "Standart"} (typeId=${queryParams.appointmentTypeId})`,
     );
   }
 

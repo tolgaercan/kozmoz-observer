@@ -152,31 +152,12 @@ export async function resolveCdpObserverPageWithWizard(
   return resolveCdpObserverPage(context);
 }
 
-/** GetClosedDate poll — appointmentForm sekmesini registerForm wizard'dan önce seç */
+/** GetClosedDate poll — mevcut portal sekmesi; navigasyon / wizard yok */
+export async function resolveCdpApiPollPage(context: BrowserContext): Promise<Page> {
+  return resolveCdpObserverPage(context);
+}
+
+/** @deprecated resolveCdpApiPollPage kullanın */
 export async function resolveCdpApiWatcherPage(context: BrowserContext): Promise<Page> {
-  const pages = context.pages().filter((candidate) => !candidate.isClosed());
-
-  let appointmentPage: Page | null = null;
-  let bestScore = -1;
-
-  for (const candidate of pages) {
-    const score = scorePortalTabUrl(candidate.url());
-    if (score < 0 || !/\/appointmentForm\b/i.test(candidate.url())) {
-      continue;
-    }
-    if (score > bestScore) {
-      bestScore = score;
-      appointmentPage = candidate;
-    }
-  }
-
-  if (appointmentPage) {
-    logger.info(
-      `[api-watcher] appointmentForm sekmesi kullaniliyor (skor=${bestScore}): ${appointmentPage.url()}`,
-    );
-    await appointmentPage.bringToFront();
-    return appointmentPage;
-  }
-
-  return resolveCdpObserverPageWithWizard(context);
+  return resolveCdpApiPollPage(context);
 }

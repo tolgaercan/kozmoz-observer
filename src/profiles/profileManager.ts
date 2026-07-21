@@ -16,6 +16,8 @@ export type ProfileLifecycleState =
 
 export interface ProfileFormData {
   appointmentCity: string;
+  /** Fiziksel başvuru ofisi — GetClosedDate dealerId (örn. Antalya, Ankara) */
+  appointmentOffice?: string;
   applicationType: string;
   appointmentStyle: string;
   nationalityNumber: string;
@@ -63,6 +65,7 @@ export interface ProfileDefinition {
   lifecycle?: ProfileLifecycleConfig;
   /** @deprecated form.* kullanın */
   appointmentCity?: string;
+  appointmentOffice?: string;
   applicationType?: string;
   appointmentStyle?: string;
   nationalityNumber?: string;

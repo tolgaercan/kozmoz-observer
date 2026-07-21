@@ -8,7 +8,9 @@ export interface ActiveDateOptions {
 export interface ActiveDateResult {
   activeDates: string[];
   bookableStart: string;
-  /** bookableStart..maxDate aralığında kapalı olan günler */
+  /** Portal takviminde son seçilebilir gün (maxDate hariç) */
+  bookableEnd: string;
+  /** bookableStart..bookableEnd aralığında kapalı olan günler */
   closedInRange: string[];
 }
 
@@ -129,8 +131,19 @@ export function resolveBookableStart(
 }
 
 /**
+ * GetClosedDate maxDate sorgu üst sınırıdır — portal takviminde son gün dahil değil.
+ */
+export function resolveBookableEnd(rangeEndIso: string, bookableStart: string): string {
+  if (rangeEndIso <= bookableStart) {
+    return rangeEndIso;
+  }
+  return addDaysIso(rangeEndIso, -1);
+}
+
+/**
  * Portal takvimi ile uyumlu aktif günler:
- * bookableStart..maxDate aralığı − GetClosedDate kapalı listesi.
+ * bookableStart..bookableEnd aralığı − GetClosedDate kapalı listesi.
+ * (bookableEnd = maxDate − 1 gün)
  */
 export function computeActiveDates(
   rangeStartIso: string,
@@ -141,11 +154,16 @@ export function computeActiveDates(
   const normalizedClosed = normalizeClosedDates(closedDates);
   const closedSet = new Set(normalizedClosed);
   const bookableStart = resolveBookableStart(rangeStartIso, options);
+  const bookableEnd = resolveBookableEnd(rangeEndIso, bookableStart);
 
   const activeDates: string[] = [];
   const closedInRange: string[] = [];
 
-  for (const date of listDatesInRange(bookableStart, rangeEndIso)) {
+  if (bookableStart > bookableEnd) {
+    return { activeDates, bookableStart, bookableEnd, closedInRange };
+  }
+
+  for (const date of listDatesInRange(bookableStart, bookableEnd)) {
     if (closedSet.has(date)) {
       closedInRange.push(date);
       continue;
@@ -153,7 +171,7 @@ export function computeActiveDates(
     activeDates.push(date);
   }
 
-  return { activeDates, bookableStart, closedInRange };
+  return { activeDates, bookableStart, bookableEnd, closedInRange };
 }
 
 /** @deprecated computeActiveDates kullanın */

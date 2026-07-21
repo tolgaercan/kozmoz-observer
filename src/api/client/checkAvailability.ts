@@ -46,13 +46,14 @@ function buildPollResult(
     status,
     hasOpenSlots: parsed.hasOpenSlots || active.activeDates.length > 0,
     summary:
-      `${active.activeDates.length} aktif gün (${active.bookableStart} → ${queryParams.maxDate}), ` +
+      `${active.activeDates.length} aktif gün (${active.bookableStart} → ${active.bookableEnd}), ` +
       `${normalizedClosed.length} kapalı (API), ${active.closedInRange.length} kapalı (aralıkta)`,
     raw: parsed.raw,
     closedDates: normalizedClosed,
     activeDates: active.activeDates,
     openDates: active.activeDates,
     bookableStart: active.bookableStart,
+    bookableEnd: active.bookableEnd,
     closedInRange: active.closedInRange,
   };
 }
@@ -90,6 +91,7 @@ export async function checkAvailability(
           hasOpenSlots: false,
           summary: `HTTP 429 — rate limit (poll aralığını artırın)`,
           rateLimited: true,
+          raw: browserResult.bodyText,
         };
       }
 

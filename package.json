@@ -29,7 +29,9 @@
     "scenario:api-watcher-attach": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --id api-watcher-attach --profile profile-api --no-wait",
     "scenario:api-watcher-eea": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/scenarios/runScenario.ts --id api-watcher-attach --profile profile-2 --no-wait",
     "chrome:debug:profile-2": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1 -Profile profile-2",
-    "chrome:debug:profile-api": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1 -Profile profile-api"
+    "chrome:debug:profile-api": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1 -Profile profile-api",
+    "panel": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/control-panel/server.ts",
+    "panel:ui": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/control-panel/server.ts"
   },
   "keywords": [
     "playwright",
