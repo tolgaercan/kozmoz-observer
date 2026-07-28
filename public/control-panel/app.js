@@ -275,6 +275,15 @@ function renderApiPreview() {
     : "Ofis seçin";
 }
 
+function formatProxyOption(option) {
+  if (!option.id) {
+    return option.label;
+  }
+  const ipPart = option.exitIp ? `IP: ${option.exitIp}` : `${option.host}:${option.port}`;
+  const reserveTag = option.enabled === false ? " · rezerve" : "";
+  return `${option.label} — ${ipPart}${reserveTag}`;
+}
+
 function fillSelect(select, options, getValue, getLabel, selected) {
   select.innerHTML = "";
   for (const option of options) {
@@ -288,11 +297,78 @@ function fillSelect(select, options, getValue, getLabel, selected) {
   }
 }
 
+function renderCurrentIpDisplay() {
+  const savedMode = state.bootstrap?.connectionMode ?? state.worker?.proxyMode ?? "direct";
+  const formMode = $("proxyMode").value;
+  const homeIp = state.bootstrap?.homePublicIp ?? "unknown";
+  const proxyIp = state.bootstrap?.publicIp ?? "unknown";
+  const homeWarning = state.bootstrap?.homeIpWarning;
+  const measuredWan = state.bootstrap?.measuredWanIp;
+  const label = $("currentIpLabel");
+  const hint = $("currentIpHint");
+  const selectedId = $("proxyUrl").value;
+  const selected = state.bootstrap?.proxyPool?.find((p) => p.id === selectedId);
+
+  if (formMode === "proxy") {
+    label.textContent = "Proxy çıkış IP";
+    if (savedMode === "proxy" && formMode === "proxy") {
+      $("currentIp").textContent = proxyIp;
+      hint.textContent =
+        selected?.ispStatic ? "ProxyNet ISP statik IP (WAN)" : "Proxy modu — ölçülen çıkış IP";
+    } else if (selected?.exitIp) {
+      $("currentIp").textContent = selected.exitIp;
+      hint.textContent = "Kaydet ve yenile — proxy IP doğrulanır";
+    } else {
+      $("currentIp").textContent = "—";
+      hint.textContent = "Proxy seçin, kaydedin ve yenileyin";
+    }
+  } else {
+    label.textContent = "Ev public IP";
+    if (homeIp === "unknown" && measuredWan) {
+      $("currentIp").textContent = "—";
+      hint.textContent = homeWarning ?? `WAN ${measuredWan} — ProxyNet IP, ev interneti değil`;
+    } else {
+      $("currentIp").textContent = homeIp;
+      hint.textContent = homeWarning ?? "Doğrudan mod — proxy çıkış IP'leri hariç";
+    }
+  }
+}
+
+function renderNetworkHints() {
+  const mode = $("proxyMode").value;
+  const hint = $("networkModeHint");
+  const proxyHint = $("proxyExitHint");
+  const selectedId = $("proxyUrl").value;
+  const selected = state.bootstrap?.proxyPool?.find((p) => p.id === selectedId);
+
+  renderCurrentIpDisplay();
+
+  if (mode === "direct") {
+    hint.textContent =
+      "Doğrudan mod: trafik ev interneti IP'sinden gider. " +
+      (state.bootstrap?.homeIpWarning
+        ? state.bootstrap.homeIpWarning + " "
+        : "") +
+      "ProxyNet statik IP kullanmak için → Bağlantı modu: Proxy, ProxyNet ISP seçin, kaydedin.";
+    proxyHint.textContent = "";
+  } else {
+    hint.textContent =
+      "Proxy modu: trafik seçilen proxy çıkış IP'sinden gider. Kaydettikten sonra Chrome (debug) yeniden başlatılmalı.";
+    proxyHint.textContent = selected?.exitIp
+      ? `Beklenen çıkış IP: ${selected.exitIp}${selected.enabled === false ? " (rezerve — yine de kullanılabilir)" : ""}`
+      : selected
+        ? "Proxy seçildi — kaydet ve yenile"
+        : "Listeden proxy seçin";
+  }
+}
+
 function applyWorkerToForm(worker) {
   $("proxyMode").value = worker.proxyMode ?? "direct";
   $("lockedIp").textContent = worker.lockedIp || "—";
   $("proxyUrlField").hidden = worker.proxyMode !== "proxy";
-  if (worker.proxyUrl) {
+  if (worker.proxyId) {
+    $("proxyUrl").value = worker.proxyId;
+  } else if (worker.proxyUrl) {
     $("proxyUrl").value = worker.proxyUrl;
   }
   if (worker.api?.dealerOffice) {
@@ -302,6 +378,7 @@ function applyWorkerToForm(worker) {
     $("appointmentStyle").value = worker.api.appointmentStyle;
   }
   renderApiPreview();
+  renderNetworkHints();
 }
 
 function renderProcesses(processes) {
@@ -349,7 +426,7 @@ async function loadBootstrap() {
   state.bootstrap = data;
   state.worker = data.worker;
 
-  $("currentIp").textContent = data.publicIp ?? "unknown";
+  renderCurrentIpDisplay();
   $("panelStatus").textContent = "Panel bağlı";
   $("panelStatus").className = "badge online";
 
@@ -380,10 +457,10 @@ async function loadBootstrap() {
   const proxyPool = data.proxyPool ?? [];
   fillSelect(
     $("proxyUrl"),
-    [{ value: "", label: "— Seç —" }, ...proxyPool.map((url) => ({ value: url, label: url }))],
-    (o) => o.value,
-    (o) => o.label,
-    data.worker?.proxyUrl ?? "",
+    [{ id: "", label: "— Seç —", host: "", port: 0, enabled: true }, ...proxyPool],
+    (o) => o.id,
+    (o) => formatProxyOption(o),
+    data.worker?.proxyId ?? data.worker?.proxyUrl ?? "",
   );
 
   const profile = data.profiles.find((p) => p.id === state.profileId);
@@ -428,10 +505,19 @@ $("profileSelect").addEventListener("change", async (event) => {
 
 $("proxyMode").addEventListener("change", (event) => {
   $("proxyUrlField").hidden = event.target.value !== "proxy";
+  renderNetworkHints();
 });
+
+$("proxyUrl").addEventListener("change", () => renderNetworkHints());
 
 $("dealerOffice").addEventListener("change", renderApiPreview);
 $("appointmentStyle").addEventListener("change", renderApiPreview);
+
+$("btnClearLockedIp").addEventListener("click", async () => {
+  await saveWorkerConfig({ lockedIp: "" });
+  $("lockedIp").textContent = "—";
+  toast("Kilitli IP sıfırlandı");
+});
 
 $("btnLockCurrentIp").addEventListener("click", async () => {
   const ip = $("currentIp").textContent.trim();
@@ -444,11 +530,16 @@ $("btnLockCurrentIp").addEventListener("click", async () => {
 });
 
 $("btnSaveNetwork").addEventListener("click", async () => {
+  const proxyMode = $("proxyMode").value;
+  const proxySelection = $("proxyUrl").value;
+  const isPoolId = state.bootstrap?.proxyPool?.some((p) => p.id === proxySelection);
   await saveWorkerConfig({
-    proxyMode: $("proxyMode").value,
-    proxyUrl: $("proxyMode").value === "proxy" ? $("proxyUrl").value : undefined,
+    proxyMode,
+    proxyId: proxyMode === "proxy" && isPoolId ? proxySelection : "",
+    proxyUrl: proxyMode === "proxy" && !isPoolId && proxySelection ? proxySelection : "",
     lockedIp: $("lockedIp").textContent.trim() === "—" ? undefined : $("lockedIp").textContent.trim(),
   });
+  await loadBootstrap();
 });
 
 $("btnSaveApi").addEventListener("click", async () => {

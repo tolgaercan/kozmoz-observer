@@ -130,6 +130,14 @@ export function resolveBookableStart(
   return rangeStartIso > earliestBookable ? rangeStartIso : earliestBookable;
 }
 
+/** Portal weekDays — Cumartesi/Pazar takvimde kapalı. */
+export function filterPortalWeekdays(isoDates: string[]): string[] {
+  return isoDates.filter((isoDate) => {
+    const day = new Date(`${isoDate}T12:00:00`).getDay();
+    return day !== 0 && day !== 6;
+  });
+}
+
 /**
  * GetClosedDate maxDate sorgu üst sınırıdır — portal takviminde son gün dahil değil.
  */
@@ -140,10 +148,128 @@ export function resolveBookableEnd(rangeEndIso: string, bookableStart: string): 
   return addDaysIso(rangeEndIso, -1);
 }
 
+export interface CalendarDateResult {
+  /** Sorgu penceresi içinde API allowedDates ile kesişen günler */
+  allowedInRange: string[];
+  /** Sorgu penceresinde allowedDates dışında kalan günler */
+  closedInRange: string[];
+  bookableStart: string;
+  bookableEnd: string;
+}
+
 /**
- * Portal takvimi ile uyumlu aktif günler:
- * bookableStart..bookableEnd aralığı − GetClosedDate kapalı listesi.
+ * GetClosedDate ham dizisi portalda allowedDates (whitelist) olarak kullanılır.
  * (bookableEnd = maxDate − 1 gün)
+ */
+export function computeCalendarDatesFromAllowed(
+  rangeStartIso: string,
+  rangeEndIso: string,
+  allowedDates: unknown[],
+  options?: ActiveDateOptions,
+): CalendarDateResult {
+  const normalizedAllowed = normalizeClosedDates(allowedDates);
+  const allowedSet = new Set(normalizedAllowed);
+  const bookableStart = resolveBookableStart(rangeStartIso, options);
+  const bookableEnd = resolveBookableEnd(rangeEndIso, bookableStart);
+
+  const allowedInRange: string[] = [];
+  const closedInRange: string[] = [];
+
+  if (bookableStart > bookableEnd) {
+    return { allowedInRange, closedInRange, bookableStart, bookableEnd };
+  }
+
+  for (const date of listDatesInRange(bookableStart, bookableEnd)) {
+    if (allowedSet.has(date)) {
+      allowedInRange.push(date);
+    } else {
+      closedInRange.push(date);
+    }
+  }
+
+  const afterMonthRule = applyFullyClosedMonthRule(
+    allowedInRange,
+    closedInRange,
+    bookableStart,
+    bookableEnd,
+  );
+
+  return applyWeekendAsClosed(
+    afterMonthRule.allowedInRange,
+    afterMonthRule.closedInRange,
+    afterMonthRule.bookableStart,
+    afterMonthRule.bookableEnd,
+  );
+}
+
+function applyWeekendAsClosed(
+  allowedInRange: string[],
+  closedInRange: string[],
+  bookableStart: string,
+  bookableEnd: string,
+): CalendarDateResult {
+  const weekdayAllowed = filterPortalWeekdays(allowedInRange);
+  const weekendDays = allowedInRange.filter((date) => !weekdayAllowed.includes(date));
+  const closedSet = new Set([...closedInRange, ...weekendDays]);
+
+  return {
+    allowedInRange: weekdayAllowed,
+    closedInRange: [...closedSet].sort(),
+    bookableStart,
+    bookableEnd,
+  };
+}
+
+/**
+ * Ay sınırında API tek gün döndürebilir (örn. 1 Eylül) ama o ayın devamı kapalıdır —
+ * portal takviminde tüm ay gri. Son seçilebilir günden sonra kapalı gün varsa o aydaki
+ * tüm seçilebilir günleri kaldır (tüm Eylül kapalı).
+ */
+export function applyFullyClosedMonthRule(
+  allowedInRange: string[],
+  closedInRange: string[],
+  bookableStart: string,
+  bookableEnd: string,
+): CalendarDateResult {
+  if (bookableStart > bookableEnd) {
+    return { allowedInRange, closedInRange, bookableStart, bookableEnd };
+  }
+
+  const allInRange = listDatesInRange(bookableStart, bookableEnd);
+  const allowedSet = new Set(allowedInRange);
+  const closedSet = new Set(closedInRange);
+  const months = [...new Set(allInRange.map((date) => date.slice(0, 7)))].sort();
+
+  for (const month of months) {
+    const daysInMonth = allInRange.filter((date) => date.startsWith(`${month}-`));
+    const allowedInMonth = daysInMonth.filter((date) => allowedSet.has(date));
+    const closedInMonth = daysInMonth.filter((date) => !allowedSet.has(date));
+
+    if (allowedInMonth.length === 0 || closedInMonth.length === 0) {
+      continue;
+    }
+
+    const lastAllowed = [...allowedInMonth].sort().at(-1)!;
+    const hasClosedAfterLastAllowed = closedInMonth.some((date) => date > lastAllowed);
+
+    if (hasClosedAfterLastAllowed) {
+      for (const day of allowedInMonth) {
+        allowedSet.delete(day);
+        closedSet.add(day);
+      }
+    }
+  }
+
+  return {
+    allowedInRange: [...allowedSet].sort(),
+    closedInRange: [...closedSet].sort(),
+    bookableStart,
+    bookableEnd,
+  };
+}
+
+/**
+ * @deprecated computeCalendarDatesFromAllowed kullanın — eski kapalı-liste tersi mantığı.
  */
 export function computeActiveDates(
   rangeStartIso: string,

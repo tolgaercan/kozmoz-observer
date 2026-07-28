@@ -9,7 +9,7 @@ import {
   resolveAuthorizationForContext,
   resolvePortalReferer,
 } from "./apiService.js";
-import { computeActiveDates, normalizeClosedDates } from "./availabilityDates.js";
+import { computeCalendarDatesFromAllowed } from "./availabilityDates.js";
 import { parseResponse } from "./closedDateParser.js";
 import type { ApiQueryParams } from "./resolveApiQueryParams.js";
 import type { ClosedDatePollResult } from "../types.js";
@@ -34,27 +34,28 @@ function buildPollResult(
 ): ClosedDatePollResult {
   const bearer = resolveBearerToken(ctx.projectRoot, ctx.profileId) ?? "";
   const parsed = parseResponse(raw, bearer ? rawJwtFromBearer(bearer) : undefined);
-  const normalizedClosed = normalizeClosedDates(parsed.closedDates);
-  const active = computeActiveDates(
+  const calendar = computeCalendarDatesFromAllowed(
     queryParams.date,
     queryParams.maxDate,
-    normalizedClosed,
+    parsed.allowedDates,
   );
 
   return {
     ok: true,
     status,
-    hasOpenSlots: parsed.hasOpenSlots || active.activeDates.length > 0,
+    hasOpenSlots: calendar.allowedInRange.length > 0,
     summary:
-      `${active.activeDates.length} aktif gün (${active.bookableStart} → ${active.bookableEnd}), ` +
-      `${normalizedClosed.length} kapalı (API), ${active.closedInRange.length} kapalı (aralıkta)`,
+      `${calendar.allowedInRange.length} seçilebilir gün (API, hafta içi), ` +
+      `${calendar.closedInRange.length} kapalı (hesaplanan), ` +
+      `aralık ${calendar.bookableStart} → ${calendar.bookableEnd}`,
     raw: parsed.raw,
-    closedDates: normalizedClosed,
-    activeDates: active.activeDates,
-    openDates: active.activeDates,
-    bookableStart: active.bookableStart,
-    bookableEnd: active.bookableEnd,
-    closedInRange: active.closedInRange,
+    allowedDates: parsed.allowedDates,
+    closedDates: calendar.closedInRange,
+    activeDates: calendar.allowedInRange,
+    openDates: calendar.allowedInRange,
+    bookableStart: calendar.bookableStart,
+    bookableEnd: calendar.bookableEnd,
+    closedInRange: calendar.closedInRange,
   };
 }
 

@@ -15,6 +15,8 @@ export interface WorkerConfig {
   lockedIp: string;
   /** İleride: http://user:pass@host:port */
   proxyUrl?: string;
+  /** data/config/proxy-pool.local.json içindeki id */
+  proxyId?: string;
   api: WorkerApiParams;
   updatedAt: string;
 }

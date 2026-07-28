@@ -102,10 +102,10 @@ export async function detectLogin(page: Page): Promise<{ isLogin: boolean; reaso
     (r) => r.startsWith("selector:") && (r.includes("Giriş") || r.includes("password")),
   );
 
-  // Metin eşleşmesi tek başına yeterli değil (randevu formunda da "giriş" benzeri metinler olabilir).
+  // appointmentForm acik olsa bile sifre alani varsa login say
   const isLogin =
     reasons.length > 0 &&
-    !onAuthenticatedPage &&
+    (!onAuthenticatedPage || hasPasswordField) &&
     (hasLoginUrl || hasPasswordField || hasLoginUi);
 
   return { isLogin, reasons };

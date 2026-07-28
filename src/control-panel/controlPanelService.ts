@@ -7,13 +7,17 @@ import {
   listDealerOffices,
   resolveAppointmentTypeIdFromLabel,
 } from "../api/client/portalApiCatalog.js";
+import {
+  resolveChromeProxyServer,
+  resolveProxyPublicIp,
+} from "../config/proxyResolver.js";
+import { resolveHomePublicIp } from "../config/publicIpDetect.js";
+import { ProxyPoolStore, type ProxyPanelOption } from "../config/proxyPoolStore.js";
 import { ProfileManager } from "../profiles/profileManager.js";
 import {
-  detectPublicIp,
   getChromeStatus,
   launchChromeForProfile,
-  readProfileProxyUrl,
-  readProxyPoolFromEnv,
+  detectPublicIp,
 } from "./chromeLauncher.js";
 import type { ProcessRegistry } from "./processRegistry.js";
 import { WorkerConfigStore, type WorkerApiParams, type WorkerConfig } from "./workerConfigStore.js";
@@ -32,7 +36,12 @@ export interface ControlPanelBootstrap {
   dealerOffices: ReturnType<typeof listDealerOffices>;
   appointmentStyles: typeof APPOINTMENT_STYLE_OPTIONS;
   publicIp: string;
-  proxyPool: string[];
+  /** Ev interneti IP (proxy çıkış IP'leri hariç) */
+  homePublicIp: string;
+  measuredWanIp?: string;
+  homeIpWarning?: string;
+  connectionMode: "direct" | "proxy";
+  proxyPool: ProxyPanelOption[];
   worker: WorkerConfig;
 }
 
@@ -67,15 +76,28 @@ export class ControlPanelService {
   }
 
   async getBootstrap(profileId: string): Promise<ControlPanelBootstrap> {
-    const publicIp = await detectPublicIp();
-    const worker = this.workerStore.getWorker(profileId, publicIp);
+    const profile = this.resolveProfile(profileId);
+    const worker = this.workerStore.getWorker(profileId, "");
+    const home = await resolveHomePublicIp(this.projectRoot);
+    const homePublicIp = home.ip === "unavailable" ? "unknown" : home.ip;
+    let publicIp = homePublicIp;
+
+    if (worker.proxyMode === "proxy") {
+      publicIp = await resolveProxyPublicIp(this.projectRoot, profile, worker);
+    }
+
+    const proxyStore = new ProxyPoolStore(this.projectRoot);
     return {
       profiles: this.listProfiles(),
       dealerOffices: listDealerOffices(),
       appointmentStyles: APPOINTMENT_STYLE_OPTIONS,
       publicIp,
-      proxyPool: readProxyPoolFromEnv(),
-      worker,
+      homePublicIp,
+      measuredWanIp: home.measuredIp !== "unknown" ? home.measuredIp : undefined,
+      homeIpWarning: home.warning,
+      connectionMode: worker.proxyMode ?? "direct",
+      proxyPool: proxyStore.listForPanel(),
+      worker: this.workerStore.getWorker(profileId, publicIp),
     };
   }
 
@@ -101,10 +123,10 @@ export class ControlPanelService {
 
   async startChrome(profileId: string) {
     const profile = this.resolveProfile(profileId);
-    const worker = this.workerStore.getWorker(profileId, await detectPublicIp());
+    const worker = this.workerStore.getWorker(profileId, "");
     const proxyUrl =
       worker.proxyMode === "proxy"
-        ? worker.proxyUrl || readProfileProxyUrl(profile)
+        ? await resolveChromeProxyServer(this.projectRoot, profile, worker)
         : undefined;
     const launch = await launchChromeForProfile(profile, this.registry, proxyUrl);
     return { launch };
@@ -128,7 +150,7 @@ export class ControlPanelService {
 
   async getAllApiHealth() {
     const profiles = this.listProfiles();
-    const publicIp = await detectPublicIp();
+    const publicIp = await detectPublicIp(this.projectRoot);
     const healthStore = new ApiHealthStore(this.projectRoot);
     const healthById = new Map(healthStore.listAll().map((record) => [record.profileId, record]));
 
@@ -163,7 +185,7 @@ export class ControlPanelService {
     const chrome = await getChromeStatus(cdpPort);
     const activeJobs = this.registry.findByProfile(profileId);
     const profiles = this.listProfiles();
-    const publicIp = await detectPublicIp();
+    const publicIp = await detectPublicIp(this.projectRoot);
     const healthStore = new ApiHealthStore(this.projectRoot);
     const rawHealth = healthStore.get(profileId);
     const apiHealth = rawHealth

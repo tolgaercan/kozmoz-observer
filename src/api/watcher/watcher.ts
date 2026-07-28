@@ -2,7 +2,7 @@ import type { Page } from "playwright";
 
 import { ApiHealthStore } from "../../control-panel/apiHealthStore.js";
 import type { ApiWatcherSettings, AppSettings, TelegramSettings } from "../../config/settings.js";
-import { buildApiAvailabilityTextSummary } from "../notifications/apiAvailabilityTelegram.js";
+import { buildApiClosedDateStatusSummary, buildApiNewlyOpenedDaysSummary } from "../notifications/apiAvailabilityTelegram.js";
 import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
 import { logger } from "../../utils/logger.js";
 import type { ApiWatcherHandle, ClosedDatePollResult } from "../types.js";
@@ -39,7 +39,7 @@ function buildApiContext(
   };
 }
 
-function activeDatesEqual(left: string[], right: string[]): boolean {
+function datesEqual(left: string[], right: string[]): boolean {
   if (left.length !== right.length) {
     return false;
   }
@@ -80,18 +80,18 @@ export function startAvailabilityWatcher(
   let running = false;
   let stopped = false;
   let lastOpenNotifyAt = 0;
-  let previousClosedDates: string[] | null = null;
-  let previousActiveDates: string[] | null = null;
+  let previousAllowedDates: string[] | null = null;
   let lastTelegramReportAt = 0;
   let rateLimitUntil = 0;
   let lastRateLimitLogAt = 0;
   let rateLimitTelegramSentAt = 0;
   let requestsLastHour = 0;
   let hourWindowStart = Date.now();
+  let firstPollReportSent = false;
   const pollMs = apiSettings.pollIntervalMs;
   const telegramReportMs = Math.min(apiSettings.telegramReportIntervalMs, pollMs);
   let watcherPublicIp = options.lockedIp || "unknown";
-  void detectPublicIp().then((ip) => {
+  void detectPublicIp(options.projectRoot).then((ip) => {
     if (ip !== "unknown") {
       watcherPublicIp = ip;
     }
@@ -113,8 +113,28 @@ export function startAvailabilityWatcher(
   };
 
   logger.info(
-    `[api-watcher] checkAvailability her ${pollMs}ms — profil: ${options.profileId} (tek istek/poll)`,
+    `[api-watcher] checkAvailability her ${pollMs}ms — profil: ${options.profileId} (ilk sorgu hemen)`,
   );
+
+  const sendFirstPollTelegram = async (
+    ok: boolean,
+    summary: string,
+    activeCount?: number,
+  ): Promise<void> => {
+    if (firstPollReportSent || !telegram.isConfigured()) {
+      return;
+    }
+    firstPollReportSent = true;
+    await telegram.notifyApiWatcherPollResult({
+      profileId: options.profileId,
+      ok,
+      summary: ok
+        ? `${summary} · Baseline kaydedildi (YENİ uyarı yalnızca değişiklikte).`
+        : summary,
+      activeCount: ok ? activeCount : undefined,
+      isFirstPoll: true,
+    });
+  };
 
   const processPollResult = async (result: ClosedDatePollResult): Promise<void> => {
     const queryParams = options.resolveQueryParams?.() ?? options.queryParams;
@@ -157,6 +177,7 @@ export function startAvailabilityWatcher(
           reason: `${summary}${ipNote}`,
         });
       }
+      await sendFirstPollTelegram(false, summary);
       return;
     }
 
@@ -169,6 +190,7 @@ export function startAvailabilityWatcher(
         lastError: result.summary,
         lastSummary: result.summary,
       });
+      await sendFirstPollTelegram(false, result.summary);
       return;
     }
 
@@ -181,18 +203,19 @@ export function startAvailabilityWatcher(
         lastError: result.summary,
         lastSummary: result.summary,
       });
+      await sendFirstPollTelegram(false, result.summary);
       return;
     }
 
     logger.info(`[api-watcher] ${result.summary}`);
 
-    const activeDates = result.activeDates ?? result.openDates ?? [];
+    const currentAllowed = result.activeDates ?? result.openDates ?? [];
     const currentClosed = result.closedDates ?? [];
     const bookableStart = result.bookableStart ?? queryParams.date;
     const bookableEnd = result.bookableEnd ?? queryParams.maxDate;
 
     recordHealth({
-      status: activeDates.length > 0 ? "ok" : "empty",
+      status: "ok",
       lastPollAt: nowIso,
       lastOkAt: nowIso,
       lastHttpStatus: result.status,
@@ -201,65 +224,78 @@ export function startAvailabilityWatcher(
       backoffUntil: undefined,
     });
 
-    if (activeDates.length > 0) {
-      logger.info(
-        `[api-watcher] Aktif günler (${activeDates.length}, ${bookableStart} → ${bookableEnd}): ${activeDates.join(", ")}`,
-      );
-    } else {
-      logger.info(
-        `[api-watcher] Aktif gün yok — ${bookableStart} → ${bookableEnd} aralığında seçilebilir gün kalmadı.`,
-      );
-    }
+    logger.info(
+      `[api-watcher] Seçilebilir gün (API): ${currentAllowed.length}, kapalı (hesaplanan): ${currentClosed.length} — ${bookableStart} → ${bookableEnd}`,
+    );
 
-    const removedClosed =
-      previousClosedDates?.filter((date) => !currentClosed.includes(date)) ?? [];
-    const hasNewActiveDays =
-      removedClosed.length > 0 ||
-      (previousActiveDates !== null &&
-        activeDates.some((date) => !previousActiveDates!.includes(date)));
-    const sameActiveAsPrevious =
-      previousActiveDates !== null && activeDatesEqual(activeDates, previousActiveDates);
+    await sendFirstPollTelegram(true, result.summary, currentAllowed.length);
+
+    const isEstablishingBaseline = previousAllowedDates === null;
+    const addedAllowed = isEstablishingBaseline
+      ? []
+      : currentAllowed.filter((date) => !previousAllowedDates!.includes(date));
+    const hasNewlyOpenedDays = addedAllowed.length > 0;
+    const sameAllowedAsPrevious =
+      previousAllowedDates !== null && datesEqual(currentAllowed, previousAllowedDates);
     const now = Date.now();
     const periodicTelegramDue = now - lastTelegramReportAt >= telegramReportMs;
 
+    previousAllowedDates = [...currentAllowed];
+
+    if (isEstablishingBaseline) {
+      logger.info(
+        `[api-watcher] Baseline kaydedildi — ${currentAllowed.length} seçilebilir gün (hafta içi). ` +
+          "YENİ uyarısı yok; sonraki poll'larda değişiklik aranır.",
+      );
+      return;
+    }
+
     if (apiSettings.telegramReportEnabled && telegram.isConfigured()) {
       const shouldSendTelegram =
-        previousActiveDates === null ||
-        hasNewActiveDays ||
-        !sameActiveAsPrevious ||
+        hasNewlyOpenedDays ||
+        !sameAllowedAsPrevious ||
         periodicTelegramDue;
 
       if (shouldSendTelegram) {
         const officeLabel = queryParams.dealerOfficeLabel ?? queryParams.cityLabel;
-        const textSummary = buildApiAvailabilityTextSummary({
+        const summaryInput = {
           profileId: options.profileId,
           cityLabel: officeLabel,
           appointmentStyleLabel: queryParams.appointmentStyleLabel,
+          queryDate: queryParams.date,
+          queryMaxDate: queryParams.maxDate,
+          rangeDays: apiSettings.closedDateRangeDays,
           bookableStart,
           bookableEnd,
           maxDate: queryParams.maxDate,
-          activeDates,
+          allowedDates: currentAllowed,
           closedDates: currentClosed,
-        });
+          newlyOpenedDates: addedAllowed,
+          hasAllowedListChange: !sameAllowedAsPrevious && previousAllowedDates !== null,
+        };
+        const textSummary = hasNewlyOpenedDays
+          ? buildApiNewlyOpenedDaysSummary(summaryInput)
+          : buildApiClosedDateStatusSummary({
+              ...summaryInput,
+              hasAllowedListChange:
+                previousAllowedDates !== null ? !sameAllowedAsPrevious : undefined,
+            });
 
         await telegram.notifyApiAvailability({
           profileId: options.profileId,
           city: officeLabel,
           appointmentStyle: queryParams.appointmentStyleLabel,
           textSummary,
-          activeDates,
-          isEmpty: activeDates.length === 0,
-          hasNewDays: hasNewActiveDays,
-          periodicReport: true,
+          activeDates: addedAllowed.length > 0 ? addedAllowed : currentAllowed,
+          isEmpty: currentAllowed.length === 0,
+          hasNewDays: hasNewlyOpenedDays,
+          periodicReport: !hasNewlyOpenedDays,
         });
         lastTelegramReportAt = now;
       }
     }
 
-    previousActiveDates = [...activeDates];
-    previousClosedDates = currentClosed;
-
-    if (removedClosed.length > 0) {
+    if (addedAllowed.length > 0) {
       if (now - lastOpenNotifyAt >= apiSettings.openNotifyCooldownMs) {
         lastOpenNotifyAt = now;
         await import("../executor/bookingExecutor.js").then(({ runBookingExecutorStub }) =>
@@ -306,6 +342,7 @@ export function startAvailabilityWatcher(
           lastError: "Token yok",
           lastSummary: "Token yok — poll atlandı",
         });
+        await sendFirstPollTelegram(false, "Token yok — JWT / portal oturumu gerekli");
         return;
       }
 
@@ -333,6 +370,7 @@ export function startAvailabilityWatcher(
         lastError: message,
         lastSummary: message,
       });
+      await sendFirstPollTelegram(false, message);
     } finally {
       running = false;
     }

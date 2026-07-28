@@ -15,44 +15,134 @@ export interface ApiAvailabilitySummaryInput {
   profileId: string;
   cityLabel?: string;
   appointmentStyleLabel?: string;
+  queryDate: string;
+  queryMaxDate: string;
+  rangeDays: number;
   bookableStart: string;
   bookableEnd?: string;
   maxDate: string;
-  activeDates: string[];
+  /** Sorgu penceresinde seçilebilir günler (API allowedDates) */
+  allowedDates: string[];
+  /** Sorgu penceresinde kapalı günler (hesaplanan) */
   closedDates: string[];
+  /** allowedDates listesine yeni eklenen günler */
+  newlyOpenedDates?: string[];
+  hasAllowedListChange?: boolean;
 }
 
-export function buildApiAvailabilityTextSummary(input: ApiAvailabilitySummaryInput): string {
+const ALLOWED_DATE_NOTE =
+  "Not: Liste API whitelist + hafta içi filtresi. Saat kotası olmayan günler takvimde gri kalabilir.";
+
+const MAX_DATES_IN_MESSAGE = 60;
+
+function formatDateLines(dates: string[], emptyLabel: string): string[] {
+  if (dates.length === 0) {
+    return [emptyLabel];
+  }
+
+  const sorted = [...dates].sort();
+  const visible = sorted.slice(0, MAX_DATES_IN_MESSAGE);
+  const lines = visible.map(
+    (isoDate) => `• ${isoDate} (${formatTurkishDate(isoDate)})`,
+  );
+
+  if (sorted.length > visible.length) {
+    lines.push(`… ve ${sorted.length - visible.length} gün daha`);
+  }
+
+  return lines;
+}
+
+function buildQueryWindowLines(input: ApiAvailabilitySummaryInput): string[] {
+  const rangeEnd = input.bookableEnd ?? input.maxDate;
+  return [
+    `Sorgu penceresi: ${input.bookableStart} → ${rangeEnd}`,
+    `(Her poll: date=${input.queryDate}, maxDate=${input.queryMaxDate} — bugün + ${input.rangeDays} gün)`,
+  ];
+}
+
+/** Periyodik durum — seçilebilir gün listesi (API allowedDates). */
+export function buildApiClosedDateStatusSummary(input: ApiAvailabilitySummaryInput): string {
   const styleLine = input.appointmentStyleLabel
     ? `${input.appointmentStyleLabel} (${input.profileId})`
     : input.profileId;
   const cityLine = input.cityLabel ? ` — ${input.cityLabel}` : "";
-  const header = `API müsait günler${cityLine} — ${styleLine}`;
-  const rangeEnd = input.bookableEnd ?? input.maxDate;
-  const rangeLine = `Aralık: ${input.bookableStart} → ${rangeEnd}`;
+  const header = `API seçilebilir günler${cityLine} — ${styleLine}`;
 
-  if (input.activeDates.length === 0) {
-    return [
-      header,
-      rangeLine,
-      "",
-      `Kapalı (API): ${input.closedDates.length} gün`,
-      "",
-      "Şu an seçilebilir aktif gün yok.",
-    ].join("\n");
+  const lines = [
+    header,
+    ...buildQueryWindowLines(input),
+    "",
+    `Seçilebilir (API, hafta içi): ${input.allowedDates.length} gün`,
+    `Kapalı (hesaplanan): ${input.closedDates.length} gün`,
+    input.hasAllowedListChange === false ? "Son değişiklik: yok" : "",
+    "",
+    "Seçilebilir günler:",
+    ...formatDateLines(input.allowedDates, "(API seçilebilir gün döndürmedi)"),
+    "",
+    ALLOWED_DATE_NOTE,
+    "YENİ açılış = seçilebilir listesine eklenen gün.",
+  ].filter((line) => line !== "");
+
+  return lines.join("\n");
+}
+
+/** Seçilebilir listesine eklenen günler. */
+export function buildApiNewlyOpenedDaysSummary(input: ApiAvailabilitySummaryInput): string {
+  const styleLine = input.appointmentStyleLabel
+    ? `${input.appointmentStyleLabel} (${input.profileId})`
+    : input.profileId;
+  const cityLine = input.cityLabel ? ` — ${input.cityLabel}` : "";
+  const header = `API YENİ seçilebilir gün${cityLine} — ${styleLine}`;
+  const opened = input.newlyOpenedDates ?? [];
+
+  if (opened.length === 0) {
+    return buildApiClosedDateStatusSummary(input);
   }
 
-  const lines = input.activeDates.map(
+  const dayLines = opened.map(
     (isoDate) => `• ${isoDate} (${formatTurkishDate(isoDate)})`,
   );
 
   return [
     header,
-    rangeLine,
+    ...buildQueryWindowLines(input),
     "",
-    ...lines,
+    "Seçilebilir listesine eklenen günler:",
+    ...dayLines,
     "",
-    `Toplam: ${input.activeDates.length} aktif gün`,
-    `Kapalı (API): ${input.closedDates.length} gün`,
+    `Toplam: ${opened.length} yeni gün`,
+    `Seçilebilir (API, hafta içi): ${input.allowedDates.length} gün`,
+    "",
+    "Güncel seçilebilir günler:",
+    ...formatDateLines(input.allowedDates, "(boş)"),
+    "",
+    "Portal takviminde ve saat kotasında doğrulayın.",
   ].join("\n");
+}
+
+/** @deprecated buildApiClosedDateStatusSummary / buildApiNewlyOpenedDaysSummary kullanın */
+export function buildApiAvailabilityTextSummary(input: {
+  profileId: string;
+  cityLabel?: string;
+  appointmentStyleLabel?: string;
+  bookableStart: string;
+  bookableEnd?: string;
+  maxDate: string;
+  activeDates: string[];
+  closedDates: string[];
+}): string {
+  return buildApiClosedDateStatusSummary({
+    profileId: input.profileId,
+    cityLabel: input.cityLabel,
+    appointmentStyleLabel: input.appointmentStyleLabel,
+    queryDate: input.bookableStart,
+    queryMaxDate: input.maxDate,
+    rangeDays: 43,
+    bookableStart: input.bookableStart,
+    bookableEnd: input.bookableEnd,
+    maxDate: input.maxDate,
+    allowedDates: input.activeDates,
+    closedDates: input.closedDates,
+  });
 }

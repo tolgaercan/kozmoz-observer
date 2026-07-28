@@ -21,6 +21,83 @@ export const VIZE_BASVURU_ADIMLARI_SELECTORS = [
   "a[href*='basvuru.kosmosvize.com.tr/registerform']",
 ];
 
+/** Kosmos tanitim ana sayfa — JWT oturumu icin giris noktasi */
+export function fixDuplicateTrPath(url: string): string {
+  try {
+    const parsed = new URL(url);
+    let path = parsed.pathname;
+    while (/\/tr\/tr/i.test(path)) {
+      path = path.replace(/\/tr\/tr/gi, "/tr");
+    }
+    parsed.pathname = path;
+    return parsed.toString();
+  } catch {
+    return url.replace(/(\/tr){2,}/gi, "/tr");
+  }
+}
+
+/** Env / varsayilan — cift /tr ve gereksiz path birlestirmelerini temizler */
+export function normalizeKosmosMarketingHomeUrl(raw: string): string {
+  try {
+    const url = new URL(raw.trim());
+    let path = url.pathname || "/";
+    while (/\/tr\/tr/i.test(path)) {
+      path = path.replace(/\/tr\/tr/gi, "/tr");
+    }
+    if (path === "/" || path === "") {
+      return `${url.origin}/`;
+    }
+    if (/^\/tr\/?$/i.test(path)) {
+      return `${url.origin}/tr`;
+    }
+    url.pathname = path;
+    return fixDuplicateTrPath(url.toString());
+  } catch {
+    return "https://www.kosmosvize.com.tr/";
+  }
+}
+
+export function resolveKosmosMarketingHomeUrl(): string {
+  const raw = process.env.KOSMOS_MARKETING_HOME_URL?.trim() ?? "https://www.kosmosvize.com.tr/";
+  return normalizeKosmosMarketingHomeUrl(raw);
+}
+
+/** Zaten gecerli tanitim ana sayfada mi (cift /tr haric) */
+export function isKosmosMarketingEntryUrl(url: string): boolean {
+  if (!isKosmosMarketingHome(url)) {
+    return false;
+  }
+  return !/\/tr\/tr/i.test(url);
+}
+
+/** Kosmos tanitim ana sayfaya git — cift /tr olusmasini onler */
+export async function gotoKosmosMarketingHome(page: import("playwright").Page): Promise<void> {
+  const target = resolveKosmosMarketingHomeUrl();
+  const current = page.url();
+
+  if (isKosmosMarketingEntryUrl(current)) {
+    logger.info(`[home] Zaten Kosmos ana sayfada — goto atlandi (${current})`);
+    return;
+  }
+
+  if (/\/tr\/tr/i.test(current)) {
+    const fixed = fixDuplicateTrPath(current);
+    logger.warn(`[home] Cift /tr algilandi — duzeltiliyor: ${fixed}`);
+    await page.goto(fixed, { waitUntil: "domcontentloaded", timeout: 90_000 });
+    return;
+  }
+
+  logger.info(`[home] Kosmos ana sayfaya gidiliyor: ${target}`);
+  await page.goto(target, { waitUntil: "domcontentloaded", timeout: 90_000 });
+
+  const after = page.url();
+  if (/\/tr\/tr/i.test(after)) {
+    const fixed = fixDuplicateTrPath(after);
+    logger.warn(`[home] Yonlendirme sonrasi cift /tr — duzeltiliyor: ${fixed}`);
+    await page.goto(fixed, { waitUntil: "domcontentloaded", timeout: 90_000 });
+  }
+}
+
 export function resolveRegisterFormUrl(homeUrl?: string): string {
   const explicit = process.env.PORTAL_REGISTER_FORM_URL?.trim();
   if (explicit) {

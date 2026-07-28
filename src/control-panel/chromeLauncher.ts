@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { isCdpEndpointReady } from "../browser/cdpConnector.js";
+import { detectHomePublicIp } from "../config/publicIpDetect.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import type { ProcessRegistry } from "./processRegistry.js";
 
@@ -203,17 +204,6 @@ export function readProxyPoolFromEnv(): string[] {
   return raw.split(/[,;\n]/).map((part) => part.trim()).filter(Boolean);
 }
 
-export async function detectPublicIp(): Promise<string> {
-  try {
-    const response = await fetch("https://api.ipify.org?format=json", {
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!response.ok) {
-      return "unknown";
-    }
-    const body = (await response.json()) as { ip?: string };
-    return body.ip?.trim() || "unknown";
-  } catch {
-    return "unknown";
-  }
+export async function detectPublicIp(projectRoot?: string): Promise<string> {
+  return detectHomePublicIp(projectRoot);
 }

@@ -31,7 +31,8 @@
     "chrome:debug:profile-2": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1 -Profile profile-2",
     "chrome:debug:profile-api": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1 -Profile profile-api",
     "panel": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/control-panel/server.ts",
-    "panel:ui": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/control-panel/server.ts"
+    "panel:ui": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs src/control-panel/server.ts",
+    "validate:api-dates": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/validate-api-date-logic.ts"
   },
   "keywords": [
     "playwright",

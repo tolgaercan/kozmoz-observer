@@ -1,40 +1,43 @@
-import { normalizeDateIso } from "./availabilityDates.js";
+import { normalizeClosedDates } from "./availabilityDates.js";
 import { parseDecryptedJson } from "./decryptResponse.js";
 import { logger } from "../../utils/logger.js";
 
 export interface ParsedClosedDates {
   hasOpenSlots: boolean;
   summary: string;
-  closedDates: string[];
+  /**
+   * GetClosedDate ham dizisi — portal bunu takvim `allowedDates` olarak kullanır.
+   * Endpoint adı yanıltıcı; dizi kapalı günler değil, seçilebilir günlerdir.
+   */
+  allowedDates: string[];
   raw: unknown;
 }
 
-function extractClosedDates(decoded: unknown): string[] {
+function extractDateList(decoded: unknown): unknown[] {
   if (Array.isArray(decoded)) {
-    const normalized = decoded
-      .map((item) => normalizeDateIso(item))
-      .filter((value): value is string => Boolean(value));
-
-    return [...new Set(normalized)].sort();
+    return decoded;
   }
 
   if (decoded && typeof decoded === "object") {
     const record = decoded as Record<string, unknown>;
     const list =
+      record.allowedDates ??
+      record.openDates ??
+      record.availableDates ??
       record.closedDates ??
       record.dates ??
       record.data ??
       record.result ??
       record.items;
     if (Array.isArray(list)) {
-      return extractClosedDates(list);
+      return list;
     }
   }
 
   return [];
 }
 
-function summarizeAvailability(decoded: unknown, closedDates: string[]): ParsedClosedDates {
+function summarizeAvailability(decoded: unknown, allowedDates: string[]): ParsedClosedDates {
   if (typeof decoded === "object" && decoded !== null && !Array.isArray(decoded)) {
     const record = decoded as Record<string, unknown>;
     for (const key of ["isOpen", "open", "available", "hasAvailable"]) {
@@ -42,7 +45,7 @@ function summarizeAvailability(decoded: unknown, closedDates: string[]): ParsedC
         return {
           hasOpenSlots: record[key] as boolean,
           summary: `boolean ${key}=${String(record[key])}`,
-          closedDates,
+          allowedDates,
           raw: decoded,
         };
       }
@@ -50,20 +53,19 @@ function summarizeAvailability(decoded: unknown, closedDates: string[]): ParsedC
   }
 
   return {
-    hasOpenSlots: false,
+    hasOpenSlots: allowedDates.length > 0,
     summary:
-      closedDates.length > 0
-        ? `${closedDates.length} kapalı gün`
-        : "Kapalı gün listesi boş veya çözülemedi",
-    closedDates,
+      allowedDates.length > 0
+        ? `${allowedDates.length} seçilebilir gün (API allowedDates)`
+        : "Seçilebilir gün listesi boş veya çözülemedi",
+    allowedDates,
     raw: decoded,
   };
 }
 
 /**
  * GetClosedDate yanıtını çözer — portal index.vue ile aynı AES-256-CBC anahtarı.
- * @param encryptedData API yanıtı (şifreli string, { data: "..." } veya düz JSON)
- * @param _bearerJwt Geriye dönük uyumluluk; artık kullanılmıyor
+ * Dizi portalda allowedDates (takvim whitelist) olarak kullanılır.
  */
 export function parseResponse(encryptedData: unknown, _bearerJwt?: string): ParsedClosedDates {
   const decoded = parseDecryptedJson(encryptedData);
@@ -74,8 +76,8 @@ export function parseResponse(encryptedData: unknown, _bearerJwt?: string): Pars
     logger.debug("[parseResponse] Portal AES decrypt başarılı.");
   }
 
-  const closedDates = extractClosedDates(decoded);
-  return summarizeAvailability(decoded, closedDates);
+  const allowedDates = normalizeClosedDates(extractDateList(decoded));
+  return summarizeAvailability(decoded, allowedDates);
 }
 
 /** @deprecated parseResponse kullanın */

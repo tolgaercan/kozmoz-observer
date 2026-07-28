@@ -47,9 +47,13 @@ export class TelegramNotifier {
     return Boolean(this.settings.enabled && this.settings.botToken && this.settings.chatId);
   }
 
-  async sendStartupPing(profileId: string, detail?: string): Promise<boolean> {
+  async sendStartupPing(
+    profileId: string,
+    detail?: string,
+    title = "Observer başladı",
+  ): Promise<boolean> {
     const text = [
-      `<b>✅ Observer başladı</b>`,
+      `<b>✅ ${escapeHtml(title)}</b>`,
       `<b>Profil:</b> ${escapeHtml(profileId)}`,
       detail ? escapeHtml(detail) : "Telegram bildirimleri aktif.",
     ].join("\n");
@@ -125,7 +129,7 @@ export class TelegramNotifier {
     await this.send(text, `manual:${details.reason.slice(0, 40)}`);
   }
 
-  /** GetClosedDate API watcher — aktif gün özeti */
+  /** GetClosedDate API watcher — seçilebilir gün özeti / yeni gün uyarısı */
   async notifyApiAvailability(details: {
     profileId: string;
     city?: string;
@@ -136,12 +140,12 @@ export class TelegramNotifier {
     hasNewDays?: boolean;
     periodicReport?: boolean;
   }): Promise<void> {
-    const emoji = details.isEmpty ? "📭" : details.hasNewDays ? "🟢" : "📅";
-    const title = details.isEmpty
-      ? "API — aktif gün yok"
-      : details.hasNewDays
-        ? "API — YENİ aktif gün(ler)!"
-        : "API — aktif günler";
+    const emoji = details.hasNewDays ? "🟢" : details.isEmpty ? "📭" : "📅";
+    const title = details.hasNewDays
+      ? "API — YENİ seçilebilir gün!"
+      : details.isEmpty
+        ? "API — seçilebilir gün yok"
+        : "API — seçilebilir günler";
     const styleLine = details.appointmentStyle
       ? `<b>Şekil:</b> ${escapeHtml(details.appointmentStyle)}`
       : "";
@@ -163,6 +167,30 @@ export class TelegramNotifier {
         : `api:active:${details.profileId}`;
 
     await this.send(text, dedupeKey, details.periodicReport === true);
+  }
+
+  /** İlk poll sonucu — sistemin çalıştığını doğrulamak için */
+  async notifyApiWatcherPollResult(details: {
+    profileId: string;
+    ok: boolean;
+    summary: string;
+    activeCount?: number;
+    isFirstPoll?: boolean;
+  }): Promise<void> {
+    const label = details.isFirstPoll ? "İlk API sorgusu" : "API sorgusu";
+    const emoji = details.ok ? "✅" : "❌";
+    const text = [
+      `<b>${emoji} ${label}</b>`,
+      `<b>Profil:</b> ${escapeHtml(details.profileId)}`,
+      `<b>Sonuç:</b> ${escapeHtml(details.summary)}`,
+      details.activeCount !== undefined
+        ? `<b>Seçilebilir gün:</b> ${details.activeCount} (hafta içi, API whitelist)`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    await this.send(text, `api:poll:${details.profileId}`, true);
   }
 
   async notifyAvailableSlots(details: {

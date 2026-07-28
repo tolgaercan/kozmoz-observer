@@ -63,10 +63,6 @@ export async function detectManualAuthStep(page: Page): Promise<ManualAuthState>
   const reasons: string[] = [];
   const url = page.url();
 
-  if (AUTHENTICATED_URL_PATTERNS.some((pattern) => pattern.test(url))) {
-    return { required: false, kind: "none", reasons: ["authenticated-url"] };
-  }
-
   let hasPassword = false;
   for (const selector of LOGIN_SELECTORS) {
     try {
@@ -119,7 +115,13 @@ export async function detectManualAuthStep(page: Page): Promise<ManualAuthState>
     }
   }
 
+  const onAuthenticatedUrl = AUTHENTICATED_URL_PATTERNS.some((pattern) => pattern.test(url));
   const required = hasPassword || hasOtp || hasLoginUrl;
+
+  // appointmentForm/registerForm acik olsa bile sifre/OTP formu gorunuyorsa bekle
+  if (onAuthenticatedUrl && !required) {
+    return { required: false, kind: "none", reasons: ["authenticated-url"] };
+  }
 
   let kind: ManualAuthState["kind"] = "none";
   if (hasPassword && hasOtp) {

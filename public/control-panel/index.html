@@ -46,12 +46,14 @@
 
           <div class="ip-grid">
             <div class="ip-box">
-              <span class="ip-label">Şu anki public IP</span>
+              <span class="ip-label" id="currentIpLabel">Ev public IP</span>
               <strong id="currentIp">—</strong>
+              <small class="field-hint" id="currentIpHint">Doğrudan mod — sistem proxy bypass</small>
             </div>
             <div class="ip-box ip-box-accent">
               <span class="ip-label">Kilitli IP (worker)</span>
               <strong id="lockedIp">—</strong>
+              <small class="field-hint">Ev IP kullanmayacaksanız sıfırlayın veya proxy seçin</small>
             </div>
           </div>
 
@@ -59,25 +61,30 @@
             <span>Bağlantı modu</span>
             <select id="proxyMode">
               <option value="direct">Doğrudan (ev interneti)</option>
-              <option value="proxy">Proxy (ileride)</option>
+              <option value="proxy">Proxy (paralı IP — hazır olunca)</option>
             </select>
           </label>
 
           <label class="field" id="proxyUrlField" hidden>
-            <span>Proxy URL</span>
+            <span>Proxy havuzu (farklı çıkış IP)</span>
             <select id="proxyUrl">
               <option value="">— Seç —</option>
             </select>
+            <small class="field-hint" id="proxyExitHint"></small>
           </label>
 
           <div class="inline-actions">
             <button type="button" class="btn btn-secondary" id="btnLockCurrentIp">
               Mevcut IP'yi kilitle
             </button>
+            <button type="button" class="btn btn-secondary" id="btnClearLockedIp">
+              Kilitli IP'yi sıfırla
+            </button>
             <button type="button" class="btn btn-secondary" id="btnSaveNetwork">
               Ağ ayarını kaydet
             </button>
           </div>
+          <p class="note network-note" id="networkModeHint"></p>
         </section>
 
         <section class="card card-api">

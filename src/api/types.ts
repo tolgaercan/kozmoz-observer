@@ -11,8 +11,11 @@ export interface ClosedDatePollResult {
   hasOpenSlots: boolean;
   summary: string;
   raw?: unknown;
+  /** GetClosedDate ham dizisi — portal allowedDates (seçilebilir günler) */
+  allowedDates?: string[];
+  /** Sorgu penceresinde allowedDates dışında kalan günler (hesaplanan) */
   closedDates?: string[];
-  /** Portal ile uyumlu seçilebilir günler (bookableStart..bookableEnd − kapalı) */
+  /** Portal takvimiyle uyumlu seçilebilir günler (allowedInRange) */
   activeDates?: string[];
   /** Geriye dönük alias — activeDates ile aynı */
   openDates?: string[];

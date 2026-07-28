@@ -67,15 +67,12 @@ export async function runApiWatcherPhase(
   const queryParams = resolveApiQueryParams(profile, apiSettings, paramOverrides);
   logResolvedApiQueryParams(profile.id, queryParams);
 
-  let authBearer = getBearerTokenForProfile(runtime);
-  if (!authBearer) {
-    const bootstrap = await runApiAuthBootstrapPhase(runtime, params);
-    if (!bootstrap.ok) {
-      return bootstrap;
-    }
-    authBearer = getBearerTokenForProfile(runtime);
+  const bootstrap = await runApiAuthBootstrapPhase(runtime, params);
+  if (!bootstrap.ok) {
+    return bootstrap;
   }
 
+  const authBearer = getBearerTokenForProfile(runtime);
   if (!authBearer) {
     return { ok: false, detail: "Token yok — api-auth-bootstrap başarısız" };
   }
@@ -83,7 +80,7 @@ export async function runApiWatcherPhase(
   if (runtime.session?.context) {
     runtime.session.page = await resolveCdpApiPollPage(runtime.session.context);
     logger.info(
-      `[api-watcher] Poll sekmesi (navigasyon yok): ${runtime.session.page.url()} — ` +
+      `[api-watcher] Poll sekmesi: ${runtime.session.page.url()} — ` +
         `dealerId=${queryParams.dealerId}, typeId=${queryParams.appointmentTypeId}`,
     );
   }
@@ -103,7 +100,7 @@ export async function runApiWatcherPhase(
   logger.info(`[api-watcher] Poll URL: ${pollUrl}`);
 
   const workerStore = new WorkerConfigStore(runtime.projectRoot);
-  const publicIp = await detectPublicIp();
+  const publicIp = await detectPublicIp(runtime.projectRoot);
   const worker = workerStore.getWorker(profile.id, publicIp);
 
   if (!apiSettings.hourQuotaEnabled) {
@@ -138,8 +135,7 @@ export async function runApiWatcherPhase(
         }
         const refreshed = await runApiAuthBootstrapPhase(runtime, {
           ...params,
-          apiOnly: true,
-          noNavigate: true,
+          skipTokenCache: true,
         });
         if (!refreshed.ok) {
           return null;
@@ -155,10 +151,12 @@ export async function runApiWatcherPhase(
 
   const telegram = new TelegramNotifier(runtime.settings.telegram);
   if (runtime.settings.apiWatcher.telegramReportEnabled && telegram.isConfigured()) {
+    const pollMin = Math.round(apiSettings.pollIntervalMs / 60_000);
     await telegram.sendStartupPing(
       profile.id,
-      `API watcher — ${queryParams.dealerOfficeLabel ?? queryParams.cityLabel ?? "?"} / ` +
-        `${queryParams.appointmentStyleLabel ?? "Standart"} (typeId=${queryParams.appointmentTypeId})`,
+      `${queryParams.dealerOfficeLabel ?? "?"} / ${queryParams.appointmentStyleLabel ?? "Standart"}\n` +
+        `İlk GetClosedDate sorgusu hemen yapılır; sonraki aralık: ${pollMin} dk`,
+      "API Watcher başladı",
     );
   }
 

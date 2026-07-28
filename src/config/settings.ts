@@ -161,7 +161,7 @@ export interface ApiWatcherSettings {
   defaultApplicationTypeId: string;
   /** Başvuru tipi fallback etiket — manifest/APPLICATION_TYPE ile eşlenir */
   defaultApplicationType: string;
-  /** GetClosedDate poll aralığı — varsayılan 120000ms (2 dk ≈ 30 istek/saat) */
+  /** GetClosedDate poll aralığı — varsayılan 300000ms (5 dk ≈ 12 istek/saat) */
   pollIntervalMs: number;
   openNotifyCooldownMs: number;
   tokenCaptureWaitMs: number;
@@ -536,12 +536,12 @@ export function loadSettings(projectRoot: string): AppSettings {
       defaultAppointmentStyle: process.env.APPOINTMENT_STYLE?.trim() ?? "Standart",
       defaultApplicationTypeId: process.env.API_APPLICATION_TYPE_ID?.trim() ?? "1",
       defaultApplicationType: process.env.APPLICATION_TYPE?.trim() ?? "Bireysel",
-      pollIntervalMs: parseIntEnv("API_POLL_INTERVAL_MS", 120_000),
+      pollIntervalMs: parseIntEnv("API_POLL_INTERVAL_MS", 300_000),
       openNotifyCooldownMs: parseIntEnv("API_OPEN_NOTIFY_COOLDOWN_MS", 300_000),
       tokenCaptureWaitMs: parseIntEnv("API_TOKEN_CAPTURE_WAIT_MS", 45_000),
       fallbackToBrowserOnCaptcha: process.env.API_CAPTCHA_FALLBACK_BROWSER === "true",
       telegramReportEnabled: process.env.API_TELEGRAM_REPORT_ENABLED !== "false",
-      telegramReportIntervalMs: parseIntEnv("API_TELEGRAM_REPORT_INTERVAL_MS", 120_000),
+      telegramReportIntervalMs: parseIntEnv("API_TELEGRAM_REPORT_INTERVAL_MS", 300_000),
     },
   };
 }
