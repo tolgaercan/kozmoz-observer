@@ -402,6 +402,22 @@ export class ControlPanelService {
     return { launch };
   }
 
+  stopChrome(profileId: string): { stopped: number; processIds: string[] } {
+    const jobs = this.registry
+      .findByProfile(profileId, "chrome")
+      .filter((job) => job.status === "running" || job.status === "starting");
+
+    const processIds: string[] = [];
+    let stopped = 0;
+    for (const job of jobs) {
+      if (this.registry.kill(job.id)) {
+        stopped++;
+        processIds.push(job.id);
+      }
+    }
+    return { stopped, processIds };
+  }
+
   private enrichHealthRecord(
     record: ApiHealthRecord,
     profiles: ProfileOption[],
@@ -489,14 +505,13 @@ export class ControlPanelService {
     steps.push("API ayarları kaydedildi");
 
     if (!chrome.ready) {
-      const { launch } = await this.startChrome(profileId);
-      if (!launch.ok) {
-        throw new Error(launch.message);
-      }
-      steps.push(launch.reusedExisting ? "Mevcut Chrome CDP kullanıldı" : "Chrome debug başlatıldı");
-    } else {
-      steps.push("Chrome CDP zaten hazır");
+      throw new Error(
+        "Chrome CDP hazır değil. Önce Profil kartından «Chrome Aç» ile tarayıcıyı açın, " +
+          "elle portala gidip giriş yapın, sonra API İzlemeyi Başlatın. " +
+          "(Watcher artık otomatik yeni Chrome açmaz — açık sekmeleriniz korunur.)",
+      );
     }
+    steps.push("Chrome CDP zaten hazır");
 
     const process = await this.startApiWatcher(profileId, api);
     steps.push("API Watcher başlatıldı");

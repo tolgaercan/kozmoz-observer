@@ -98,19 +98,26 @@ export async function runApiWatcherPhase(
     const pollTab = await resolvePortalTabForApiPoll(
       runtime.session.context,
       appointmentFormUrl,
+      0,
     );
     runtime.session.page = pollTab.page;
     if (pollTab.blocked) {
       return {
         ok: false,
         detail:
-          "Cloudflare block — otomasyon durduruldu. 1–24 saat bekleyin; portali elle (adres cubugundan) acin.",
+          "Cloudflare block — portali elle acmayi deneyin veya birkac saat bekleyin.",
+      };
+    }
+    if (!pollTab.onPortal) {
+      return {
+        ok: false,
+        detail:
+          "Portal sekmesi yok — once panel Chrome'unda elle appointmentForm acip giris yapin, sonra watcher baslatin.",
       };
     }
     logger.info(
       `[api-watcher] Poll sekmesi: ${runtime.session.page.url()} — ` +
-        `dealerId=${queryParams.dealerId}, typeId=${queryParams.appointmentTypeId}` +
-        (pollTab.onPortal ? "" : " (portal yok — Node fetch)"),
+        `dealerId=${queryParams.dealerId}, typeId=${queryParams.appointmentTypeId}`,
     );
   }
 
@@ -164,6 +171,7 @@ export async function runApiWatcherPhase(
         const pollTab = await resolvePortalTabForApiPoll(
           runtime.session.context,
           appointmentFormUrl,
+          0,
         );
         runtime.session.page = pollTab.page;
         if (pollTab.blocked) {
@@ -176,22 +184,10 @@ export async function runApiWatcherPhase(
         if (quick) {
           return quick;
         }
-        const refreshed = await runApiAuthBootstrapPhase(runtime, {
-          ...params,
-          skipTokenCache: true,
-        });
-        if (!refreshed.ok) {
-          return null;
-        }
-        if (runtime.session?.context) {
-          const appointmentFormUrl = resolveAppointmentFormUrl(runtime.settings.visaPortalHomeUrl);
-          const pollTab = await resolvePortalTabForApiPoll(
-            runtime.session.context,
-            appointmentFormUrl,
-          );
-          runtime.session.page = pollTab.page;
-        }
-        return getBearerTokenForProfile(runtime);
+        logger.warn(
+          "[api-watcher] Token gecersiz (401/403) — panel Chrome'unda portali yenileyip giris yapin.",
+        );
+        return null;
       },
     },
     runtime.settings.telegram,

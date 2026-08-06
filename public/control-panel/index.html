@@ -36,6 +36,17 @@
           </label>
           <div class="profile-meta" id="profileMeta"></div>
           <div class="chrome-status" id="chromeStatus"></div>
+          <div class="inline-actions chrome-actions">
+            <button type="button" class="btn btn-secondary" id="btnStartChrome">
+              Chrome Aç
+            </button>
+            <button type="button" class="btn btn-ghost" id="btnStopChrome">
+              Chrome Kapat
+            </button>
+          </div>
+          <p class="note chrome-hint" id="chromeHint">
+            Önerilen sıra: Chrome Aç → adres çubuğundan elle portala git → API İzlemeyi Başlat.
+          </p>
         </section>
 
         <section class="card card-network">
@@ -144,6 +155,7 @@
             <li id="stepProfile">Profil seçildi</li>
             <li id="stepApi">API parametreleri kayıtlı</li>
             <li id="stepChrome">Chrome CDP hazır</li>
+            <li id="stepPortal">Portal (elle — appointmentForm)</li>
             <li id="stepWatcher">API Watcher çalışıyor</li>
           </ol>
 
@@ -162,8 +174,8 @@
           <div class="diagnostics-output" id="diagnosticsOutput" hidden></div>
 
           <p class="note workflow-note" id="workflowTimingNote">
-            Chrome CDP kapalıysa otomatik başlatılır. Portal oturumu yoksa JWT için appointmentForm
-            sayfasına gider. Watcher öncesi doğru IP’yi kilitleyin.
+            Önce <strong>Chrome Aç</strong> (Profil kartı), elle portala gidin, sonra watcher başlatın.
+            Chrome CDP kapalıysa watcher başlatınca da otomatik açılır.
           </p>
         </section>
 

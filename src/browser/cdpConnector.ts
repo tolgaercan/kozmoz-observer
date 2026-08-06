@@ -23,7 +23,10 @@ export async function isCdpEndpointReady(endpoint: string): Promise<boolean> {
   return false;
 }
 
-export async function connectOverCdp(endpoint: string): Promise<{
+export async function connectOverCdp(
+  endpoint: string,
+  options: { skipStealth?: boolean } = {},
+): Promise<{
   browser: Browser;
   context: BrowserContext;
 }> {
@@ -37,7 +40,9 @@ export async function connectOverCdp(endpoint: string): Promise<{
   }
 
   logger.info("CDP bağlantısı başarılı — gerçek Chrome oturumuna bağlandı.");
-  await applyStealthToContext(context);
+  if (!options.skipStealth) {
+    await applyStealthToContext(context);
+  }
   return { browser, context };
 }
 
@@ -87,30 +92,19 @@ export function scorePortalTabUrl(url: string): number {
 }
 
 export async function resolveCdpObserverPage(context: BrowserContext): Promise<Page> {
+  const portalPage = await findPortalTab(context);
+  if (portalPage) {
+    const score = scorePortalTabUrl(portalPage.url());
+    logger.info(`Portal sekmesi kullaniliyor (skor=${score}): ${portalPage.url()}`);
+    await portalPage.bringToFront();
+    return portalPage;
+  }
+
   const pages = context.pages().filter((candidate) => !candidate.isClosed());
-
-  let best: Page | null = null;
-  let bestScore = -1;
-
-  for (const candidate of pages) {
-    const score = scorePortalTabUrl(candidate.url());
-    if (score > bestScore) {
-      bestScore = score;
-      best = candidate;
-    }
-  }
-
-  if (best && bestScore > 0) {
-    logger.info(`Portal sekmesi kullaniliyor (skor=${bestScore}): ${best.url()}`);
-    await best.bringToFront();
-    return best;
-  }
-
   const reusable = pages.find((candidate) => isUsableTabUrl(candidate.url()));
 
   if (reusable) {
     logger.info(`Mevcut Chrome sekmesi kullaniliyor: ${reusable.url() || "about:blank"}`);
-    await reusable.bringToFront();
     return reusable;
   }
 
@@ -161,6 +155,67 @@ export interface PortalPollTabResult {
   blocked: boolean;
 }
 
+/** Açık portal sekmesini bul — navigasyon yok */
+export async function findPortalTab(context: BrowserContext): Promise<Page | null> {
+  let best: Page | null = null;
+  let bestScore = -1;
+
+  for (const candidate of context.pages()) {
+    if (candidate.isClosed()) {
+      continue;
+    }
+    const score = scorePortalTabUrl(candidate.url());
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+
+  return bestScore > 0 ? best : null;
+}
+
+async function assessPortalTab(page: Page): Promise<PortalPollTabResult> {
+  const intervention = await detectIntervention(page);
+  if (intervention.type === "blocked") {
+    logger.error("[portal] Cloudflare block — poll yapilmamali.");
+    return { page, onPortal: false, blocked: true };
+  }
+  return { page, onPortal: true, blocked: false };
+}
+
+/**
+ * Kullanicinin elle portali acmasini bekler — page.goto YOK (ban onlemi).
+ */
+export async function waitForManualPortalTab(
+  context: BrowserContext,
+  maxWaitMs: number,
+  pollIntervalMs = 3000,
+): Promise<PortalPollTabResult> {
+  const started = Date.now();
+  let loggedWait = false;
+
+  while (Date.now() - started < maxWaitMs) {
+    const portalPage = await findPortalTab(context);
+    if (portalPage) {
+      await portalPage.bringToFront();
+      logger.info(`[portal] UI sekmesi hazir: ${portalPage.url()}`);
+      return assessPortalTab(portalPage);
+    }
+
+    if (!loggedWait) {
+      logger.warn(
+        "[portal] UI adimi bekleniyor — Chrome adres cubugundan appointmentForm acin " +
+          "(otomasyon navigasyonu yok).",
+      );
+      loggedWait = true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+
+  const page = await resolveCdpObserverPage(context);
+  return { page, onPortal: false, blocked: false };
+}
+
 function parsePreGotoDelayMs(): number {
   const raw = process.env.PRE_GOTO_DELAY_MS?.trim();
   const parsed = raw ? Number.parseInt(raw, 10) : 2500;
@@ -168,53 +223,45 @@ function parsePreGotoDelayMs(): number {
 }
 
 /**
- * Poll sekmesi — varsayilan: otomatik navigasyon YOK (Cloudflare ban onlemi).
- * Portal sekmesi yoksa kullanici elle acmali; JWT cache ile Node fetch denenir.
- * API_AUTO_OPEN_PORTAL_TAB=true ile eski davranis (dikkat: ban riski).
+ * Poll sekmesi — UI → token → poll sirasi.
+ * Varsayilan: otomatik navigasyon YOK; kullanici portali elle acar (veya maxWaitMs kadar beklenir).
+ * API_AUTO_OPEN_PORTAL_TAB=true ile otomatik goto (ban riski).
  */
 export async function resolvePortalTabForApiPoll(
   context: BrowserContext,
   appointmentFormUrl: string,
+  maxWaitMs = 0,
 ): Promise<PortalPollTabResult> {
-  const page = await resolveCdpObserverPage(context);
+  const portalPage = await findPortalTab(context);
+  if (portalPage) {
+    await portalPage.bringToFront();
+    return assessPortalTab(portalPage);
+  }
 
-  if (scorePortalTabUrl(page.url()) > 0) {
-    const intervention = await detectIntervention(page);
-    if (intervention.type === "blocked") {
-      logger.error("[api-watcher] Portal sekmesi Cloudflare block — poll yapilmamali.");
-      return { page, onPortal: false, blocked: true };
+  if (process.env.API_AUTO_OPEN_PORTAL_TAB === "true") {
+    const page = await resolveCdpObserverPage(context);
+    const delayMs = parsePreGotoDelayMs();
+    if (delayMs > 0) {
+      logger.info(`[api-watcher] Navigasyon oncesi bekleme: ${delayMs}ms`);
+      await page.waitForTimeout(delayMs);
     }
-    return { page, onPortal: true, blocked: false };
-  }
 
-  if (process.env.API_AUTO_OPEN_PORTAL_TAB !== "true") {
-    logger.warn(
-      "[api-watcher] Portal sekmesi yok — otomatik acma kapali (ban onlemi). " +
-        "Chrome'da elle appointmentForm acin; JWT cache varsa Node fetch denenir.",
+    logger.info(
+      `[api-watcher] Portal sekmesi aciliyor (API_AUTO_OPEN_PORTAL_TAB=true): ${appointmentFormUrl}`,
     );
-    return { page, onPortal: false, blocked: false };
+    await page.goto(appointmentFormUrl, { waitUntil: "domcontentloaded", timeout: 90_000 });
+    return assessPortalTab(page);
   }
 
-  const delayMs = parsePreGotoDelayMs();
-  if (delayMs > 0) {
-    logger.info(`[api-watcher] Navigasyon oncesi bekleme: ${delayMs}ms`);
-    await page.waitForTimeout(delayMs);
+  if (maxWaitMs > 0) {
+    return waitForManualPortalTab(context, maxWaitMs);
   }
 
-  logger.info(`[api-watcher] Portal sekmesi aciliyor (API_AUTO_OPEN_PORTAL_TAB=true): ${appointmentFormUrl}`);
-  await page.goto(appointmentFormUrl, { waitUntil: "domcontentloaded", timeout: 90_000 });
-
-  const intervention = await detectIntervention(page);
-  if (intervention.type === "blocked") {
-    logger.error("[api-watcher] Cloudflare block — otomatik navigasyon durduruldu.");
-    return { page, onPortal: false, blocked: true };
-  }
-
-  return {
-    page,
-    onPortal: scorePortalTabUrl(page.url()) > 0,
-    blocked: false,
-  };
+  logger.warn(
+    "[portal] Portal sekmesi yok — once UI'dan appointmentForm acin, sonra watcher baslatin.",
+  );
+  const page = await resolveCdpObserverPage(context);
+  return { page, onPortal: false, blocked: false };
 }
 
 /** @deprecated resolvePortalTabForApiPoll kullanın */

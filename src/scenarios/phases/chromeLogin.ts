@@ -3,7 +3,7 @@ import {
   waitAndAcceptChromeProfileSyncPrompt,
 } from "../../auth/chromeGoogleBootstrap.js";
 import { prepareChromeForAutomation } from "../../browser/chromeStartupPrep.js";
-import { isCdpEndpointReady } from "../../browser/cdpConnector.js";
+import { isCdpEndpointReady, findPortalTab } from "../../browser/cdpConnector.js";
 import { ContextFactory } from "../../browser/contextFactory.js";
 import { resolveChromeGoogleCredentials } from "../../profiles/profileCredentials.js";
 import { logger } from "../../utils/logger.js";
@@ -47,7 +47,7 @@ export async function runChromeLoginPhase(
     const cdpEndpoint = profile.cdpEndpoint || runtime.settings.cdpEndpoint;
     if (!(await isCdpEndpointReady(cdpEndpoint))) {
       throw new Error(
-        "[scenario] chrome-login — CDP hazir degil. Once: npm run chrome:debug (sistem profili) veya banSafe icin acik CDP tutun.",
+        "[scenario] chrome-login — CDP hazir degil. Once panelden «Chrome Ac» ile tarayiciyi acin.",
       );
     }
   } else {
@@ -65,12 +65,17 @@ export async function runChromeLoginPhase(
   const { page, context } = runtime.session;
 
   if (liteConnect) {
-    await page.bringToFront();
-    const url = page.url();
-    logger.info(`[scenario] chrome-login — lite: aktif sekme ${url}`);
-    if (!/kosmosvize\.com\.tr/i.test(url)) {
+    const portalPage = await findPortalTab(context);
+    const activePage = portalPage ?? page;
+    runtime.session.page = activePage;
+
+    if (portalPage) {
+      await portalPage.bringToFront();
+      logger.info(`[scenario] chrome-login — lite: portal sekmesi korundu (${portalPage.url()})`);
+    } else {
+      logger.info(`[scenario] chrome-login — lite: aktif sekme ${page.url() || "about:blank"}`);
       logger.warn(
-        "[scenario] chrome-login — lite: portal sekmesi henuz yok; sonraki adim URL acacak veya elle acin.",
+        "[scenario] chrome-login — lite: portal sekmesi yok; panel Chrome'unda elle appointmentForm acin.",
       );
     }
     if (skipSessionInject) {
@@ -78,7 +83,7 @@ export async function runChromeLoginPhase(
     }
     return {
       ok: true,
-      detail: `${attachOnly ? "Attach" : "banSafe"} — CDP baglandi (${url})`,
+      detail: `${attachOnly ? "Attach" : "banSafe"} — CDP baglandi (${activePage.url()})`,
     };
   }
 

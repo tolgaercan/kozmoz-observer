@@ -98,6 +98,13 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
     return;
   }
 
+  if (method === "POST" && pathname === "/api/chrome/stop") {
+    const body = await readJsonBody<{ profileId: string }>(req);
+    const result = service.stopChrome(body.profileId);
+    sendJson(res, 200, result);
+    return;
+  }
+
   if (method === "GET" && pathname === "/api/network/ip") {
     const url = new URL(req.url ?? "", "http://local");
     const profileId = url.searchParams.get("profileId") ?? "profile-1";

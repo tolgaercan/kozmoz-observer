@@ -5,6 +5,7 @@ import { resolveAppointmentFormUrl } from "../../navigation/kosmosPortalNav.js";
 import { detectManualAuthStep } from "../../auth/authStepDetector.js";
 import { detectIntervention } from "../../challenge/interventionDetector.js";
 import { isBasvuruPortalUrl, isKosmosMarketingHome, isKosmosPortalUrl } from "../../portal/kosmosOrigin.js";
+import { waitForManualPortalTab } from "../../browser/cdpConnector.js";
 import { readStorageFile } from "../../session/sessionReader.js";
 import { persistPortalStorage, readPortalLocalStorage } from "../../session/sessionPersister.js";
 import { extractJwtFromStorage, stripBearerPrefix } from "../../api/token/jwtExtractor.js";
@@ -186,20 +187,9 @@ async function runApiAuthBootstrapPassive(
   if (!skipTokenCache(params)) {
     const cached = loadApiToken(runtime.projectRoot, profile.id);
     if (cached) {
-      setRuntimeBearerToken(cached.authorization);
       logger.info(
-        `[api-auth] api-token.json (${cached.capturedAt}) — navigasyon yok (portal sekmesi gerekmez)`,
+        `[api-auth] api-token.json (${cached.capturedAt}) cache'de — portal UI sekmesi ve JWT gerekli`,
       );
-      return {
-        ok: true,
-        detail: `api-token.json (${cached.capturedAt}) — navigasyon yok`,
-      };
-    }
-
-    const fromEnv = resolveBearerToken(runtime.projectRoot, profile.id);
-    if (fromEnv) {
-      logger.info("[api-auth] Token .env / RAM — navigasyon yok (portal sekmesi gerekmez)");
-      return { ok: true, detail: "Token .env / RAM — navigasyon yok" };
     }
   }
 
@@ -312,6 +302,85 @@ async function runApiAuthBootstrapActive(
   };
 }
 
+function allowActiveAuthNavigation(runtime: ScenarioRuntime, params?: ScenarioStepParams): boolean {
+  if (params?.forceNavigate === true) {
+    return true;
+  }
+  if (runtime.banSafe) {
+    return false;
+  }
+  return process.env.API_AUTO_OPEN_PORTAL_TAB === "true";
+}
+
+function manualAuthRequiredDetail(): string {
+  return (
+    "Portal UI adimi tamamlanmadi — panel Chrome'unda elle appointmentForm acip giris yapin, " +
+    "sonra watcher'i yeniden baslatin (otomatik navigasyon kapali)."
+  );
+}
+
+/** banSafe: portali kullanicinin acmasini bekle, JWT yakala — page.goto yok */
+async function waitForManualPortalJwt(
+  runtime: ScenarioRuntime,
+): Promise<ApiAuthBootstrapResult> {
+  const { context } = runtime.session!;
+  const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
+  const apiSettings = runtime.settings.apiWatcher;
+  const maxWaitMs = runtime.settings.intervention.loginMaxWaitMs;
+
+  logger.info(
+    `[api-auth] UI → token sirasi: portal sekmesi bekleniyor (max ${Math.round(maxWaitMs / 60_000)} dk)…`,
+  );
+
+  const tab = await waitForManualPortalTab(context, maxWaitMs);
+  if (tab.blocked) {
+    return {
+      ok: false,
+      detail: "Cloudflare block — birkac saat bekleyip portali elle acmayi deneyin.",
+    };
+  }
+  if (!tab.onPortal) {
+    return { ok: false, detail: manualAuthRequiredDetail() };
+  }
+
+  runtime.session!.page = tab.page;
+
+  const jwt = await readTokenFromPortalPage(runtime, tab.page);
+  if (jwt) {
+    const record = saveApiToken(runtime.projectRoot, profile.id, jwt, "localStorage");
+    setRuntimeBearerToken(record.authorization);
+    return {
+      ok: true,
+      detail: `Token localStorage (${tab.page.url()}) — UI adimi tamam`,
+    };
+  }
+
+  const captured = await waitForPortalJwtSession(
+    runtime,
+    tab.page,
+    context,
+    apiSettings,
+    Math.min(maxWaitMs, 120_000),
+  );
+  if (captured) {
+    const sessionPaths = runtime.profileManager.toSessionPaths(profile);
+    await persistPortalStorage(tab.page, sessionPaths.storageFile);
+    const record = saveApiToken(
+      runtime.projectRoot,
+      profile.id,
+      captured.token,
+      captured.source,
+    );
+    setRuntimeBearerToken(record.authorization);
+    return {
+      ok: true,
+      detail: `Token kaydedildi (${captured.source}) — UI adimi tamam`,
+    };
+  }
+
+  return { ok: false, detail: manualAuthRequiredDetail() };
+}
+
 /**
  * Phase: api-auth-bootstrap
  * apiOnly: önce cache/sekme; JWT yoksa Kosmos ana sayfa → appointmentForm → sifre/OTP bekle.
@@ -331,7 +400,14 @@ export async function runApiAuthBootstrapPhase(
     if (passive.ok) {
       return passive;
     }
+    if (runtime.banSafe || !allowActiveAuthNavigation(runtime, params)) {
+      return waitForManualPortalJwt(runtime);
+    }
     logger.warn(`[api-auth] ${passive.detail} Aktif navigasyon başlatılıyor.`);
+  }
+
+  if (!allowActiveAuthNavigation(runtime, params)) {
+    return { ok: false, detail: manualAuthRequiredDetail() };
   }
 
   return runApiAuthBootstrapActive(runtime, params);

@@ -90,6 +90,11 @@ export async function runScenario(
 
       logger.info(`[scenario] ${result.ok ? "✓" : "✗"} ${step.phase} — ${result.detail ?? "ok"}`);
 
+      if (!result.ok && (step.phase === "chrome-login" || step.phase === "api-auth-bootstrap")) {
+        logger.error("[scenario] Kritik adim basarisiz — sonraki adimlar atlaniyor.");
+        break;
+      }
+
       if (runtime.session?.page && i < stepsToRun.length - 1) {
         await humanPause(runtime.session.page, 1800, 4000, "Sonraki adim oncesi");
       }

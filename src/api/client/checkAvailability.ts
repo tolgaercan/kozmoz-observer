@@ -172,23 +172,45 @@ export async function checkAvailability(
 
   try {
     const forceNode = process.env.API_POLL_VIA_NODE === "true";
-    const useBrowser = !forceNode && page && !page.isClosed() && pageIsOnPortal(page);
+    const onPortal = page && !page.isClosed() && pageIsOnPortal(page);
 
-    if (useBrowser && page && !page.isClosed()) {
+    if (!onPortal && !forceNode) {
+      return {
+        ok: false,
+        status: 0,
+        hasOpenSlots: false,
+        summary:
+          "Portal sekmesi gerekli — once UI'dan appointmentForm acin, poll atlandi",
+      };
+    }
+
+    if (onPortal && page && !page.isClosed()) {
       try {
         return await fetchClosedDateViaPage(ctx, url, queryParams, page);
       } catch (browserError) {
         const message =
           browserError instanceof Error ? browserError.message : String(browserError);
-        logger.warn(
-          `[checkAvailability] Tarayıcı fetch başarısız — Node fetch deneniyor: ${message}`,
-        );
+        logger.warn(`[checkAvailability] Tarayici fetch basarisiz: ${message}`);
+        return {
+          ok: false,
+          status: 0,
+          hasOpenSlots: false,
+          summary: message,
+        };
       }
-    } else if (forceNode) {
-      logger.debug("[checkAvailability] API_POLL_VIA_NODE=true — Node fetch");
     }
 
-    return await fetchClosedDateViaNode(ctx, url, queryParams);
+    if (forceNode) {
+      logger.debug("[checkAvailability] API_POLL_VIA_NODE=true — Node fetch");
+      return await fetchClosedDateViaNode(ctx, url, queryParams);
+    }
+
+    return {
+      ok: false,
+      status: 0,
+      hasOpenSlots: false,
+      summary: "Portal sekmesi gerekli — poll atlandi",
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const cause =

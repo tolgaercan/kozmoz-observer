@@ -179,6 +179,15 @@ input:focus {
   border-color: rgba(59, 130, 246, 0.5);
 }
 
+.chrome-actions {
+  margin-bottom: 8px;
+}
+
+.chrome-hint {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
 .profile-meta,
 .chrome-status,
 .api-preview,

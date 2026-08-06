@@ -290,15 +290,39 @@ function renderApiHealth(status) {
 
 function renderChromeStatus(status) {
   const el = $("chromeStatus");
+  if (!el) {
+    return;
+  }
   if (!status) {
     el.textContent = "Chrome durumu yükleniyor…";
     el.className = "chrome-status";
+    renderChromeActions(null);
     return;
   }
   el.className = `chrome-status ${status.chrome.ready ? "ready" : "down"}`;
   el.innerHTML = status.chrome.ready
     ? `Chrome CDP hazır — <code>${status.chrome.endpoint}</code>`
-    : `Chrome CDP kapalı — port <code>${status.cdpPort}</code> (debug modda başlatın)`;
+    : `Chrome CDP kapalı — port <code>${status.cdpPort}</code>`;
+  renderChromeActions(status);
+}
+
+function renderChromeActions(status) {
+  const btnStart = $("btnStartChrome");
+  const btnStop = $("btnStopChrome");
+  const hint = $("chromeHint");
+  if (!btnStart || !btnStop) {
+    return;
+  }
+  const ready = Boolean(status?.chrome?.ready);
+  btnStart.disabled = ready;
+  btnStop.disabled = !ready;
+  btnStart.title = ready ? "Chrome zaten acik" : "Watcher baslatmadan once Chrome debug ac";
+  btnStop.title = ready ? "Panel Chrome'unu kapat" : "Chrome zaten kapali";
+  if (hint) {
+    hint.textContent = ready
+      ? "Chrome acik — adres cubugundan elle appointmentForm acin, giris yapin, sonra watcher baslatin."
+      : "Onerilen sira: Chrome Ac → elle portala git → API Izlemeyi Baslat.";
+  }
 }
 
 function renderApiPreview() {
@@ -345,8 +369,8 @@ function renderWorkflowTimingNote() {
   if (!el) return;
   const timing = readWorkerTimingFromForm();
   el.textContent =
-    `Chrome CDP kapalıysa otomatik başlatılır. Portal oturumu yoksa JWT için appointmentForm sayfasına gider. ` +
-    `Watcher öncesi doğru IP'yi kilitleyin. Bu profil: poll ${formatIntervalLabel(timing.pollIntervalMs)}, Telegram ${formatIntervalLabel(timing.telegramReportIntervalMs)}.`;
+    `Once Chrome Ac (Profil karti), elle portala gidin, sonra watcher baslatin. ` +
+    `Bu profil: poll ${formatIntervalLabel(timing.pollIntervalMs)}, Telegram ${formatIntervalLabel(timing.telegramReportIntervalMs)}.`;
 }
 
 function formatProxyOption(option) {
@@ -613,6 +637,7 @@ function renderWorkflowSteps(status, processes) {
   const stepProfile = $("stepProfile");
   const stepApi = $("stepApi");
   const stepChrome = $("stepChrome");
+  const stepPortal = $("stepPortal");
   const stepWatcher = $("stepWatcher");
   const btnStop = $("btnStopApiWatcher");
   const btnStart = $("btnStartWorkflow");
@@ -620,18 +645,26 @@ function renderWorkflowSteps(status, processes) {
   stepProfile.className = state.profileId ? "done" : "";
   stepApi.className = $("dealerOffice").value && $("appointmentStyle").value ? "done" : "";
   stepChrome.className = status?.chrome?.ready ? "done" : "";
+  if (stepPortal) {
+    stepPortal.className = status?.chrome?.ready ? "active" : "";
+    stepPortal.title = status?.chrome?.ready
+      ? "Chrome acik — adres cubugundan appointmentForm acin (elle)"
+      : "Once Chrome Ac";
+  }
   stepWatcher.className = apiWatcherRunning ? "done active" : "";
 
   if (btnStop) {
     btnStop.hidden = !apiWatcherRunning;
   }
   if (btnStart) {
-    btnStart.disabled = apiWatcherRunning || status?.rateLimit?.blocked;
-    btnStart.title = status?.rateLimit?.blocked
-      ? "Ban / rate limit aktif — bekleyin"
-      : apiWatcherRunning
-        ? "Watcher zaten çalışıyor"
-        : "";
+    btnStart.disabled = apiWatcherRunning || status?.rateLimit?.blocked || !status?.chrome?.ready;
+    btnStart.title = !status?.chrome?.ready
+      ? "Once Profil kartindan Chrome Ac"
+      : status?.rateLimit?.blocked
+        ? "Ban / rate limit aktif — bekleyin"
+        : apiWatcherRunning
+          ? "Watcher zaten calisiyor"
+          : "";
   }
 }
 
@@ -943,12 +976,55 @@ $("btnSaveApi").addEventListener("click", async () => {
   });
 });
 
+$("btnStartChrome").addEventListener("click", async () => {
+  const btn = $("btnStartChrome");
+  btn.disabled = true;
+  try {
+    const result = await api("/api/chrome/start", {
+      method: "POST",
+      body: JSON.stringify({ profileId: state.profileId }),
+    });
+    const launch = result.launch ?? result;
+    toast(launch.message ?? "Chrome baslatildi");
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    await refreshWorkflowUi();
+  }
+});
+
+$("btnStopChrome").addEventListener("click", async () => {
+  const btn = $("btnStopChrome");
+  btn.disabled = true;
+  try {
+    const result = await api("/api/chrome/stop", {
+      method: "POST",
+      body: JSON.stringify({ profileId: state.profileId }),
+    });
+    toast(
+      result.stopped > 0
+        ? `Chrome kapatildi (${result.stopped} surec)`
+        : "Panel Chrome sureci bulunamadi — Aktif sureclerden Kill deneyin",
+    );
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    await refreshWorkflowUi();
+  }
+});
+
 $("btnStartWorkflow").addEventListener("click", async () => {
   const btn = $("btnStartWorkflow");
   btn.disabled = true;
   try {
     if ($("proxyMode").value === "direct" && !$("lockedIp").textContent.trim().replace("—", "")) {
       await refreshNetworkIp();
+    }
+    const status = await api(`/api/status?profileId=${encodeURIComponent(state.profileId)}`);
+    if (!status?.chrome?.ready) {
+      throw new Error(
+        "Chrome CDP hazır değil. Önce Profil kartından «Chrome Aç», elle portala gidin, sonra watcher başlatın.",
+      );
     }
     const apiParams = {
       dealerOffice: $("dealerOffice").value,

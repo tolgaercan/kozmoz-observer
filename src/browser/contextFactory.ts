@@ -61,9 +61,10 @@ export class ContextFactory {
     logger.info(`  Chrome user-data: ${profile.absoluteUserDataDir}`);
     logger.info("  Chrome'u scripts/start-chrome-debug.ps1 -Profile <id> ile açmış olmalısınız.");
 
-    const { browser, context } = await connectOverCdp(cdpEndpoint);
+    const { browser, context } = await connectOverCdp(cdpEndpoint, {
+      skipStealth: launchOptions.skipStealth,
+    });
     if (!launchOptions.skipStealth) {
-      await applyStealthToContext(context);
       logger.info("[stealth] CDP oturumuna anti-detection script uygulandi.");
     } else {
       logger.info("[stealth] CDP stealth atlandi (attach modu — mevcut Chrome oturumu).");
