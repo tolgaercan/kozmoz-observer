@@ -181,7 +181,8 @@ input:focus {
 
 .profile-meta,
 .chrome-status,
-.api-preview {
+.api-preview,
+.worker-summary {
   padding: 12px 14px;
   border-radius: 10px;
   background: var(--bg-soft);
@@ -190,6 +191,19 @@ input:focus {
   line-height: 1.5;
   color: var(--text-muted);
   margin-bottom: 12px;
+}
+
+.field-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+@media (max-width: 720px) {
+  .field-grid-2 {
+    grid-template-columns: 1fr;
+  }
 }
 
 .chrome-status.ready {
@@ -323,7 +337,7 @@ input:focus {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 720px;
+  min-width: 960px;
 }
 
 th,
@@ -344,6 +358,33 @@ th {
   text-align: center;
   color: var(--text-muted);
   padding: 28px;
+}
+
+.process-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-compact {
+  padding: 7px 10px;
+  font-size: 0.82rem;
+}
+
+.process-interval-select {
+  min-width: 5.5rem;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-size: 0.82rem;
+}
+
+.process-interval-select:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.35);
+  border-color: rgba(59, 130, 246, 0.5);
 }
 
 .status-pill {
@@ -513,6 +554,111 @@ th {
 .api-health-tip {
   margin: 0;
   line-height: 1.45;
+}
+
+.card-workflow {
+  border-color: rgba(59, 130, 246, 0.35);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.08), transparent 55%), var(--bg-elevated);
+}
+
+.workflow-steps {
+  margin: 0 0 18px;
+  padding-left: 1.25rem;
+  display: grid;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.workflow-steps li {
+  transition: color 0.15s ease;
+}
+
+.workflow-steps li.done {
+  color: var(--accent-2);
+}
+
+.workflow-steps li.done.active {
+  font-weight: 650;
+  color: #86efac;
+}
+
+.workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.btn-lg {
+  padding: 14px 22px;
+  font-size: 1.02rem;
+}
+
+.workflow-note {
+  margin-top: 14px;
+}
+
+.diagnostics-output {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.diagnostics-output.ok {
+  border-color: rgba(34, 197, 94, 0.35);
+}
+
+.diagnostics-output.fail {
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.diag-summary {
+  margin: 8px 0 12px;
+  color: var(--text-muted);
+}
+
+.diag-row {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+
+.diag-row:first-of-type {
+  border-top: none;
+}
+
+.diag-row.fail {
+  color: #fecaca;
+}
+
+.diag-row.warn {
+  color: #fde68a;
+}
+
+.diag-row.ok {
+  color: #bbf7d0;
+}
+
+.manual-home-ip {
+  margin-top: 14px;
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.manual-home-ip input {
+  width: 100%;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--text);
+  font-family: inherit;
 }
 
 @media (max-width: 900px) {

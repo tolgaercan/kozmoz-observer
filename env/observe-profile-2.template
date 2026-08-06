@@ -1,17 +1,1 @@
-# profile-2 — EEA AB Eşi slot tarama (profile-1'e dokunmaz)
-# Bu blokları .env dosyanıza ekleyin veya ayrı dosyadan yükleyin.
-
-EMAIL_PROFILE_2=
-PASSWORD_PROFILE_2=
-
-# Wizard adım 2 — TC Kimlik (zorunlu)
-NATIONALITY_NUMBER_PROFILE_2=
-
-# Manifest'te sabit: Ankara + Bireysel + EEA AB Eşi (başvuru şekli)
-# Gerekirse override:
-# APPOINTMENT_STYLE_PROFILE_2=EEA AB Eşi
-
-# Çalıştırma:
-#   npm run chrome:debug:profile-2
-#   (Chrome'da portal oturumu açık / Randevu Al sayfasında)
-#   npm run scenario:eea-observe-attach
+# Taşındı → archive/env/observe-profile-2.template

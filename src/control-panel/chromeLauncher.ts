@@ -53,13 +53,13 @@ function buildChromeArgs(
   profileDirectory: string,
   cdpPort: number,
   proxyUrl?: string,
+  directMode = false,
 ): string[] {
   const args = [
     `--remote-debugging-address=127.0.0.1`,
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${userDataDir}`,
     `--profile-directory=${profileDirectory}`,
-    "--disable-blink-features=AutomationControlled",
     "--disable-infobars",
     "--no-first-run",
     "--no-default-browser-check",
@@ -69,12 +69,13 @@ function buildChromeArgs(
 
   if (proxyUrl?.trim()) {
     args.push(`--proxy-server=${proxyUrl.trim()}`);
+  } else if (directMode) {
+    args.push("--proxy-server=direct://");
   }
 
   const startUrl =
-    process.env.CHROME_USE_SYSTEM_PROFILE === "true"
-      ? "about:blank"
-      : "https://www.google.com/";
+    process.env.CHROME_STARTUP_URL?.trim() ||
+    (process.env.CHROME_USE_SYSTEM_PROFILE === "true" ? "about:blank" : "about:blank");
   args.push(startUrl);
   return args;
 }
@@ -93,6 +94,7 @@ export async function launchChromeForProfile(
   profile: ResolvedProfile,
   registry: ProcessRegistry,
   proxyUrl?: string,
+  directMode = false,
 ): Promise<ChromeLaunchResult> {
   const { userDataDir, profileDirectory, cdpPort } = resolveProfilePaths(profile);
   const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
@@ -139,7 +141,7 @@ export async function launchChromeForProfile(
     };
   }
 
-  const args = buildChromeArgs(userDataDir, profileDirectory, cdpPort, proxyUrl);
+  const args = buildChromeArgs(userDataDir, profileDirectory, cdpPort, proxyUrl, directMode);
   const record = registry.register({
     kind: "chrome",
     profileId: profile.id,

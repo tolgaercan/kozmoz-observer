@@ -1,3 +1,44 @@
+const INTERVAL_OPTIONS = [
+  { label: "1 dk", ms: 60_000 },
+  { label: "3 dk", ms: 180_000 },
+  { label: "5 dk", ms: 300_000 },
+  { label: "10 dk", ms: 600_000 },
+  { label: "15 dk", ms: 900_000 },
+];
+
+function formatIntervalLabel(ms) {
+  const match = INTERVAL_OPTIONS.find((option) => option.ms === ms);
+  if (match) return match.label;
+  return `${Math.round(ms / 1000)} sn`;
+}
+
+function buildIntervalSelectOptions(selectedMs, optionsMs) {
+  const values = optionsMs?.length ? optionsMs : INTERVAL_OPTIONS.map((option) => option.ms);
+  return values
+    .map((ms) => {
+      const label = formatIntervalLabel(ms);
+      const selected = ms === selectedMs ? " selected" : "";
+      return `<option value="${ms}"${selected}>${label}</option>`;
+    })
+    .join("");
+}
+
+function fillIntervalSelect(element, selectedMs, optionsMs) {
+  if (!element) return;
+  const values = optionsMs?.length ? optionsMs : INTERVAL_OPTIONS.map((option) => option.ms);
+  element.innerHTML = values
+    .map((ms) => `<option value="${ms}">${formatIntervalLabel(ms)}</option>`)
+    .join("");
+  element.value = String(selectedMs);
+}
+
+function readWorkerTimingFromForm() {
+  return {
+    pollIntervalMs: Number.parseInt($("workerPollInterval").value, 10),
+    telegramReportIntervalMs: Number.parseInt($("workerTelegramInterval").value, 10),
+  };
+}
+
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -273,6 +314,39 @@ function renderApiPreview() {
       appointmentStyle: <code>${style}</code> → appointmentTypeId <code>${styleOpt?.appointmentTypeId ?? "?"}</code>
     `
     : "Ofis seçin";
+  renderWorkerSummary();
+  renderWorkflowTimingNote();
+}
+
+function renderWorkerSummary() {
+  const el = $("workerSummary");
+  if (!el) return;
+
+  const worker = state.worker;
+  const timing = readWorkerTimingFromForm();
+  const lockedIp = worker?.lockedIp || $("lockedIp").textContent.trim().replace("—", "") || "—";
+  const envDefaults = state.bootstrap?.envTimingDefaults;
+
+  el.innerHTML = `
+    <strong>Kayıtlı worker özeti</strong><br>
+    Profil: <code>${state.profileId}</code> · Kilitli IP: <code>${lockedIp}</code><br>
+    Poll: <strong>${formatIntervalLabel(timing.pollIntervalMs)}</strong> ·
+    Telegram: <strong>${formatIntervalLabel(timing.telegramReportIntervalMs)}</strong>
+    ${
+      envDefaults
+        ? `<br><small>.env varsayılan: poll ${formatIntervalLabel(envDefaults.pollIntervalMs)}, Telegram ${formatIntervalLabel(envDefaults.telegramReportIntervalMs)}</small>`
+        : ""
+    }
+  `;
+}
+
+function renderWorkflowTimingNote() {
+  const el = $("workflowTimingNote");
+  if (!el) return;
+  const timing = readWorkerTimingFromForm();
+  el.textContent =
+    `Chrome CDP kapalıysa otomatik başlatılır. Portal oturumu yoksa JWT için appointmentForm sayfasına gider. ` +
+    `Watcher öncesi doğru IP'yi kilitleyin. Bu profil: poll ${formatIntervalLabel(timing.pollIntervalMs)}, Telegram ${formatIntervalLabel(timing.telegramReportIntervalMs)}.`;
 }
 
 function formatProxyOption(option) {
@@ -280,8 +354,145 @@ function formatProxyOption(option) {
     return option.label;
   }
   const ipPart = option.exitIp ? `IP: ${option.exitIp}` : `${option.host}:${option.port}`;
-  const reserveTag = option.enabled === false ? " · rezerve" : "";
-  return `${option.label} — ${ipPart}${reserveTag}`;
+  return `${option.label} — ${ipPart}`;
+}
+
+function listKnownProxyExitIps() {
+  return [
+    ...new Set(
+      (state.bootstrap?.proxyPool ?? [])
+        .map((proxy) => proxy.exitIp?.trim())
+        .filter((ip) => ip && ip !== "0.0.0.0"),
+    ),
+  ];
+}
+
+/** Tarayıcıdan ipify — antivirüs Node/curl engelini aşar */
+async function measureHomeIpInBrowser() {
+  const endpoints = [
+    "https://api.ipify.org?format=json",
+    "https://api64.ipify.org?format=json",
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const response = await fetch(url, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        continue;
+      }
+      const body = await response.json();
+      const ip = body?.ip?.trim();
+      if (ip) {
+        return ip;
+      }
+    } catch {
+      // antivirüs / ağ — sonraki endpoint
+    }
+  }
+
+  return null;
+}
+
+async function applyBrowserHomeIp(profileId) {
+  const browserIp = await measureHomeIpInBrowser();
+  if (!browserIp) {
+    return null;
+  }
+
+  return api("/api/network/ensure-home-ip", {
+    method: "POST",
+    body: JSON.stringify({ profileId, ip: browserIp }),
+  });
+}
+
+async function refreshNetworkIp() {
+  const proxyMode = $("proxyMode").value;
+  const proxyId = $("proxyUrl").value;
+  const params = new URLSearchParams({
+    profileId: state.profileId,
+    proxyMode,
+    skipServerMeasure: "true",
+  });
+  if (proxyMode === "proxy" && proxyId) {
+    params.set("proxyId", proxyId);
+  }
+
+  let network = await api(`/api/network/ip?${params.toString()}`);
+
+  if (
+    proxyMode === "direct" &&
+    (network.displayIp === "unknown" || network.displayIp === "unavailable" || !network.lockedIp)
+  ) {
+    try {
+      const fromBrowser = await applyBrowserHomeIp(state.profileId);
+      if (fromBrowser) {
+        network = fromBrowser;
+      }
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  }
+
+  state.network = network;
+
+  const locked = network.lockedIp || "—";
+  $("lockedIp").textContent = locked;
+
+  renderNetworkFromSnapshot(network);
+
+  const manualField = $("manualHomeIpField");
+  if (manualField) {
+    const showManual =
+      proxyMode === "direct" &&
+      (network.displayIp === "unknown" || network.displayIp === "unavailable") &&
+      !network.lockedIp;
+    manualField.hidden = !showManual;
+  }
+
+  if (network.autoLocked && network.lockedIp) {
+    toast(`Ev IP otomatik kilitlendi: ${network.lockedIp}`);
+  }
+
+  return network;
+}
+
+function renderNetworkFromSnapshot(network) {
+  const label = $("currentIpLabel");
+  const hint = $("currentIpHint");
+  const mode = network.mode ?? $("proxyMode").value;
+
+  if (mode === "proxy") {
+    label.textContent = "Proxy çıkış IP";
+    $("currentIp").textContent = network.displayIp ?? "—";
+    hint.textContent = network.warning ?? "Seçili proxy statik çıkış IP";
+  } else {
+    label.textContent = "Ev public IP";
+    $("currentIp").textContent = network.displayIp ?? "—";
+    if (network.displayIp === "unknown" || network.displayIp === "unavailable") {
+      hint.textContent =
+        network.warning ??
+        (network.measuredWanIp
+          ? `WAN ${network.measuredWanIp} — ProxyNet aktif; kapatıp "Ev IP'yi yeniden ölç" deyin`
+          : "Ev IP alınamadı — ProxyNet kapatın veya manuel girin");
+    } else {
+      const sourceHint =
+        network.ipSource === "browser"
+          ? "Tarayıcı ile ölçüldü (antivirüs dostu)"
+          : network.ipSource === "chrome"
+            ? "Chrome (direct://) ile ölçüldü"
+            : network.ipSource === "cached"
+              ? "Kayıtlı ev IP"
+              : network.ipSource === "env"
+                ? ".env HOME_PUBLIC_IP"
+                : "Doğrudan mod — proxy bypass (direct://)";
+      hint.textContent = network.warning ?? sourceHint;
+    }
+  }
+
+  renderNetworkHints();
 }
 
 function fillSelect(select, options, getValue, getLabel, selected) {
@@ -298,6 +509,10 @@ function fillSelect(select, options, getValue, getLabel, selected) {
 }
 
 function renderCurrentIpDisplay() {
+  if (state.network) {
+    renderNetworkFromSnapshot(state.network);
+    return;
+  }
   const savedMode = state.bootstrap?.connectionMode ?? state.worker?.proxyMode ?? "direct";
   const formMode = $("proxyMode").value;
   const homeIp = state.bootstrap?.homePublicIp ?? "unknown";
@@ -317,7 +532,7 @@ function renderCurrentIpDisplay() {
         selected?.ispStatic ? "ProxyNet ISP statik IP (WAN)" : "Proxy modu — ölçülen çıkış IP";
     } else if (selected?.exitIp) {
       $("currentIp").textContent = selected.exitIp;
-      hint.textContent = "Kaydet ve yenile — proxy IP doğrulanır";
+      hint.textContent = "Kaydet — proxy IP doğrulanır";
     } else {
       $("currentIp").textContent = "—";
       hint.textContent = "Proxy seçin, kaydedin ve yenileyin";
@@ -329,7 +544,7 @@ function renderCurrentIpDisplay() {
       hint.textContent = homeWarning ?? `WAN ${measuredWan} — ProxyNet IP, ev interneti değil`;
     } else {
       $("currentIp").textContent = homeIp;
-      hint.textContent = homeWarning ?? "Doğrudan mod — proxy çıkış IP'leri hariç";
+      hint.textContent = homeWarning ?? "Doğrudan mod — proxy bypass (direct://)";
     }
   }
 }
@@ -345,20 +560,20 @@ function renderNetworkHints() {
 
   if (mode === "direct") {
     hint.textContent =
-      "Doğrudan mod: trafik ev interneti IP'sinden gider. " +
-      (state.bootstrap?.homeIpWarning
-        ? state.bootstrap.homeIpWarning + " "
+      "Doğrudan mod: trafik ev interneti IP'sinden gider (Chrome: direct://). " +
+      (state.network?.warning ?? state.bootstrap?.homeIpWarning
+        ? `${state.network?.warning ?? state.bootstrap.homeIpWarning} `
         : "") +
-      "ProxyNet statik IP kullanmak için → Bağlantı modu: Proxy, ProxyNet ISP seçin, kaydedin.";
+      "Statik ProxyNet IP için → Bağlantı modu: Proxy.";
     proxyHint.textContent = "";
   } else {
     hint.textContent =
-      "Proxy modu: trafik seçilen proxy çıkış IP'sinden gider. Kaydettikten sonra Chrome (debug) yeniden başlatılmalı.";
+      "Proxy modu: trafik seçilen statik çıkış IP'sinden gider. Kaydettikten sonra IP'yi kilitleyin.";
     proxyHint.textContent = selected?.exitIp
-      ? `Beklenen çıkış IP: ${selected.exitIp}${selected.enabled === false ? " (rezerve — yine de kullanılabilir)" : ""}`
+      ? `Statik çıkış IP: ${selected.exitIp}`
       : selected
-        ? "Proxy seçildi — kaydet ve yenile"
-        : "Listeden proxy seçin";
+        ? "Proxy seçildi — kaydet ve kilitle"
+        : "Listeden statik IP proxy seçin";
   }
 }
 
@@ -377,33 +592,146 @@ function applyWorkerToForm(worker) {
   if (worker.api?.appointmentStyle) {
     $("appointmentStyle").value = worker.api.appointmentStyle;
   }
+  const intervalOptions = state.bootstrap?.runtimeOptionsMs;
+  const pollMs = worker.timing?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
+  const telegramMs = worker.timing?.telegramReportIntervalMs ?? INTERVAL_OPTIONS[2].ms;
+  fillIntervalSelect($("workerPollInterval"), pollMs, intervalOptions);
+  fillIntervalSelect($("workerTelegramInterval"), telegramMs, intervalOptions);
   renderApiPreview();
   renderNetworkHints();
+  void refreshNetworkIp().catch(() => {});
+}
+
+function renderWorkflowSteps(status, processes) {
+  const apiWatcherRunning = (processes ?? []).some(
+    (p) =>
+      p.kind === "api-watcher" &&
+      p.profileId === state.profileId &&
+      (p.status === "running" || p.status === "starting"),
+  );
+
+  const stepProfile = $("stepProfile");
+  const stepApi = $("stepApi");
+  const stepChrome = $("stepChrome");
+  const stepWatcher = $("stepWatcher");
+  const btnStop = $("btnStopApiWatcher");
+  const btnStart = $("btnStartWorkflow");
+
+  stepProfile.className = state.profileId ? "done" : "";
+  stepApi.className = $("dealerOffice").value && $("appointmentStyle").value ? "done" : "";
+  stepChrome.className = status?.chrome?.ready ? "done" : "";
+  stepWatcher.className = apiWatcherRunning ? "done active" : "";
+
+  if (btnStop) {
+    btnStop.hidden = !apiWatcherRunning;
+  }
+  if (btnStart) {
+    btnStart.disabled = apiWatcherRunning || status?.rateLimit?.blocked;
+    btnStart.title = status?.rateLimit?.blocked
+      ? "Ban / rate limit aktif — bekleyin"
+      : apiWatcherRunning
+        ? "Watcher zaten çalışıyor"
+        : "";
+  }
+}
+
+function renderDiagnostics(title, bodyHtml, ok = true) {
+  const el = $("diagnosticsOutput");
+  if (!el) return;
+  el.hidden = false;
+  el.className = `diagnostics-output ${ok ? "ok" : "fail"}`;
+  el.innerHTML = `<strong>${title}</strong>${bodyHtml}`;
+}
+
+function renderValidationReport(report) {
+  const rows = (report.items ?? [])
+    .map(
+      (item) =>
+        `<div class="diag-row ${item.ok ? "ok" : "fail"}">${item.ok ? "✓" : "✗"} ${item.name}<br><small>${item.detail}</small></div>`,
+    )
+    .join("");
+  renderDiagnostics(
+    `${report.summary}`,
+    `<div class="diag-summary">${report.passed}/${report.total} geçti</div>${rows}`,
+    report.ok,
+  );
 }
 
 function renderProcesses(processes) {
   const tbody = $("processTableBody");
   tbody.innerHTML = "";
 
-  const active = (processes ?? []).filter((p) => p.status === "running" || p.status === "starting");
+  const apiKinds = new Set(["api-watcher", "chrome"]);
+  const active = (processes ?? []).filter(
+    (p) =>
+      apiKinds.has(p.kind) &&
+      (p.status === "running" || p.status === "starting"),
+  );
   if (active.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="7">Aktif süreç yok</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Aktif süreç yok</td></tr>`;
     return;
   }
 
   for (const proc of active) {
     const tr = document.createElement("tr");
+    const isWatcher = proc.kind === "api-watcher";
+    const pollMs = proc.runtime?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
+    const telegramMs = proc.runtime?.telegramReportIntervalMs ?? INTERVAL_OPTIONS[2].ms;
+
     tr.innerHTML = `
       <td>${proc.kind}</td>
       <td><code>${proc.profileId}</code></td>
       <td>${proc.label}</td>
       <td><span class="status-pill ${statusClass(proc.status)}">${proc.status}</span></td>
+      <td>${
+        isWatcher
+          ? `<select class="process-interval-select" data-poll="${proc.id}" aria-label="Poll aralığı">${buildIntervalSelectOptions(pollMs, proc.runtimeOptionsMs)}</select>`
+          : "—"
+      }</td>
+      <td>${
+        isWatcher
+          ? `<select class="process-interval-select" data-telegram="${proc.id}" aria-label="Telegram aralığı">${buildIntervalSelectOptions(telegramMs, proc.runtimeOptionsMs)}</select>`
+          : "—"
+      }</td>
       <td>${proc.pid ?? "—"}</td>
       <td>${formatTime(proc.startedAt)}</td>
-      <td><button type="button" class="btn btn-danger" data-kill="${proc.id}">Kill</button></td>
+      <td>
+        <div class="process-actions">
+          ${
+            isWatcher
+              ? `<button type="button" class="btn btn-secondary btn-compact" data-update-runtime="${proc.id}">Güncelle</button>`
+              : ""
+          }
+          <button type="button" class="btn btn-danger btn-compact" data-kill="${proc.id}">Kill</button>
+        </div>
+      </td>
     `;
     tbody.appendChild(tr);
   }
+
+  tbody.querySelectorAll("[data-update-runtime]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const processId = btn.dataset.updateRuntime;
+      const pollSelect = tbody.querySelector(`[data-poll="${processId}"]`);
+      const telegramSelect = tbody.querySelector(`[data-telegram="${processId}"]`);
+      try {
+        const result = await api("/api/process/runtime-config", {
+          method: "POST",
+          body: JSON.stringify({
+            processId,
+            pollIntervalMs: Number.parseInt(pollSelect?.value ?? "0", 10),
+            telegramReportIntervalMs: Number.parseInt(telegramSelect?.value ?? "0", 10),
+          }),
+        });
+        toast(
+          `Canlı ayar uygulandı — poll: ${formatIntervalLabel(result.runtime.pollIntervalMs)}, Telegram: ${formatIntervalLabel(result.runtime.telegramReportIntervalMs)} (worker-config'e kaydedildi)`,
+        );
+        await refreshAll();
+      } catch (error) {
+        toast(error.message, "error");
+      }
+    });
+  });
 
   tbody.querySelectorAll("[data-kill]").forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -475,11 +803,18 @@ async function refreshStatus() {
   renderBanOverview(status);
   renderBanBanner(status);
   renderApiHealth(status);
+  return status;
 }
 
 async function refreshProcesses() {
   const data = await api("/api/processes");
   renderProcesses(data.processes);
+  return data.processes;
+}
+
+async function refreshWorkflowUi() {
+  const [status, processes] = await Promise.all([refreshStatus(), refreshProcesses()]);
+  renderWorkflowSteps(status, processes);
 }
 
 async function saveWorkerConfig(patch) {
@@ -494,8 +829,7 @@ async function saveWorkerConfig(patch) {
 
 async function refreshAll() {
   await loadBootstrap();
-  await refreshStatus();
-  await refreshProcesses();
+  await refreshWorkflowUi();
 }
 
 $("profileSelect").addEventListener("change", async (event) => {
@@ -505,13 +839,23 @@ $("profileSelect").addEventListener("change", async (event) => {
 
 $("proxyMode").addEventListener("change", (event) => {
   $("proxyUrlField").hidden = event.target.value !== "proxy";
-  renderNetworkHints();
+  refreshNetworkIp().catch((e) => toast(e.message, "error"));
 });
 
-$("proxyUrl").addEventListener("change", () => renderNetworkHints());
+$("proxyUrl").addEventListener("change", () => {
+  refreshNetworkIp().catch((e) => toast(e.message, "error"));
+});
 
 $("dealerOffice").addEventListener("change", renderApiPreview);
 $("appointmentStyle").addEventListener("change", renderApiPreview);
+$("workerPollInterval").addEventListener("change", () => {
+  renderWorkerSummary();
+  renderWorkflowTimingNote();
+});
+$("workerTelegramInterval").addEventListener("change", () => {
+  renderWorkerSummary();
+  renderWorkflowTimingNote();
+});
 
 $("btnClearLockedIp").addEventListener("click", async () => {
   await saveWorkerConfig({ lockedIp: "" });
@@ -521,12 +865,56 @@ $("btnClearLockedIp").addEventListener("click", async () => {
 
 $("btnLockCurrentIp").addEventListener("click", async () => {
   const ip = $("currentIp").textContent.trim();
-  if (!ip || ip === "unknown") {
-    toast("Public IP alınamadı", "error");
+  if (!ip || ip === "unknown" || ip === "—" || ip === "unavailable") {
+    toast("Geçerli IP yok — bağlantı modunu kontrol edin", "error");
     return;
   }
   await saveWorkerConfig({ lockedIp: ip });
   $("lockedIp").textContent = ip;
+  toast(`IP kilitlendi: ${ip}`);
+});
+
+$("btnRefreshNetworkIp").addEventListener("click", async () => {
+  $("btnRefreshNetworkIp").disabled = true;
+  try {
+    toast("Tarayıcıdan ev IP ölçülüyor…");
+    const fromBrowser = await applyBrowserHomeIp(state.profileId);
+    if (fromBrowser) {
+      state.network = fromBrowser;
+      $("lockedIp").textContent = fromBrowser.lockedIp || "—";
+      renderNetworkFromSnapshot(fromBrowser);
+      $("manualHomeIpField").hidden = true;
+      toast(`Ev IP ölçüldü ve kilitlendi: ${fromBrowser.displayIp}`);
+    } else {
+      await refreshNetworkIp();
+      toast("Tarayıcı ölçemedi — manuel IP girin veya .env HOME_PUBLIC_IP", "error");
+    }
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    $("btnRefreshNetworkIp").disabled = false;
+  }
+});
+
+$("btnSaveManualHomeIp").addEventListener("click", async () => {
+  const ip = $("manualHomeIp").value.trim();
+  if (!ip) {
+    toast("Ev IP girin", "error");
+    return;
+  }
+  try {
+    const network = await api("/api/network/set-home-ip", {
+      method: "POST",
+      body: JSON.stringify({ profileId: state.profileId, ip }),
+    });
+    state.network = network;
+    $("lockedIp").textContent = network.lockedIp || "—";
+    $("currentIp").textContent = network.displayIp ?? ip;
+    $("manualHomeIpField").hidden = true;
+    toast(`Ev IP kaydedildi ve kilitlendi: ${ip}`);
+  } catch (error) {
+    toast(error.message, "error");
+  }
 });
 
 $("btnSaveNetwork").addEventListener("click", async () => {
@@ -537,9 +925,12 @@ $("btnSaveNetwork").addEventListener("click", async () => {
     proxyMode,
     proxyId: proxyMode === "proxy" && isPoolId ? proxySelection : "",
     proxyUrl: proxyMode === "proxy" && !isPoolId && proxySelection ? proxySelection : "",
-    lockedIp: $("lockedIp").textContent.trim() === "—" ? undefined : $("lockedIp").textContent.trim(),
+    lockedIp: "",
   });
+  $("lockedIp").textContent = "—";
   await loadBootstrap();
+  await refreshNetworkIp();
+  toast("Ağ ayarı kaydedildi — IP'yi yeniden kilitleyin");
 });
 
 $("btnSaveApi").addEventListener("click", async () => {
@@ -548,53 +939,62 @@ $("btnSaveApi").addEventListener("click", async () => {
       dealerOffice: $("dealerOffice").value,
       appointmentStyle: $("appointmentStyle").value,
     },
+    timing: readWorkerTimingFromForm(),
   });
 });
 
-$("btnStartChrome").addEventListener("click", async () => {
-  $("btnStartChrome").disabled = true;
+$("btnStartWorkflow").addEventListener("click", async () => {
+  const btn = $("btnStartWorkflow");
+  btn.disabled = true;
   try {
-    const result = await api("/api/chrome/start", {
-      method: "POST",
-      body: JSON.stringify({ profileId: state.profileId }),
-    });
-    toast(result.launch?.message ?? "Chrome başlatıldı");
-    await refreshStatus();
-    await refreshProcesses();
-  } catch (error) {
-    toast(error.message, "error");
-  } finally {
-    $("btnStartChrome").disabled = false;
-  }
-});
-
-$("btnRunApiWatcher").addEventListener("click", async () => {
-  try {
+    if ($("proxyMode").value === "direct" && !$("lockedIp").textContent.trim().replace("—", "")) {
+      await refreshNetworkIp();
+    }
     const apiParams = {
       dealerOffice: $("dealerOffice").value,
       appointmentStyle: $("appointmentStyle").value,
     };
-    const result = await api("/api/run/api-watcher", {
+    const timing = readWorkerTimingFromForm();
+    const result = await api("/api/run/api-watcher-workflow", {
       method: "POST",
-      body: JSON.stringify({ profileId: state.profileId, api: apiParams }),
+      body: JSON.stringify({ profileId: state.profileId, api: apiParams, timing }),
     });
-    toast(`API Watcher başlatıldı (${result.process?.id?.slice(0, 8)}…)`);
-    await refreshProcesses();
+    const steps = (result.steps ?? []).join(" → ");
+    toast(`API izleme başladı${steps ? `: ${steps}` : ""}`);
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    await refreshWorkflowUi();
+  }
+});
+
+$("btnStopApiWatcher").addEventListener("click", async () => {
+  try {
+    const result = await api("/api/run/api-watcher/stop", {
+      method: "POST",
+      body: JSON.stringify({ profileId: state.profileId }),
+    });
+    toast(
+      result.stopped > 0
+        ? `API Watcher durduruldu (${result.stopped} süreç)`
+        : "Çalışan API Watcher yok",
+    );
+    await refreshWorkflowUi();
   } catch (error) {
     toast(error.message, "error");
   }
 });
 
-$("btnRunDomObserver").addEventListener("click", async () => {
+$("btnValidateApiDates").addEventListener("click", async () => {
+  $("btnValidateApiDates").disabled = true;
   try {
-    const result = await api("/api/run/dom-observer", {
-      method: "POST",
-      body: JSON.stringify({ profileId: state.profileId }),
-    });
-    toast(`DOM Observer başlatıldı (${result.process?.id?.slice(0, 8)}…)`);
-    await refreshProcesses();
+    const report = await api("/api/diagnostics/validate-api-dates");
+    renderValidationReport(report);
+    toast(report.ok ? "Tarih mantığı OK" : "Bazı testler başarısız", report.ok ? "success" : "error");
   } catch (error) {
     toast(error.message, "error");
+  } finally {
+    $("btnValidateApiDates").disabled = false;
   }
 });
 
@@ -610,6 +1010,5 @@ refreshAll().catch((error) => {
 });
 
 setInterval(() => {
-  refreshStatus().catch(() => {});
-  refreshProcesses().catch(() => {});
+  refreshWorkflowUi().catch(() => {});
 }, 8000);

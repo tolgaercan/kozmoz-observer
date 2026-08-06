@@ -112,6 +112,7 @@ export interface BrowserFetchResult {
   status: number;
   contentType: string;
   bodyText: string;
+  networkError?: string;
 }
 
 /** Cloudflare bypass — isteği açık portal sekmesinden gönderir */
@@ -123,17 +124,27 @@ export async function apiFetchViaPage(
 ): Promise<BrowserFetchResult> {
   return page.evaluate(
     async ({ targetUrl, requestHeaders, method, body }) => {
-      const response = await fetch(targetUrl, {
-        method,
-        headers: requestHeaders,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        credentials: "include",
-      });
-      return {
-        status: response.status,
-        contentType: response.headers.get("content-type") ?? "",
-        bodyText: await response.text(),
-      };
+      try {
+        const response = await fetch(targetUrl, {
+          method,
+          headers: requestHeaders,
+          body: body !== undefined ? JSON.stringify(body) : undefined,
+          credentials: "include",
+          cache: "no-store",
+        });
+        return {
+          status: response.status,
+          contentType: response.headers.get("content-type") ?? "",
+          bodyText: await response.text(),
+        };
+      } catch (error) {
+        return {
+          status: 0,
+          contentType: "",
+          bodyText: "",
+          networkError: error instanceof Error ? error.message : String(error),
+        };
+      }
     },
     {
       targetUrl: url,

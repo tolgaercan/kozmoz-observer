@@ -31,21 +31,16 @@ async function waitForEnter(message: string): Promise<void> {
 
 function printHelp(): void {
   console.log(`
-Kozmoz Senaryo Runner
+Kozmoz API Senaryo Runner
 
 Kullanım:
-  npm run scenario -- --id <senaryo> --profile <profil>
+  npm run scenario -- --id api-watcher-attach --profile profile-1
 
 Örnek:
-  npm run scenario -- --id fresh-chrome-login --profile profile-1
-  npm run scenario -- --id url-login-observe --profile profile-1
-  npm run scenario -- --id url-login-observe --stop-after portal-url-login --open-url-only
+  npm run scenario:api-watcher-attach
   npm run scenario -- --list
 
-Ne nerede:
-  data/scenarios/*.json     senaryo tarifleri
-  src/scenarios/phases/     her adımın kodu
-  src/scenarios/runScenario.ts  bu CLI
+Eski UI/register senaryoları: archive/legacy-src/scenarios/data/
 `);
 }
 
@@ -71,10 +66,11 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  const scenarioId = parseArg(argv, "--id", "-s") ?? (argv.includes("--attach") ? "observe-attach" : "fresh-chrome-login");
+  const scenarioId =
+    parseArg(argv, "--id", "-s") ??
+    (argv.includes("--attach") ? "api-watcher-attach" : "api-watcher-attach");
   const profileId = parseArg(argv, "--profile", "-p") ?? "profile-1";
   const stopAfter = parseArg(argv, "--stop-after") as ScenarioPhaseId | undefined;
-  const openUrlOnly = argv.includes("--open-url-only");
   const attach = argv.includes("--attach");
   const noWait = argv.includes("--no-wait");
   const keepBrowserOpen = !noWait;
@@ -86,8 +82,8 @@ async function main(): Promise<void> {
     pauseAtEnd: keepBrowserOpen,
     stopAfterPhase: stopAfter,
     keepBrowserOpen,
-    openUrlOnly,
     attach,
+    banSafe: attach,
   });
 
   if (!result.ready) {
@@ -104,15 +100,7 @@ async function main(): Promise<void> {
   }
 
   if (keepBrowserOpen) {
-    const pauseMessage =
-      stopAfter === "portal-invite-gate"
-        ? "Davet URL tamam (Randevu Islemleri gorunuyorsa OK). Tam akis icin: npm run scenario:url-observe. Bitince Enter."
-        : stopAfter === "portal-url-login" || openUrlOnly
-          ? "Chrome'da davet URL / OTP ekranını kontrol edin. Tam akış: npm run scenario:url-observe. Enter ile kapat."
-          : stopAfter === "randevu-navigate"
-            ? "Randevu wizard hazir. Observer icin: npm run scenario:url-observe. Enter ile kapat."
-            : "Observer calisiyorsa Ctrl+C; degilse Enter (Chrome acik kalir).";
-    await waitForEnter(pauseMessage);
+    await waitForEnter("API watcher çalışıyorsa Ctrl+C; değilse Enter ile Chrome kapat.");
     await runtime.closeSession();
   }
 }

@@ -7,11 +7,6 @@ const KNOWN_PHASES = new Set<ScenarioPhaseId>([
   "chrome-fresh",
   "chrome-connect",
   "chrome-login",
-  "portal-url-login",
-  "portal-invite-gate",
-  "randevu-navigate",
-  "register-wizard",
-  "observe",
   "api-auth-bootstrap",
   "api-watcher",
 ]);

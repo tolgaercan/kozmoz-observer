@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Kozmoz Control Panel</title>
+    <title>Kozmoz API Observer</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
@@ -12,8 +12,8 @@
         <div class="brand">
           <div class="brand-mark">K</div>
           <div>
-            <h1>Kozmoz Observer</h1>
-            <p class="subtitle">Profil · IP · API · Süreç yönetimi</p>
+            <h1>Kozmoz API Observer</h1>
+            <p class="subtitle">GetClosedDate izleme — tek giriş: <code>npm start</code></p>
           </div>
         </div>
         <div class="header-actions">
@@ -41,14 +41,14 @@
         <section class="card card-network">
           <div class="card-head">
             <h2>Ağ / IP</h2>
-            <span class="hint">Şimdilik ev interneti; ileride proxy havuzu</span>
+            <span class="hint">Ev IP veya statik proxy IP seç → kilitle → watcher başlat</span>
           </div>
 
           <div class="ip-grid">
             <div class="ip-box">
               <span class="ip-label" id="currentIpLabel">Ev public IP</span>
               <strong id="currentIp">—</strong>
-              <small class="field-hint" id="currentIpHint">Doğrudan mod — sistem proxy bypass</small>
+              <small class="field-hint" id="currentIpHint">Ev IP tarayıcıdan ölçülür (antivirüs engellemez)</small>
             </div>
             <div class="ip-box ip-box-accent">
               <span class="ip-label">Kilitli IP (worker)</span>
@@ -80,8 +80,21 @@
             <button type="button" class="btn btn-secondary" id="btnClearLockedIp">
               Kilitli IP'yi sıfırla
             </button>
+            <button type="button" class="btn btn-secondary" id="btnRefreshNetworkIp">
+              Ev IP'yi yeniden ölç
+            </button>
             <button type="button" class="btn btn-secondary" id="btnSaveNetwork">
               Ağ ayarını kaydet
+            </button>
+          </div>
+
+          <div class="manual-home-ip" id="manualHomeIpField" hidden>
+            <label class="field">
+              <span>Ev IP (manuel — ProxyNet açıkken otomatik ölçülemez)</span>
+              <input type="text" id="manualHomeIp" placeholder="ör. 85.xxx.xxx.xxx" inputmode="decimal" />
+            </label>
+            <button type="button" class="btn btn-secondary" id="btnSaveManualHomeIp">
+              Kaydet ve kilitle
             </button>
           </div>
           <p class="note network-note" id="networkModeHint"></p>
@@ -89,8 +102,8 @@
 
         <section class="card card-api">
           <div class="card-head">
-            <h2>API parametreleri</h2>
-            <span class="hint">GetClosedDate sorgusu için</span>
+            <h2>Worker ayarları</h2>
+            <span class="hint">Profil bazlı — kaydedilir, watcher başlatınca uygulanır</span>
           </div>
 
           <label class="field">
@@ -103,31 +116,54 @@
             <select id="appointmentStyle"></select>
           </label>
 
-          <div class="api-preview" id="apiPreview"></div>
+          <div class="field-grid-2">
+            <label class="field">
+              <span>Poll aralığı (istekler arası)</span>
+              <select id="workerPollInterval"></select>
+            </label>
 
-          <button type="button" class="btn btn-secondary" id="btnSaveApi">API ayarını kaydet</button>
+            <label class="field">
+              <span>Telegram özet aralığı</span>
+              <select id="workerTelegramInterval"></select>
+            </label>
+          </div>
+
+          <div class="api-preview" id="apiPreview"></div>
+          <div class="worker-summary" id="workerSummary"></div>
+
+          <button type="button" class="btn btn-secondary" id="btnSaveApi">Worker ayarlarını kaydet</button>
         </section>
 
-        <section class="card card-actions">
+        <section class="card card-workflow span-2">
           <div class="card-head">
-            <h2>İşlemler</h2>
-            <span class="hint">Chrome aç → attach → watcher başlat</span>
+            <h2>API İzleme</h2>
+            <span class="hint">Profil + ofis + şekil seç → tek tıkla başlat</span>
           </div>
 
-          <div class="action-grid">
-            <button type="button" class="btn btn-primary" id="btnStartChrome">
-              Chrome (debug) başlat
+          <ol class="workflow-steps" id="workflowSteps">
+            <li id="stepProfile">Profil seçildi</li>
+            <li id="stepApi">API parametreleri kayıtlı</li>
+            <li id="stepChrome">Chrome CDP hazır</li>
+            <li id="stepWatcher">API Watcher çalışıyor</li>
+          </ol>
+
+          <div class="workflow-actions">
+            <button type="button" class="btn btn-primary btn-lg" id="btnStartWorkflow">
+              API İzlemeyi Başlat
             </button>
-            <button type="button" class="btn btn-accent" id="btnRunApiWatcher">
-              API Watcher çalıştır
+            <button type="button" class="btn btn-danger" id="btnStopApiWatcher" hidden>
+              API Watcher Durdur
             </button>
-            <button type="button" class="btn btn-accent" id="btnRunDomObserver">
-              DOM Observer çalıştır
+            <button type="button" class="btn btn-secondary" id="btnValidateApiDates">
+              Tarih mantığı testi
             </button>
           </div>
 
-          <p class="note">
-            Diğer Chrome pencereleri kapatılmaz. CDP portu hazırsa mevcut oturum kullanılır.
+          <div class="diagnostics-output" id="diagnosticsOutput" hidden></div>
+
+          <p class="note workflow-note" id="workflowTimingNote">
+            Chrome CDP kapalıysa otomatik başlatılır. Portal oturumu yoksa JWT için appointmentForm
+            sayfasına gider. Watcher öncesi doğru IP’yi kilitleyin.
           </p>
         </section>
 
@@ -190,6 +226,8 @@
                   <th>Profil</th>
                   <th>Etiket</th>
                   <th>Durum</th>
+                  <th>Poll</th>
+                  <th>Telegram</th>
                   <th>PID</th>
                   <th>Başlangıç</th>
                   <th></th>
@@ -197,7 +235,7 @@
               </thead>
               <tbody id="processTableBody">
                 <tr class="empty-row">
-                  <td colspan="7">Henüz süreç yok</td>
+                  <td colspan="9">Henüz süreç yok</td>
                 </tr>
               </tbody>
             </table>

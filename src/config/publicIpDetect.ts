@@ -28,7 +28,50 @@ function curlBin(): string {
   return process.platform === "win32" ? "curl.exe" : "curl";
 }
 
-/** Ham WAN IP — proxy bypass (--noproxy) */
+function measureHomeIpViaWebClient(): string | undefined {
+  if (process.platform !== "win32") {
+    return undefined;
+  }
+  const ps = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      "$ProgressPreference='SilentlyContinue'; " +
+        "$wc = New-Object System.Net.WebClient; " +
+        "$wc.Proxy = $null; " +
+        "$wc.DownloadString('http://api.ipify.org?format=json')",
+    ],
+    { encoding: "utf-8", timeout: 20_000, windowsHide: true },
+  );
+  if (ps.status !== 0 || !ps.stdout?.trim()) {
+    return undefined;
+  }
+  return parseIpifyJson(ps.stdout);
+}
+
+function measureHomeIpViaPowerShell(): string | undefined {
+  if (process.platform !== "win32") {
+    return undefined;
+  }
+  const ps = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      "$ProgressPreference='SilentlyContinue'; " +
+        "[System.Net.WebRequest]::DefaultWebProxy = [System.Net.GlobalProxySelection]::GetEmptyWebProxy(); " +
+        "(Invoke-RestMethod -Uri 'http://api.ipify.org?format=json' -Proxy $null -TimeoutSec 15).ip",
+    ],
+    { encoding: "utf-8", timeout: 20_000, windowsHide: true },
+  );
+  if (ps.status !== 0 || !ps.stdout?.trim()) {
+    return undefined;
+  }
+  return parseIpifyJson(ps.stdout) ?? ps.stdout.trim();
+}
+
+/** Ham WAN IP — sistem proxy bypass (--noproxy + Windows PowerShell yedek) */
 export function measureRawPublicIp(): string {
   const curl = spawnSync(
     curlBin(),
@@ -39,6 +82,36 @@ export function measureRawPublicIp(): string {
   if (fromCurl) {
     return fromCurl;
   }
+
+  const fromPs = measureHomeIpViaPowerShell();
+  if (fromPs) {
+    return fromPs;
+  }
+
+  return "unknown";
+}
+
+/** Doğrudan mod — bilinen proxy çıkış IP'lerini atlayarak ev IP ölçer */
+export function measureDirectHomeIp(projectRoot: string): string {
+  const knownProxyIps = listKnownProxyExitIps(projectRoot);
+
+  for (const candidate of [
+    measureHomeIpViaWebClient(),
+    measureHomeIpViaPowerShell(),
+    (() => {
+      const curlBypass = spawnSync(
+        curlBin(),
+        ["-s", "--noproxy", "*", "--max-time", "15", IPIFY_URL],
+        { encoding: "utf-8", windowsHide: true },
+      );
+      return curlBypass.stdout ? parseIpifyJson(curlBypass.stdout) : undefined;
+    })(),
+  ]) {
+    if (candidate && !isKnownProxyIp(candidate, knownProxyIps)) {
+      return candidate;
+    }
+  }
+
   return "unknown";
 }
 
@@ -58,7 +131,7 @@ function isKnownProxyIp(ip: string, knownProxyIps: string[]): boolean {
   return knownProxyIps.includes(ip);
 }
 
-/** Ev interneti IP — bilinen proxy çıkış IP'lerini ev IP sanmaz */
+/** Ev interneti IP — ham WAN ölçümü esas alınır (proxy havuzu ile aynı olabilir) */
 export async function resolveHomePublicIp(projectRoot: string): Promise<HomePublicIpResult> {
   const knownProxyIps = listKnownProxyExitIps(projectRoot);
   const measuredIp = measureRawPublicIp();
@@ -70,29 +143,28 @@ export async function resolveHomePublicIp(projectRoot: string): Promise<HomePubl
       measuredIp,
       isProxyIpDetected: isKnownProxyIp(measuredIp, knownProxyIps),
       source: "env",
-      warning: isKnownProxyIp(measuredIp, knownProxyIps)
-        ? `WAN ${measuredIp} ProxyNet IP — panel HOME_PUBLIC_IP kullanıyor`
+    };
+  }
+
+  if (measuredIp !== "unknown") {
+    const sameAsPool = isKnownProxyIp(measuredIp, knownProxyIps);
+    return {
+      ip: measuredIp,
+      measuredIp,
+      isProxyIpDetected: sameAsPool,
+      source: "measured",
+      warning: sameAsPool
+        ? `${measuredIp} ev interneti WAN IP — proxy havuzu kaydı ile aynı (ayrı proxy gate gerekmez).`
         : undefined,
     };
   }
 
-  if (measuredIp !== "unknown" && isKnownProxyIp(measuredIp, knownProxyIps)) {
-    return {
-      ip: "unavailable",
-      measuredIp,
-      isProxyIpDetected: true,
-      source: "unavailable",
-      warning:
-        `WAN ${measuredIp} ProxyNet statik IP — ev interneti değil. ` +
-        "ProxyNet'i kapatın veya .env içine HOME_PUBLIC_IP=... yazın.",
-    };
-  }
-
   return {
-    ip: measuredIp,
+    ip: "unavailable",
     measuredIp,
     isProxyIpDetected: false,
-    source: "measured",
+    source: "unavailable",
+    warning: "Ev IP ölçülemedi — panelden tarayıcı ölçümü veya HOME_PUBLIC_IP deneyin.",
   };
 }
 

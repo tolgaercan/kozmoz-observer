@@ -142,7 +142,6 @@ $chromeArgs = @(
   "--remote-debugging-port=$port",
   "--user-data-dir=$userDataDir",
   "--profile-directory=$chromeProfileDirectory",
-  "--disable-blink-features=AutomationControlled",
   "--disable-infobars",
   "--no-first-run",
   "--no-default-browser-check",
@@ -154,11 +153,11 @@ if ($startMaximized) {
   Write-Host 'Pencere: tam ekran (start-maximized)'
 }
 
-if ($useSystemProfile) {
-  $chromeArgs += "about:blank"
-} else {
-  $chromeArgs += "https://www.google.com/"
+$startupUrl = $env:CHROME_STARTUP_URL
+if ([string]::IsNullOrWhiteSpace($startupUrl)) {
+  $startupUrl = "about:blank"
 }
+$chromeArgs += $startupUrl
 
 Start-Process -FilePath $chromeExe -ArgumentList $chromeArgs | Out-Null
 

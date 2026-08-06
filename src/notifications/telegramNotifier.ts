@@ -129,7 +129,7 @@ export class TelegramNotifier {
     await this.send(text, `manual:${details.reason.slice(0, 40)}`);
   }
 
-  /** GetClosedDate API watcher — seçilebilir gün özeti / yeni gün uyarısı */
+  /** GetClosedDate API watcher — seçilebilir gün listesi */
   async notifyApiAvailability(details: {
     profileId: string;
     city?: string;
@@ -140,55 +140,27 @@ export class TelegramNotifier {
     hasNewDays?: boolean;
     periodicReport?: boolean;
   }): Promise<void> {
-    const emoji = details.hasNewDays ? "🟢" : details.isEmpty ? "📭" : "📅";
-    const title = details.hasNewDays
-      ? "API — YENİ seçilebilir gün!"
-      : details.isEmpty
-        ? "API — seçilebilir gün yok"
-        : "API — seçilebilir günler";
-    const styleLine = details.appointmentStyle
-      ? `<b>Şekil:</b> ${escapeHtml(details.appointmentStyle)}`
-      : "";
-    const text = [
-      `<b>${emoji} ${title}</b>`,
-      details.city ? `<b>Ofis:</b> ${escapeHtml(details.city)}` : "",
-      styleLine,
-      `<b>Profil:</b> ${escapeHtml(details.profileId)}`,
-      "",
-      escapeHtml(details.textSummary),
-    ]
-      .filter(Boolean)
-      .join("\n");
-
     const dedupeKey = details.isEmpty
       ? `api:empty:${details.profileId}`
       : details.hasNewDays
         ? `api:new:${details.profileId}`
         : `api:active:${details.profileId}`;
 
-    await this.send(text, dedupeKey, details.periodicReport === true);
+    await this.send(escapeHtml(details.textSummary), dedupeKey, details.periodicReport === true);
   }
 
-  /** İlk poll sonucu — sistemin çalıştığını doğrulamak için */
+  /** İlk poll — gün listesi veya 0 */
   async notifyApiWatcherPollResult(details: {
     profileId: string;
     ok: boolean;
     summary: string;
     activeCount?: number;
+    detailSummary?: string;
     isFirstPoll?: boolean;
   }): Promise<void> {
-    const label = details.isFirstPoll ? "İlk API sorgusu" : "API sorgusu";
-    const emoji = details.ok ? "✅" : "❌";
-    const text = [
-      `<b>${emoji} ${label}</b>`,
-      `<b>Profil:</b> ${escapeHtml(details.profileId)}`,
-      `<b>Sonuç:</b> ${escapeHtml(details.summary)}`,
-      details.activeCount !== undefined
-        ? `<b>Seçilebilir gün:</b> ${details.activeCount} (hafta içi, API whitelist)`
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const text = details.ok
+      ? escapeHtml(details.detailSummary ?? (details.activeCount === 0 ? "0" : String(details.activeCount ?? "0")))
+      : escapeHtml(details.summary);
 
     await this.send(text, `api:poll:${details.profileId}`, true);
   }

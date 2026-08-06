@@ -1,18 +1,12 @@
 import type { AppSettings } from "../config/settings.js";
 import { ProfileManager } from "../profiles/profileManager.js";
-import { validateRegisterEnvForProfile } from "../register/validateRegisterEnv.js";
 import { humanPause } from "../interaction/humanPacing.js";
 import { logger } from "../utils/logger.js";
 import { runChromeConnectPhase } from "./phases/chromeConnect.js";
 import { runChromeFreshPhase } from "./phases/chromeFresh.js";
 import { runChromeLoginPhase } from "./phases/chromeLogin.js";
-import { runObservePhase } from "./phases/observe.js";
-import { runPortalInviteGatePhase } from "./phases/portalInviteGate.js";
-import { runPortalUrlLoginPhase } from "./phases/portalUrlLogin.js";
-import { runRandevuNavigatePhase } from "./phases/randevuNavigate.js";
 import { runApiAuthBootstrapPhase } from "./phases/apiAuthBootstrap.js";
 import { runApiWatcherPhase } from "./phases/apiWatcher.js";
-import { runRegisterWizardPhase } from "./phases/registerWizard.js";
 import { loadScenario } from "./scenarioLoader.js";
 import { ScenarioRuntime } from "./scenarioRuntime.js";
 import type {
@@ -28,10 +22,7 @@ export interface ScenarioRunOutcome {
   runtime: ScenarioRuntime;
 }
 
-/**
- * Senaryo motoru — JSON'daki steps sırasıyla phase çalıştırır.
- * chrome-login sonrası oturum açık kalır; sonraki adımlar aynı sekmeyi kullanır.
- */
+/** API watcher senaryoları — JSON steps sırasıyla phase çalıştırır. */
 export async function runScenario(
   projectRoot: string,
   settings: AppSettings,
@@ -56,16 +47,7 @@ export async function runScenario(
     logger.info("[scenario] Sistem Chrome profili — chrome-login oturum enjeksiyonu atlanacak.");
   }
   if (runtime.banSafe) {
-    logger.info(
-      "[scenario] banSafe modu — CDP kill/Google goto/gereksiz nav atlanir (observe-attach benzeri).",
-    );
-  }
-
-  if (scenario.steps.some((s) => s.phase === "register-wizard")) {
-    const envErrors = validateRegisterEnvForProfile(options.profileId);
-    if (envErrors.length > 0) {
-      throw new Error(`Kayıt alanları eksik:\n${envErrors.join("\n")}`);
-    }
+    logger.info("[scenario] banSafe modu — gereksiz navigasyon atlanır.");
   }
 
   const stepsToRun = options.stopAfterPhase
@@ -86,13 +68,9 @@ export async function runScenario(
     logger.info(`[scenario] durma noktası: ${options.stopAfterPhase} sonrası`);
   }
   if (options.attach) {
-    logger.info("[scenario] attach modu — mevcut CDP sekmesine baglanilir (chrome-connect yok).");
+    logger.info("[scenario] attach modu — mevcut CDP sekmesine bağlanılır.");
   }
   logger.info(`════════════════════════════════════════════`);
-
-  if (scenario.status === "experimental") {
-    logger.warn("[scenario] Deneysel senaryo — bazı adımlar OTP vb. nedeniyle tamamlanmayabilir.");
-  }
 
   const stepResults: ScenarioStepResult[] = [];
 
@@ -102,7 +80,7 @@ export async function runScenario(
       const label = step.label ?? step.phase;
       logger.info(`[scenario] ▶ (${i + 1}/${stepsToRun.length}) ${label}`);
 
-      const result = await executePhase(step, projectRoot, runtime);
+      const result = await executePhase(step, runtime);
 
       stepResults.push({
         phase: step.phase,
@@ -114,11 +92,6 @@ export async function runScenario(
 
       if (runtime.session?.page && i < stepsToRun.length - 1) {
         await humanPause(runtime.session.page, 1800, 4000, "Sonraki adim oncesi");
-      }
-
-      if (!result.ok && step.phase === "observe" && step.params?.afterRegister) {
-        logger.warn("[scenario] Beklenen durum — OTP çözülünce senaryo 4 (url-login-observe) kullanın.");
-        break;
       }
     }
 
@@ -152,18 +125,17 @@ function truncateAtPhase(steps: ScenarioStep[], stopAfter: ScenarioPhaseId): Sce
 
 async function executePhase(
   step: ScenarioStep,
-  projectRoot: string,
   runtime: ScenarioRuntime,
 ): Promise<{ ok: boolean; detail?: string }> {
   const { phase, params } = step;
 
   switch (phase) {
     case "chrome-fresh":
-      return runChromeFreshPhase(projectRoot, runtime.profileId);
+      return runChromeFreshPhase(runtime.projectRoot, runtime.profileId);
 
     case "chrome-connect": {
       const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
-      return runChromeConnectPhase(projectRoot, runtime.profileId, {
+      return runChromeConnectPhase(runtime.projectRoot, runtime.profileId, {
         ...params,
         skipIfCdpReady: runtime.banSafe || params?.skipIfCdpReady === true,
         cdpEndpoint: profile.cdpEndpoint || runtime.settings.cdpEndpoint,
@@ -172,24 +144,6 @@ async function executePhase(
 
     case "chrome-login":
       return runChromeLoginPhase(runtime, params);
-
-    case "portal-url-login":
-      return runPortalUrlLoginPhase(runtime, params);
-
-    case "portal-invite-gate":
-      return runPortalInviteGatePhase(runtime);
-
-    case "randevu-navigate":
-      return runRandevuNavigatePhase(runtime);
-
-    case "register-wizard":
-      return runRegisterWizardPhase(runtime, params);
-
-    case "observe":
-      return runObservePhase(runtime, {
-        ...params,
-        attachOnly: params?.attachOnly === true || runtime.banSafe,
-      });
 
     case "api-auth-bootstrap":
       return runApiAuthBootstrapPhase(runtime, params);

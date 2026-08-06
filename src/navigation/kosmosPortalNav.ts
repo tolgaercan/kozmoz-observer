@@ -1,6 +1,6 @@
 import type { Locator, Page } from "playwright";
 
-import { detectWizardStep } from "../appointment/wizardStepDetector.js";
+import { detectWizardStep } from "../portal/wizardStepDetector.js";
 import type { NavigationSettings } from "../config/settings.js";
 import { humanClickLocator } from "../interaction/humanClick.js";
 import { logger } from "../utils/logger.js";

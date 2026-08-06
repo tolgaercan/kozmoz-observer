@@ -3,6 +3,7 @@ dist/
 .env
 .env.local
 .env.*.local
+archive/env/*.local.env
 data/profiles/*/user-data/
 data/chrome/
 data/sessions/

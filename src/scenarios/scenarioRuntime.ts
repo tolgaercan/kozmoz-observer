@@ -8,9 +8,7 @@ import type { ScenarioObserveHandles } from "./scenarioObserveHandles.js";
 export class ScenarioRuntime {
   session: BrowserSession | null = null;
   readonly observeHandles: ScenarioObserveHandles = {};
-  /** chrome-connect useSystemProfile=true ise oturum enjeksiyonu atlanır */
   scenarioUsesSystemProfile = false;
-  /** attach benzeri dusuk profil modu — ban riskini azaltir */
   banSafe = false;
 
   constructor(
@@ -22,12 +20,8 @@ export class ScenarioRuntime {
   ) {}
 
   async closeSession(): Promise<void> {
-    this.observeHandles.slotWatcher?.stop();
-    this.observeHandles.slotWatcher = null;
     this.observeHandles.apiWatcher?.stop();
     this.observeHandles.apiWatcher = null;
-    this.observeHandles.wizardStepGuard?.stop();
-    this.observeHandles.wizardStepGuard = null;
     this.observeHandles.interventionWatcher?.stopContinuousWatch();
     this.observeHandles.interventionWatcher = null;
 

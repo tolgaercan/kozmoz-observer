@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { exec } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadSettings } from "../config/settings.js";
 import { logger } from "../utils/logger.js";
 import { ControlPanelService } from "./controlPanelService.js";
 import { ProcessRegistry } from "./processRegistry.js";
@@ -11,6 +13,8 @@ import type { WorkerConfig } from "./workerConfigStore.js";
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
 const PUBLIC_DIR = resolve(PROJECT_ROOT, "public/control-panel");
+
+loadSettings(PROJECT_ROOT);
 const PORT = Number.parseInt(process.env.CONTROL_PANEL_PORT ?? "8787", 10);
 
 const registry = new ProcessRegistry();
@@ -94,21 +98,78 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
     return;
   }
 
-  if (method === "POST" && pathname === "/api/run/api-watcher") {
-    const body = await readJsonBody<{
-      profileId: string;
-      api: { dealerOffice: string; appointmentStyle: string };
-    }>(req);
-    service.saveWorkerConfig(body.profileId, { api: body.api });
-    const process = service.startApiWatcher(body.profileId, body.api);
-    sendJson(res, 200, { process });
+  if (method === "GET" && pathname === "/api/network/ip") {
+    const url = new URL(req.url ?? "", "http://local");
+    const profileId = url.searchParams.get("profileId") ?? "profile-1";
+    const proxyMode = url.searchParams.get("proxyMode");
+    const proxyId = url.searchParams.get("proxyId");
+    const measureViaChrome = url.searchParams.get("measureViaChrome") !== "false";
+    const skipServerMeasure = url.searchParams.get("skipServerMeasure") === "true";
+    const data = await service.getNetworkIp(
+      profileId,
+      {
+        proxyMode: proxyMode === "proxy" || proxyMode === "direct" ? proxyMode : undefined,
+        proxyId: proxyId ?? undefined,
+      },
+      { measureViaChrome, autoLock: true, skipServerMeasure },
+    );
+    sendJson(res, 200, data);
     return;
   }
 
-  if (method === "POST" && pathname === "/api/run/dom-observer") {
+  if (method === "POST" && pathname === "/api/network/set-home-ip") {
+    const body = await readJsonBody<{ profileId: string; ip: string }>(req);
+    const data = await service.setManualHomeIp(body.profileId, body.ip);
+    sendJson(res, 200, data);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/network/ensure-home-ip") {
+    const body = await readJsonBody<{ profileId: string; ip?: string }>(req);
+    const data = await service.ensureDirectHomeIpPublic(body.profileId, body.ip);
+    sendJson(res, 200, data);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/run/api-watcher-workflow") {
+    const body = await readJsonBody<{
+      profileId: string;
+      api: { dealerOffice: string; appointmentStyle: string };
+      timing?: { pollIntervalMs?: number; telegramReportIntervalMs?: number };
+    }>(req);
+    const result = await service.startApiWatcherWorkflow(body.profileId, body.api, body.timing);
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/run/api-watcher/stop") {
     const body = await readJsonBody<{ profileId: string }>(req);
-    const process = service.startDomObserver(body.profileId);
-    sendJson(res, 200, { process });
+    const result = service.stopApiWatcher(body.profileId);
+    sendJson(res, 200, result);
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/diagnostics/validate-api-dates") {
+    const report = service.runApiDateValidation();
+    sendJson(res, 200, report);
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/process/runtime-config") {
+    const body = await readJsonBody<{
+      processId: string;
+      pollIntervalMs?: number;
+      telegramReportIntervalMs?: number;
+    }>(req);
+    if (!body.processId?.trim()) {
+      sendJson(res, 400, { error: "processId gerekli" });
+      return;
+    }
+    const result = service.updateProcessRuntimeConfig(body.processId, {
+      pollIntervalMs: body.pollIntervalMs,
+      telegramReportIntervalMs: body.telegramReportIntervalMs,
+    });
+    sendJson(res, 200, result);
     return;
   }
 
@@ -139,6 +200,25 @@ const server = createServer(async (req, res) => {
   }
 });
 
+function openPanelInBrowser(url: string): void {
+  if (process.env.CONTROL_PANEL_OPEN_BROWSER === "false") {
+    return;
+  }
+  const cmd =
+    process.platform === "win32"
+      ? `start "" "${url}"`
+      : process.platform === "darwin"
+        ? `open "${url}"`
+        : `xdg-open "${url}"`;
+  exec(cmd, (error) => {
+    if (error) {
+      logger.warn(`[panel] Tarayıcı açılamadı: ${error.message}`);
+    }
+  });
+}
+
 server.listen(PORT, "127.0.0.1", () => {
-  logger.info(`Kozmoz Control Panel → http://127.0.0.1:${PORT}`);
+  const url = `http://127.0.0.1:${PORT}`;
+  logger.info(`Kozmoz Control Panel → ${url}`);
+  openPanelInBrowser(url);
 });

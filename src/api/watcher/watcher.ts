@@ -2,15 +2,21 @@ import type { Page } from "playwright";
 
 import { ApiHealthStore } from "../../control-panel/apiHealthStore.js";
 import type { ApiWatcherSettings, AppSettings, TelegramSettings } from "../../config/settings.js";
-import { buildApiClosedDateStatusSummary, buildApiNewlyOpenedDaysSummary } from "../notifications/apiAvailabilityTelegram.js";
+import {
+  buildApiClosedDateStatusSummary,
+  buildApiNewlyOpenedDaysSummary,
+  type ApiAvailabilitySummaryInput,
+} from "../notifications/apiAvailabilityTelegram.js";
 import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
 import { logger } from "../../utils/logger.js";
 import type { ApiWatcherHandle, ClosedDatePollResult } from "../types.js";
+import { formatIsoDateLocal } from "../client/availabilityDates.js";
 import { checkAvailability } from "../client/checkAvailability.js";
 import type { ApiServiceContext } from "../client/apiService.js";
 import type { ApiQueryParams } from "../client/resolveApiQueryParams.js";
 import { formatDurationTr, resolveRateLimitBackoffMs } from "../client/rateLimitPolicy.js";
 import { detectPublicIp } from "../../control-panel/chromeLauncher.js";
+import { WorkerRuntimeStore } from "../../control-panel/workerRuntimeStore.js";
 
 export interface AvailabilityWatcherOptions {
   projectRoot: string;
@@ -88,8 +94,15 @@ export function startAvailabilityWatcher(
   let requestsLastHour = 0;
   let hourWindowStart = Date.now();
   let firstPollReportSent = false;
-  const pollMs = apiSettings.pollIntervalMs;
-  const telegramReportMs = Math.min(apiSettings.telegramReportIntervalMs, pollMs);
+  const runtimeStore = new WorkerRuntimeStore(options.projectRoot);
+  const runtimeDefaults = {
+    pollIntervalMs: apiSettings.pollIntervalMs,
+    telegramReportIntervalMs: apiSettings.telegramReportIntervalMs,
+  };
+  let currentPollMs = runtimeDefaults.pollIntervalMs;
+  let currentTelegramReportMs = runtimeDefaults.telegramReportIntervalMs;
+  let telegramEveryPoll = currentTelegramReportMs <= currentPollMs + 2_000;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let watcherPublicIp = options.lockedIp || "unknown";
   void detectPublicIp(options.projectRoot).then((ip) => {
     if (ip !== "unknown") {
@@ -97,13 +110,43 @@ export function startAvailabilityWatcher(
     }
   });
 
+  const applyRuntimeConfig = (): void => {
+    const runtime = runtimeStore.get(options.profileId, runtimeDefaults);
+    const prevPoll = currentPollMs;
+    const prevTelegram = currentTelegramReportMs;
+    currentPollMs = runtime.pollIntervalMs;
+    currentTelegramReportMs = runtime.telegramReportIntervalMs;
+    telegramEveryPoll = currentTelegramReportMs <= currentPollMs + 2_000;
+
+    if (prevPoll !== currentPollMs || prevTelegram !== currentTelegramReportMs) {
+      logger.info(
+        `[api-watcher] Canlı ayar — poll: ${Math.round(currentPollMs / 1000)} sn, ` +
+          `Telegram: ${Math.round(currentTelegramReportMs / 1000)} sn`,
+      );
+    }
+  };
+
+  applyRuntimeConfig();
+
+  const previousHealth = healthStore.get(options.profileId);
+  const initialTypeId = options.queryParams.appointmentTypeId;
+  const initialStyle = options.queryParams.appointmentStyleLabel ?? initialTypeId;
+  if (
+    previousHealth?.appointmentTypeId &&
+    previousHealth.appointmentTypeId !== initialTypeId
+  ) {
+    logger.info(
+      `[api-watcher] Başvuru şekli değişti: typeId ${previousHealth.appointmentTypeId} (${previousHealth.appointmentStyle ?? "?"}) → ${initialTypeId} (${initialStyle}) — yeni baseline`,
+    );
+  }
+
   const recordHealth = (patch: Parameters<ApiHealthStore["update"]>[1]): void => {
     healthStore.update(options.profileId, {
       profileName: options.profileName,
       publicIp: watcherPublicIp,
       lockedIp: options.lockedIp,
       cdpPort: options.cdpPort,
-      pollIntervalMs: pollMs,
+      pollIntervalMs: currentPollMs,
       requestsLastHour,
       dealerOffice: options.queryParams.dealerOfficeLabel,
       appointmentStyle: options.queryParams.appointmentStyleLabel,
@@ -113,25 +156,38 @@ export function startAvailabilityWatcher(
   };
 
   logger.info(
-    `[api-watcher] checkAvailability her ${pollMs}ms — profil: ${options.profileId} (ilk sorgu hemen)`,
+    `[api-watcher] checkAvailability her ${currentPollMs}ms — profil: ${options.profileId} (ilk sorgu hemen)`,
   );
 
   const sendFirstPollTelegram = async (
     ok: boolean,
     summary: string,
-    activeCount?: number,
+    pollContext?: {
+      activeCount?: number;
+      summaryInput?: ApiAvailabilitySummaryInput;
+    },
   ): Promise<void> => {
     if (firstPollReportSent || !telegram.isConfigured()) {
       return;
     }
+    if (!ok) {
+      return;
+    }
     firstPollReportSent = true;
+    const detailSummary =
+      ok && pollContext?.summaryInput
+        ? buildApiClosedDateStatusSummary({
+            ...pollContext.summaryInput,
+            hasAllowedListChange: false,
+          })
+        : undefined;
+
     await telegram.notifyApiWatcherPollResult({
       profileId: options.profileId,
       ok,
-      summary: ok
-        ? `${summary} · Baseline kaydedildi (YENİ uyarı yalnızca değişiklikte).`
-        : summary,
-      activeCount: ok ? activeCount : undefined,
+      summary,
+      activeCount: ok ? pollContext?.activeCount : undefined,
+      detailSummary,
       isFirstPoll: true,
     });
   };
@@ -143,7 +199,7 @@ export function startAvailabilityWatcher(
     if (result.rateLimited) {
       const bodyText = rawBodyText(result.raw);
       const backoffMs = resolveRateLimitBackoffMs({
-        pollIntervalMs: pollMs,
+        pollIntervalMs: currentPollMs,
         bodyText,
       });
       rateLimitUntil = Date.now() + backoffMs;
@@ -228,7 +284,24 @@ export function startAvailabilityWatcher(
       `[api-watcher] Seçilebilir gün (API): ${currentAllowed.length}, kapalı (hesaplanan): ${currentClosed.length} — ${bookableStart} → ${bookableEnd}`,
     );
 
-    await sendFirstPollTelegram(true, result.summary, currentAllowed.length);
+    const officeLabel = queryParams.dealerOfficeLabel ?? queryParams.cityLabel;
+    await sendFirstPollTelegram(true, result.summary, {
+      activeCount: currentAllowed.length,
+      summaryInput: {
+        profileId: options.profileId,
+        cityLabel: officeLabel,
+        appointmentStyleLabel: queryParams.appointmentStyleLabel,
+        queryDate: queryParams.date,
+        queryMaxDate: queryParams.maxDate,
+        rangeDays: apiSettings.closedDateRangeDays,
+        todayIso: formatIsoDateLocal(new Date()),
+        bookableStart,
+        bookableEnd,
+        maxDate: queryParams.maxDate,
+        allowedDates: currentAllowed,
+        closedDates: currentClosed,
+      },
+    });
 
     const isEstablishingBaseline = previousAllowedDates === null;
     const addedAllowed = isEstablishingBaseline
@@ -238,11 +311,14 @@ export function startAvailabilityWatcher(
     const sameAllowedAsPrevious =
       previousAllowedDates !== null && datesEqual(currentAllowed, previousAllowedDates);
     const now = Date.now();
-    const periodicTelegramDue = now - lastTelegramReportAt >= telegramReportMs;
+    const periodicTelegramDue = telegramEveryPoll
+      ? true
+      : now - lastTelegramReportAt >= currentTelegramReportMs - 3_000;
 
     previousAllowedDates = [...currentAllowed];
 
     if (isEstablishingBaseline) {
+      lastTelegramReportAt = now;
       logger.info(
         `[api-watcher] Baseline kaydedildi — ${currentAllowed.length} seçilebilir gün (hafta içi). ` +
           "YENİ uyarısı yok; sonraki poll'larda değişiklik aranır.",
@@ -265,6 +341,7 @@ export function startAvailabilityWatcher(
           queryDate: queryParams.date,
           queryMaxDate: queryParams.maxDate,
           rangeDays: apiSettings.closedDateRangeDays,
+          todayIso: formatIsoDateLocal(new Date()),
           bookableStart,
           bookableEnd,
           maxDate: queryParams.maxDate,
@@ -316,6 +393,8 @@ export function startAvailabilityWatcher(
     running = true;
 
     try {
+      applyRuntimeConfig();
+
       const blocked = healthStore.isBlocked(options.profileId);
       if (blocked.blocked && blocked.until) {
         rateLimitUntil = Math.max(rateLimitUntil, Date.parse(blocked.until));
@@ -376,16 +455,32 @@ export function startAvailabilityWatcher(
     }
   };
 
-  const timer = setInterval(() => {
-    void runPoll();
-  }, pollMs);
+  const scheduleNextPoll = (): void => {
+    if (stopped) {
+      return;
+    }
+    pollTimer = setTimeout(() => {
+      void runPoll().finally(() => {
+        if (!stopped) {
+          scheduleNextPoll();
+        }
+      });
+    }, currentPollMs);
+  };
 
-  void runPoll();
+  void runPoll().finally(() => {
+    if (!stopped) {
+      scheduleNextPoll();
+    }
+  });
 
   return {
     stop: () => {
       stopped = true;
-      clearInterval(timer);
+      if (pollTimer) {
+        clearTimeout(pollTimer);
+        pollTimer = null;
+      }
       logger.info("[api-watcher] Durduruldu.");
     },
   };

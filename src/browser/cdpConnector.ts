@@ -1,6 +1,8 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 
-import { detectWizardStepFromNav } from "../appointment/wizardStepDetector.js";
+import { detectWizardStepFromNav } from "../portal/wizardStepDetector.js";
+import { applyStealthToContext } from "./stealth.js";
+import { detectIntervention } from "../challenge/interventionDetector.js";
 import { logger } from "../utils/logger.js";
 
 export async function isCdpEndpointReady(endpoint: string): Promise<boolean> {
@@ -35,6 +37,7 @@ export async function connectOverCdp(endpoint: string): Promise<{
   }
 
   logger.info("CDP bağlantısı başarılı — gerçek Chrome oturumuna bağlandı.");
+  await applyStealthToContext(context);
   return { browser, context };
 }
 
@@ -150,6 +153,77 @@ export async function resolveCdpObserverPageWithWizard(
   }
 
   return resolveCdpObserverPage(context);
+}
+
+export interface PortalPollTabResult {
+  page: Page;
+  onPortal: boolean;
+  blocked: boolean;
+}
+
+function parsePreGotoDelayMs(): number {
+  const raw = process.env.PRE_GOTO_DELAY_MS?.trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : 2500;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 2500;
+}
+
+/**
+ * Poll sekmesi — varsayilan: otomatik navigasyon YOK (Cloudflare ban onlemi).
+ * Portal sekmesi yoksa kullanici elle acmali; JWT cache ile Node fetch denenir.
+ * API_AUTO_OPEN_PORTAL_TAB=true ile eski davranis (dikkat: ban riski).
+ */
+export async function resolvePortalTabForApiPoll(
+  context: BrowserContext,
+  appointmentFormUrl: string,
+): Promise<PortalPollTabResult> {
+  const page = await resolveCdpObserverPage(context);
+
+  if (scorePortalTabUrl(page.url()) > 0) {
+    const intervention = await detectIntervention(page);
+    if (intervention.type === "blocked") {
+      logger.error("[api-watcher] Portal sekmesi Cloudflare block — poll yapilmamali.");
+      return { page, onPortal: false, blocked: true };
+    }
+    return { page, onPortal: true, blocked: false };
+  }
+
+  if (process.env.API_AUTO_OPEN_PORTAL_TAB !== "true") {
+    logger.warn(
+      "[api-watcher] Portal sekmesi yok — otomatik acma kapali (ban onlemi). " +
+        "Chrome'da elle appointmentForm acin; JWT cache varsa Node fetch denenir.",
+    );
+    return { page, onPortal: false, blocked: false };
+  }
+
+  const delayMs = parsePreGotoDelayMs();
+  if (delayMs > 0) {
+    logger.info(`[api-watcher] Navigasyon oncesi bekleme: ${delayMs}ms`);
+    await page.waitForTimeout(delayMs);
+  }
+
+  logger.info(`[api-watcher] Portal sekmesi aciliyor (API_AUTO_OPEN_PORTAL_TAB=true): ${appointmentFormUrl}`);
+  await page.goto(appointmentFormUrl, { waitUntil: "domcontentloaded", timeout: 90_000 });
+
+  const intervention = await detectIntervention(page);
+  if (intervention.type === "blocked") {
+    logger.error("[api-watcher] Cloudflare block — otomatik navigasyon durduruldu.");
+    return { page, onPortal: false, blocked: true };
+  }
+
+  return {
+    page,
+    onPortal: scorePortalTabUrl(page.url()) > 0,
+    blocked: false,
+  };
+}
+
+/** @deprecated resolvePortalTabForApiPoll kullanın */
+export async function ensurePortalTabForApiPoll(
+  context: BrowserContext,
+  appointmentFormUrl: string,
+): Promise<Page> {
+  const result = await resolvePortalTabForApiPoll(context, appointmentFormUrl);
+  return result.page;
 }
 
 /** GetClosedDate poll — mevcut portal sekmesi; navigasyon / wizard yok */

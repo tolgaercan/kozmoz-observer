@@ -1,14 +1,15 @@
 import { startAvailabilityWatcher } from "../../api/watcher/watcher.js";
+import { resolveAppointmentFormUrl } from "../../navigation/kosmosPortalNav.js";
 import { closedDateUrl } from "../../api/client/apiService.js";
-import { resolveCdpApiPollPage } from "../../browser/cdpConnector.js";
+import { resolvePortalTabForApiPoll } from "../../browser/cdpConnector.js";
 import {
   logResolvedApiQueryParams,
   resolveApiQueryParams,
   type ApiQueryParamOverrides,
 } from "../../api/client/resolveApiQueryParams.js";
-import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
-import { WorkerConfigStore } from "../../control-panel/workerConfigStore.js";
-import { detectPublicIp } from "../../control-panel/chromeLauncher.js";
+import { WorkerConfigStore, normalizeLockedIp } from "../../control-panel/workerConfigStore.js";
+import { WorkerRuntimeStore } from "../../control-panel/workerRuntimeStore.js";
+import { detectPublicIpForWorker } from "../../config/proxyResolver.js";
 import { logger } from "../../utils/logger.js";
 import type { ScenarioRuntime } from "../scenarioRuntime.js";
 import type { ScenarioStepParams } from "../types.js";
@@ -64,7 +65,22 @@ export async function runApiWatcherPhase(
 
   const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
   const paramOverrides = readParamOverrides(params);
-  const queryParams = resolveApiQueryParams(profile, apiSettings, paramOverrides);
+  const workerStore = new WorkerConfigStore(runtime.projectRoot);
+  const timingDefaults = {
+    pollIntervalMs: apiSettings.pollIntervalMs,
+    telegramReportIntervalMs: apiSettings.telegramReportIntervalMs,
+  };
+
+  const buildQueryOverrides = (): ApiQueryParamOverrides => {
+    const worker = workerStore.getWorker(profile.id, "", timingDefaults);
+    return {
+      ...paramOverrides,
+      dealerOffice: worker.api.dealerOffice,
+      appointmentStyle: worker.api.appointmentStyle,
+    };
+  };
+
+  const queryParams = resolveApiQueryParams(profile, apiSettings, buildQueryOverrides());
   logResolvedApiQueryParams(profile.id, queryParams);
 
   const bootstrap = await runApiAuthBootstrapPhase(runtime, params);
@@ -78,15 +94,28 @@ export async function runApiWatcherPhase(
   }
 
   if (runtime.session?.context) {
-    runtime.session.page = await resolveCdpApiPollPage(runtime.session.context);
+    const appointmentFormUrl = resolveAppointmentFormUrl(runtime.settings.visaPortalHomeUrl);
+    const pollTab = await resolvePortalTabForApiPoll(
+      runtime.session.context,
+      appointmentFormUrl,
+    );
+    runtime.session.page = pollTab.page;
+    if (pollTab.blocked) {
+      return {
+        ok: false,
+        detail:
+          "Cloudflare block — otomasyon durduruldu. 1–24 saat bekleyin; portali elle (adres cubugundan) acin.",
+      };
+    }
     logger.info(
       `[api-watcher] Poll sekmesi: ${runtime.session.page.url()} — ` +
-        `dealerId=${queryParams.dealerId}, typeId=${queryParams.appointmentTypeId}`,
+        `dealerId=${queryParams.dealerId}, typeId=${queryParams.appointmentTypeId}` +
+        (pollTab.onPortal ? "" : " (portal yok — Node fetch)"),
     );
   }
 
   const resolveFreshQueryParams = (): ReturnType<typeof resolveApiQueryParams> =>
-    resolveApiQueryParams(profile, apiSettings, paramOverrides);
+    resolveApiQueryParams(profile, apiSettings, buildQueryOverrides());
 
   const pollUrl = closedDateUrl(
     {
@@ -99,9 +128,15 @@ export async function runApiWatcherPhase(
   );
   logger.info(`[api-watcher] Poll URL: ${pollUrl}`);
 
-  const workerStore = new WorkerConfigStore(runtime.projectRoot);
-  const publicIp = await detectPublicIp(runtime.projectRoot);
-  const worker = workerStore.getWorker(profile.id, publicIp);
+  const worker = workerStore.getWorker(profile.id, "", timingDefaults);
+  const publicIp = await detectPublicIpForWorker(runtime.projectRoot, profile, worker);
+  const lockedIp = normalizeLockedIp(worker.lockedIp) || publicIp;
+
+  const runtimeStore = new WorkerRuntimeStore(runtime.projectRoot);
+  runtimeStore.ensure(profile.id, {
+    pollIntervalMs: apiSettings.pollIntervalMs,
+    telegramReportIntervalMs: apiSettings.telegramReportIntervalMs,
+  });
 
   if (!apiSettings.hourQuotaEnabled) {
     logger.debug(
@@ -114,7 +149,7 @@ export async function runApiWatcherPhase(
       projectRoot: runtime.projectRoot,
       profileId: profile.id,
       profileName: profile.name,
-      lockedIp: worker.lockedIp || publicIp,
+      lockedIp,
       cdpPort: profile.browser?.cdpPort,
       settings: runtime.settings,
       queryParams,
@@ -125,7 +160,15 @@ export async function runApiWatcherPhase(
         if (!runtime.session?.context) {
           return runtime.session?.page;
         }
-        runtime.session.page = await resolveCdpApiPollPage(runtime.session.context);
+        const appointmentFormUrl = resolveAppointmentFormUrl(runtime.settings.visaPortalHomeUrl);
+        const pollTab = await resolvePortalTabForApiPoll(
+          runtime.session.context,
+          appointmentFormUrl,
+        );
+        runtime.session.page = pollTab.page;
+        if (pollTab.blocked) {
+          logger.error("[api-watcher] Cloudflare block — poll atlaniyor.");
+        }
         return runtime.session.page;
       },
       onUnauthorized: async () => {
@@ -141,7 +184,12 @@ export async function runApiWatcherPhase(
           return null;
         }
         if (runtime.session?.context) {
-          runtime.session.page = await resolveCdpApiPollPage(runtime.session.context);
+          const appointmentFormUrl = resolveAppointmentFormUrl(runtime.settings.visaPortalHomeUrl);
+          const pollTab = await resolvePortalTabForApiPoll(
+            runtime.session.context,
+            appointmentFormUrl,
+          );
+          runtime.session.page = pollTab.page;
         }
         return getBearerTokenForProfile(runtime);
       },
@@ -149,15 +197,8 @@ export async function runApiWatcherPhase(
     runtime.settings.telegram,
   );
 
-  const telegram = new TelegramNotifier(runtime.settings.telegram);
-  if (runtime.settings.apiWatcher.telegramReportEnabled && telegram.isConfigured()) {
-    const pollMin = Math.round(apiSettings.pollIntervalMs / 60_000);
-    await telegram.sendStartupPing(
-      profile.id,
-      `${queryParams.dealerOfficeLabel ?? "?"} / ${queryParams.appointmentStyleLabel ?? "Standart"}\n` +
-        `İlk GetClosedDate sorgusu hemen yapılır; sonraki aralık: ${pollMin} dk`,
-      "API Watcher başladı",
-    );
+  if (runtime.settings.apiWatcher.telegramReportEnabled) {
+    logger.info("[api-watcher] İlk poll sonucu Telegram'a gönderilecek.");
   }
 
   logger.info("[api-watcher] Ctrl+C ile durdurun.");

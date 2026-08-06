@@ -40,18 +40,6 @@ function isBlankOrOffPortal(url: string): boolean {
   return !trimmed || trimmed === "about:blank" || !isKosmosPortalUrl(trimmed);
 }
 
-function hasOpenPortalTab(runtime: ScenarioRuntime): boolean {
-  const context = runtime.session?.context;
-  if (!context) {
-    return false;
-  }
-  return context.pages().some(
-    (candidate) =>
-      !candidate.isClosed() &&
-      (isBasvuruPortalUrl(candidate.url()) || isKosmosMarketingHome(candidate.url())),
-  );
-}
-
 async function readTokenFromPortalPage(
   runtime: ScenarioRuntime,
   page: import("playwright").Page,
@@ -195,12 +183,13 @@ async function runApiAuthBootstrapPassive(
     }
   }
 
-  const portalTabOpen = hasOpenPortalTab(runtime);
-
-  if (!skipTokenCache(params) && portalTabOpen) {
+  if (!skipTokenCache(params)) {
     const cached = loadApiToken(runtime.projectRoot, profile.id);
     if (cached) {
       setRuntimeBearerToken(cached.authorization);
+      logger.info(
+        `[api-auth] api-token.json (${cached.capturedAt}) — navigasyon yok (portal sekmesi gerekmez)`,
+      );
       return {
         ok: true,
         detail: `api-token.json (${cached.capturedAt}) — navigasyon yok`,
@@ -209,14 +198,8 @@ async function runApiAuthBootstrapPassive(
 
     const fromEnv = resolveBearerToken(runtime.projectRoot, profile.id);
     if (fromEnv) {
+      logger.info("[api-auth] Token .env / RAM — navigasyon yok (portal sekmesi gerekmez)");
       return { ok: true, detail: "Token .env / RAM — navigasyon yok" };
-    }
-  } else if (!skipTokenCache(params) && !portalTabOpen) {
-    const cached = loadApiToken(runtime.projectRoot, profile.id);
-    if (cached || resolveBearerToken(runtime.projectRoot, profile.id)) {
-      logger.warn(
-        "[api-auth] Token cache/env var ama portal sekmesi yok (about:blank?) — ana sayfaya gidilecek.",
-      );
     }
   }
 
@@ -345,14 +328,10 @@ export async function runApiAuthBootstrapPhase(
   if (isApiOnlyMode(params) && !skipTokenCache(params)) {
     logger.info("[api-auth] apiOnly — mevcut oturum deneniyor.");
     const passive = await runApiAuthBootstrapPassive(runtime, params);
-    if (passive.ok && hasOpenPortalTab(runtime)) {
+    if (passive.ok) {
       return passive;
     }
-    if (passive.ok) {
-      logger.warn("[api-auth] Token var ama portal sekmesi yok — aktif navigasyon.");
-    } else {
-      logger.warn(`[api-auth] ${passive.detail} Aktif navigasyon başlatılıyor.`);
-    }
+    logger.warn(`[api-auth] ${passive.detail} Aktif navigasyon başlatılıyor.`);
   }
 
   return runApiAuthBootstrapActive(runtime, params);

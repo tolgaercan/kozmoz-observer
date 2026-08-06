@@ -1,6 +1,6 @@
 import type { Page } from "playwright";
 
-import { detectRecaptchaState } from "../appointment/recaptchaGate.js";
+import { detectRecaptchaState } from "../portal/recaptchaGate.js";
 import { isKosmosPortalUrl } from "../portal/kosmosOrigin.js";
 
 export interface ChallengeSignals {

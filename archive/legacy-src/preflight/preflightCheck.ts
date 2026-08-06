@@ -62,17 +62,12 @@ export async function runPreflight(
           errors.push(
             `Chrome açık ama debug modunda değil (${cdpEndpoint}).\n` +
               `  Normal Chrome penceresi observer'a bağlanamaz.\n` +
-              `  Tüm Chrome pencerelerini kapatın, sonra tek komut:\n` +
-              `    npm run run:profile-1`,
+              `  Control Panel → Chrome (debug) başlat`,
           );
         } else {
           errors.push(
             `Chrome debug modunda çalışmıyor (${cdpEndpoint}).\n` +
-              `  Tek komut (önerilen):\n` +
-              `    npm run run:profile-1\n` +
-              `  İki adım isterseniz:\n` +
-              `    1) npm run chrome:debug\n` +
-              `    2) Chrome penceresini KAPATMADAN: npm run observer -- --profile ${profile.id} --pause`,
+              `  Control Panel → "API İzlemeyi Başlat" veya "Chrome (debug) başlat"`,
           );
         }
       }

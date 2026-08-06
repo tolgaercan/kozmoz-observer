@@ -2,7 +2,7 @@
   "id": "api-watcher-attach",
   "name": "API GetClosedDate watcher (attach)",
   "description": "CDP attach → JWT (yoksa Kosmos ana sayfa) → GetClosedDate poll. Wizard navigasyonu yok.",
-  "status": "experimental",
+  "status": "active",
   "banSafe": true,
   "note": "Chrome debug acik → panelden API Watcher. JWT yoksa kosmosvize.com.tr → appointmentForm (sifre/OTP).",
   "steps": [
