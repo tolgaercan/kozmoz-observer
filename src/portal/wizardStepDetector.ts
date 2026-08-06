@@ -185,7 +185,7 @@ export async function detectViewStepFromContent(page: Page): Promise<WizardStepI
     { step: 3, selector: "text=Bilgilerinizi Girin" },
     { step: 3, selector: "select[name='applicationTypeId']" },
     { step: 3, selector: "input[name='nationalityNumber']" },
-    { step: 3, selector: "select[name='appointmentTypeId']" },
+    { step: 2, selector: "select[name='appointmentTypeId']" },
     { step: 2, selector: "text=Şube Seçimi" },
     { step: 2, selector: "text=Başvuru Şubesi" },
     { step: 1, selector: "text=Yetki Alanları" },

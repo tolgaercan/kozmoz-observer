@@ -143,6 +143,10 @@ export interface ApiWatcherSettings {
   enabled: boolean;
   baseUrl: string;
   getClosedDateUrl: string;
+  /** AdminDatas MaxAppointmentDate — GetClosedDate maxDate kaynağı (portal) */
+  getMaxAppointmentDateUrl: string;
+  /** AdminDatas kayıt id — varsayılan 2329 (dataType=MaxAppointmentDate) */
+  maxAppointmentDateAdminDataId: string;
   /** GetAppointmentHourQoutaInfo — {cityId} {appointmentTypeId} {applicationTypeId} {appointmentDate} */
   getHourQuotaUrl: string;
   /** Saat kotası sorgusu — varsayılan kapalı (checkHourQuota hazır, watcher tetiklemez) */
@@ -150,7 +154,7 @@ export interface ApiWatcherSettings {
   referer: string;
   /** GetClosedDate — portal dealerId (Ankara=1014) */
   defaultDealerId: string;
-  /** Kapalı gün aralığı — maxDate = date + N gün (portal ~43) */
+  /** offset modunda maxDate = date + N gün — varsayılan mod api (AdminDatas/2329) */
   closedDateRangeDays: number;
   defaultCityId: string;
   /** Başvuru şekli fallback ID — Standart=16, EEA AB Eşi=2339 */
@@ -170,6 +174,21 @@ export interface ApiWatcherSettings {
   telegramReportEnabled: boolean;
   /** Aynı liste tekrar gönderim aralığı — ms */
   telegramReportIntervalMs: number;
+  /** Poll öncesi portal select[name=appointmentTypeId] panel ayarıyla eşleştir */
+  syncPortalAppointmentType: boolean;
+  syncPortalAppointmentTypeWaitMs: number;
+  syncPortalAppointmentTypeTimeoutMs: number;
+  appointmentTypeSelectLocator: string;
+  /** Başvuru şekli wizard adımı — API için max 2 (adim 3 captcha riski) */
+  appointmentTypeWizardStep: number;
+  wizardNavLocator: string;
+  syncHumanMinStepDelayMs: number;
+  syncHumanMaxStepDelayMs: number;
+  syncHumanOvershootProbability: number;
+  /** Ana sayfa / menü navigasyonu + wizard hazırlığı (varsayılan açık) */
+  apiWizardAutoNavigate: boolean;
+  /** Wizard Sonraki ile adim 1→2 (varsayılan kapali — adim 1'de API yine calisabilir) */
+  apiWizardAdvanceFromStep1: boolean;
 }
 
 export interface AppSettings {
@@ -522,6 +541,11 @@ export function loadSettings(projectRoot: string): AppSettings {
       getClosedDateUrl:
         process.env.API_GET_CLOSED_DATE_URL?.trim() ??
         "https://api.kosmosvize.com.tr/api/AppointmentClosedDates/GetClosedDate?dealerId={dealerId}&date={date}&maxDate={maxDate}&appointmentTypeId={appointmentTypeId}",
+      getMaxAppointmentDateUrl:
+        process.env.API_GET_MAX_APPOINTMENT_DATE_URL?.trim() ??
+        "https://api.kosmosvize.com.tr/api/AdminDatas/GetDatasById?id={adminDataId}",
+      maxAppointmentDateAdminDataId:
+        process.env.API_MAX_APPOINTMENT_DATE_ADMIN_DATA_ID?.trim() ?? "2329",
       getHourQuotaUrl:
         process.env.API_GET_HOUR_QUOTA_URL?.trim() ??
         "https://api.kosmosvize.com.tr/api/Appointment/GetAppointmentHourQoutaInfo?cityId={cityId}&appointmentTypeId={appointmentTypeId}&applicationTypeId={applicationTypeId}&appointmentDate={appointmentDate}",
@@ -530,7 +554,7 @@ export function loadSettings(projectRoot: string): AppSettings {
         process.env.API_REFERER?.trim() ??
         "https://basvuru.kosmosvize.com.tr/appointmentForm",
       defaultDealerId: process.env.API_DEALER_ID?.trim() ?? "1014",
-      closedDateRangeDays: parseIntEnv("API_CLOSED_DATE_RANGE_DAYS", 43),
+      closedDateRangeDays: parseIntEnv("API_CLOSED_DATE_RANGE_DAYS", 26),
       defaultCityId: process.env.API_CITY_ID?.trim() ?? "1",
       defaultAppointmentTypeId: process.env.API_APPOINTMENT_TYPE_ID?.trim() ?? "16",
       defaultAppointmentStyle: process.env.APPOINTMENT_STYLE?.trim() ?? "Standart",
@@ -542,6 +566,27 @@ export function loadSettings(projectRoot: string): AppSettings {
       fallbackToBrowserOnCaptcha: process.env.API_CAPTCHA_FALLBACK_BROWSER === "true",
       telegramReportEnabled: process.env.API_TELEGRAM_REPORT_ENABLED !== "false",
       telegramReportIntervalMs: parseIntEnv("API_TELEGRAM_REPORT_INTERVAL_MS", 300_000),
+      syncPortalAppointmentType: process.env.API_SYNC_PORTAL_APPOINTMENT_TYPE !== "false",
+      syncPortalAppointmentTypeWaitMs: parseIntEnv(
+        "API_SYNC_PORTAL_APPOINTMENT_TYPE_WAIT_MS",
+        800,
+      ),
+      syncPortalAppointmentTypeTimeoutMs: parseIntEnv(
+        "API_SYNC_PORTAL_APPOINTMENT_TYPE_TIMEOUT_MS",
+        12_000,
+      ),
+      appointmentTypeSelectLocator:
+        process.env.API_APPOINTMENT_TYPE_SELECT_LOCATOR?.trim() ??
+        process.env.APPOINTMENT_STYLE_LOCATOR?.trim()?.split("|")[0]?.trim() ??
+        "select[name='appointmentTypeId']",
+      appointmentTypeWizardStep: parseIntEnv("API_APPOINTMENT_TYPE_WIZARD_STEP", 2),
+      wizardNavLocator:
+        process.env.WIZARD_NAV_LOCATOR?.trim() ?? "ul.wizard-nav-pills|ul.wizard-nav",
+      syncHumanMinStepDelayMs: parseIntEnv("HUMAN_MOUSE_MIN_STEP_MS", 4),
+      syncHumanMaxStepDelayMs: parseIntEnv("HUMAN_MOUSE_MAX_STEP_MS", 14),
+      syncHumanOvershootProbability: parseFloatEnv("HUMAN_MOUSE_OVERSHOOT_PROB", 0.18),
+      apiWizardAutoNavigate: process.env.API_WIZARD_AUTO_NAVIGATE !== "false",
+      apiWizardAdvanceFromStep1: process.env.API_WIZARD_ADVANCE_FROM_STEP1 === "true",
     },
   };
 }

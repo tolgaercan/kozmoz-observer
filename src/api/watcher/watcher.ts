@@ -15,6 +15,7 @@ import { checkAvailability } from "../client/checkAvailability.js";
 import type { ApiServiceContext } from "../client/apiService.js";
 import type { ApiQueryParams } from "../client/resolveApiQueryParams.js";
 import { formatDurationTr, resolveRateLimitBackoffMs } from "../client/rateLimitPolicy.js";
+import { resolveClosedDateRangeDays } from "../client/availabilityDates.js";
 import { detectPublicIp } from "../../control-panel/chromeLauncher.js";
 import { WorkerRuntimeStore } from "../../control-panel/workerRuntimeStore.js";
 
@@ -193,7 +194,12 @@ export function startAvailabilityWatcher(
   };
 
   const processPollResult = async (result: ClosedDatePollResult): Promise<void> => {
-    const queryParams = options.resolveQueryParams?.() ?? options.queryParams;
+    const baseParams = options.resolveQueryParams?.() ?? options.queryParams;
+    const queryParams: ApiQueryParams = {
+      ...baseParams,
+      date: result.queryDate ?? baseParams.date,
+      maxDate: result.queryMaxDate ?? baseParams.maxDate,
+    };
     const nowIso = new Date().toISOString();
 
     if (result.rateLimited) {
@@ -294,7 +300,7 @@ export function startAvailabilityWatcher(
         appointmentTypeId: queryParams.appointmentTypeId,
         queryDate: queryParams.date,
         queryMaxDate: queryParams.maxDate,
-        rangeDays: apiSettings.closedDateRangeDays,
+        rangeDays: resolveClosedDateRangeDays(queryParams.date, queryParams.maxDate),
         todayIso: formatIsoDateLocal(new Date()),
         bookableStart,
         bookableEnd,
@@ -342,7 +348,7 @@ export function startAvailabilityWatcher(
           appointmentTypeId: queryParams.appointmentTypeId,
           queryDate: queryParams.date,
           queryMaxDate: queryParams.maxDate,
-          rangeDays: apiSettings.closedDateRangeDays,
+          rangeDays: resolveClosedDateRangeDays(queryParams.date, queryParams.maxDate),
           todayIso: formatIsoDateLocal(new Date()),
           bookableStart,
           bookableEnd,

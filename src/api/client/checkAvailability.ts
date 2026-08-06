@@ -10,14 +10,23 @@ import {
   resolvePortalReferer,
 } from "./apiService.js";
 import {
-  computeCalendarDatesFromAllowed,
+  addDaysIso,
+  computeActiveDates,
+  filterPortalWeekdays,
   formatIsoDateLocal,
+  resolvePortalGetClosedDateMaxDate,
 } from "./availabilityDates.js";
 import { parseResponse } from "./closedDateParser.js";
+import { fetchMaxAppointmentDate } from "./maxAppointmentDate.js";
 import type { ApiQueryParams } from "./resolveApiQueryParams.js";
+import { syncPortalAppointmentType } from "./syncPortalAppointmentType.js";
 import type { ClosedDatePollResult } from "../types.js";
 import { rawJwtFromBearer, resolveBearerToken } from "../auth/tokenProvider.js";
+import { loadSettings } from "../../config/settings.js";
+import { ensurePortalAppointmentEntry } from "../../navigation/ensurePortalAppointmentEntry.js";
+import { ensureWizardForApiPoll } from "../../portal/ensureWizardForApiPoll.js";
 import { isBasvuruPortalUrl, isKosmosMarketingHome } from "../../portal/kosmosOrigin.js";
+import { ProfileManager } from "../../profiles/profileManager.js";
 import { logger } from "../../utils/logger.js";
 
 function pageIsOnPortal(page: Page): boolean {
@@ -39,6 +48,49 @@ function parseBody(contentType: string, bodyText: string): unknown {
   return bodyText;
 }
 
+function readEnv(key: string): string | undefined {
+  const value = process.env[key]?.trim();
+  return value || undefined;
+}
+
+/** Her poll öncesi maxDate — AdminDatas (varsayılan), portal formülü veya env override. */
+async function enrichQueryParamsWithLiveMaxDate(
+  ctx: ApiServiceContext,
+  params: ApiQueryParams,
+  page?: Page,
+): Promise<ApiQueryParams> {
+  const maxDateOverride = readEnv("API_CLOSED_DATE_MAX");
+  if (maxDateOverride) {
+    return { ...params, maxDate: maxDateOverride };
+  }
+
+  const mode = (readEnv("API_CLOSED_DATE_MAX_MODE") ?? "api").toLowerCase();
+  if (mode === "offset" || mode === "fixed") {
+    return {
+      ...params,
+      maxDate: addDaysIso(params.date, ctx.settings.closedDateRangeDays),
+    };
+  }
+  if (mode === "portal") {
+    return {
+      ...params,
+      maxDate: resolvePortalGetClosedDateMaxDate(params.date),
+    };
+  }
+
+  const fetched = await fetchMaxAppointmentDate(ctx, page);
+  if (fetched) {
+    if (fetched !== params.maxDate) {
+      logger.info(`[api] maxDate AdminDatas → ${fetched}`);
+    }
+    return { ...params, maxDate: fetched };
+  }
+
+  const fallback = resolvePortalGetClosedDateMaxDate(params.date);
+  logger.warn(`[api] AdminDatas maxDate alınamadi — portal formulu: ${fallback}`);
+  return { ...params, maxDate: fallback };
+}
+
 function buildPollResult(
   ctx: ApiServiceContext,
   status: number,
@@ -47,32 +99,40 @@ function buildPollResult(
 ): ClosedDatePollResult {
   const bearer = resolveBearerToken(ctx.projectRoot, ctx.profileId) ?? "";
   const parsed = parseResponse(raw, bearer ? rawJwtFromBearer(bearer) : undefined);
-  const calendar = computeCalendarDatesFromAllowed(
+  const todayIso = formatIsoDateLocal(new Date());
+  const active = computeActiveDates(
     queryParams.date,
     queryParams.maxDate,
-    parsed.allowedDates,
+    parsed.closedDates,
+    { todayIso },
+  );
+  const activeWeekdays = filterPortalWeekdays(active.activeDates);
+
+  logger.debug(
+    `[checkAvailability] API ham kapali=${parsed.closedDates.length}, secilebilir=${activeWeekdays.length}, typeId=${queryParams.appointmentTypeId}`,
   );
 
-  const todayIso = formatIsoDateLocal(new Date());
   const excludesTodayNote =
-    calendar.bookableStart > queryParams.date ? `, bugün ${todayIso} hariç` : "";
+    active.bookableStart > queryParams.date ? `, bugün ${todayIso} hariç` : "";
 
   return {
     ok: true,
     status,
-    hasOpenSlots: calendar.allowedInRange.length > 0,
+    hasOpenSlots: activeWeekdays.length > 0,
     summary:
-      `${calendar.allowedInRange.length} seçilebilir gün (API, hafta içi), ` +
-      `${calendar.closedInRange.length} kapalı (hesaplanan), ` +
-      `aralık ${calendar.bookableStart} → ${calendar.bookableEnd}${excludesTodayNote}`,
+      `${activeWeekdays.length} seçilebilir gün (API, hafta içi), ` +
+      `${active.closedInRange.length} kapalı (API+hesaplanan), ` +
+      `aralık ${active.bookableStart} → ${active.bookableEnd}${excludesTodayNote}`,
     raw: parsed.raw,
-    allowedDates: parsed.allowedDates,
-    closedDates: calendar.closedInRange,
-    activeDates: calendar.allowedInRange,
-    openDates: calendar.allowedInRange,
-    bookableStart: calendar.bookableStart,
-    bookableEnd: calendar.bookableEnd,
-    closedInRange: calendar.closedInRange,
+    allowedDates: activeWeekdays,
+    closedDates: parsed.closedDates,
+    activeDates: activeWeekdays,
+    openDates: activeWeekdays,
+    bookableStart: active.bookableStart,
+    bookableEnd: active.bookableEnd,
+    closedInRange: active.closedInRange,
+    queryDate: queryParams.date,
+    queryMaxDate: queryParams.maxDate,
   };
 }
 
@@ -165,9 +225,10 @@ export async function checkAvailability(
   queryParams: ApiQueryParams,
   page?: Page,
 ): Promise<ClosedDatePollResult> {
-  const url = closedDateUrl(ctx, queryParams);
+  const effectiveParams = await enrichQueryParamsWithLiveMaxDate(ctx, queryParams, page);
+  const url = closedDateUrl(ctx, effectiveParams);
   logger.debug(
-    `[checkAvailability] typeId=${queryParams.appointmentTypeId} (${queryParams.appointmentStyleLabel ?? "?"}) → ${url}`,
+    `[checkAvailability] typeId=${effectiveParams.appointmentTypeId} (${effectiveParams.appointmentStyleLabel ?? "?"}) → ${url}`,
   );
 
   try {
@@ -186,7 +247,62 @@ export async function checkAvailability(
 
     if (onPortal && page && !page.isClosed()) {
       try {
-        return await fetchClosedDateViaPage(ctx, url, queryParams, page);
+        let pollPage = page;
+        const appSettings = loadSettings(ctx.projectRoot);
+
+        if (ctx.settings.apiWizardAutoNavigate) {
+          const entry = await ensurePortalAppointmentEntry(
+            pollPage,
+            pollPage.context(),
+            appSettings,
+            { allowGotoFallback: process.env.API_AUTO_OPEN_PORTAL_TAB === "true" },
+          );
+          pollPage = entry.page;
+          if (!entry.ok) {
+            logger.warn(`[checkAvailability] Portal girisi: ${entry.reason ?? entry.step ?? "?"}`);
+          }
+        }
+
+        if (ctx.settings.syncPortalAppointmentType) {
+          const profile = new ProfileManager(ctx.projectRoot, appSettings.manifestPath).resolveProfile(
+            ctx.profileId,
+            appSettings,
+          );
+
+          if (ctx.settings.apiWizardAutoNavigate) {
+            const prep = await ensureWizardForApiPoll(
+              pollPage,
+              profile,
+              appSettings.appointment,
+              ctx.settings,
+              effectiveParams,
+            );
+            if (!prep.ok) {
+              logger.warn(`[checkAvailability] Wizard hazirlik: ${prep.reason}`);
+            }
+          }
+
+          const syncResult = await syncPortalAppointmentType(pollPage, effectiveParams, ctx.settings);
+          if (syncResult.synced) {
+            logger.info(
+              `[checkAvailability] Portal typeId=${syncResult.targetValue} senkron OK — GetClosedDate poll`,
+            );
+          } else if (
+            syncResult.skipped &&
+            syncResult.reason &&
+            syncResult.reason !== "zaten eslesiyor"
+          ) {
+            logger.warn(
+              `[checkAvailability] Portal basvuru sekli senkron atlandi: ${syncResult.reason}`,
+            );
+          } else if (!syncResult.skipped && !syncResult.synced && syncResult.reason) {
+            logger.warn(
+              `[checkAvailability] Portal basvuru sekli senkron basarisiz: ${syncResult.reason}`,
+            );
+          }
+        }
+
+        return await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
       } catch (browserError) {
         const message =
           browserError instanceof Error ? browserError.message : String(browserError);
@@ -202,7 +318,7 @@ export async function checkAvailability(
 
     if (forceNode) {
       logger.debug("[checkAvailability] API_POLL_VIA_NODE=true — Node fetch");
-      return await fetchClosedDateViaNode(ctx, url, queryParams);
+      return await fetchClosedDateViaNode(ctx, url, effectiveParams);
     }
 
     return {

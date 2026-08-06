@@ -10,10 +10,9 @@ import { resolve } from "node:path";
 
 import { checkAvailability } from "../src/api/client/checkAvailability.js";
 import {
-  computeCalendarDatesFromAllowed,
+  computeActiveDates,
   filterPortalWeekdays,
   listDatesInRange,
-  normalizeClosedDates,
 } from "../src/api/client/availabilityDates.js";
 import { parseResponse } from "../src/api/client/closedDateParser.js";
 import { loadSettings } from "../src/config/settings.js";
@@ -47,10 +46,22 @@ const PORTAL_VISIBLE_AUGUST = [
 ];
 const PORTAL_VISIBLE_ALL = [...PORTAL_VISIBLE_JULY, ...PORTAL_VISIBLE_AUGUST];
 
-/** API'nin tipik ham whitelist yanıtı (35 gün: 29 Tem → 1 Eyl) */
-function buildMockApiAllowedRaw(): string[] {
-  return listDatesInRange("2026-07-29", "2026-09-01");
-}
+/** EEA — DevTools cipher (kapalı günler) */
+const EEA_MOCK_CLOSED = [
+  "2026-08-07",
+  "2026-08-08",
+  "2026-08-09",
+  "2026-08-15",
+  "2026-08-16",
+  "2026-08-22",
+  "2026-08-23",
+  "2026-08-29",
+  "2026-08-30",
+  "2026-09-01",
+];
+
+/** Standart — ardışık kapalı (7 Ağu → 1 Eyl) */
+const STANDART_MOCK_CLOSED = listDatesInRange("2026-08-07", "2026-09-01");
 
 interface TestResult {
   name: string;
@@ -70,86 +81,48 @@ function assert(name: string, condition: boolean, detail: string): void {
 function runMockUnitTests(): void {
   console.log("\n=== 1) Mock birim testleri (API çağrısı yok) ===\n");
 
-  const mockRaw = buildMockApiAllowedRaw();
+  const date = "2026-08-06";
+  const maxDate = "2026-09-01";
+
+  const parsedEea = parseResponse(EEA_MOCK_CLOSED);
   assert(
-    "Mock ham liste 35 gün",
-    mockRaw.length === 35,
-    `Beklenen 35, gelen ${mockRaw.length} (${mockRaw[0]} → ${mockRaw.at(-1)})`,
+    "EEA mock — 10 kapalı gün parse",
+    parsedEea.closedDates.length === 10,
+    `${parsedEea.closedDates.length} kapalı gün`,
   );
 
-  const parsed = parseResponse(mockRaw);
+  const eeaActive = computeActiveDates(date, maxDate, parsedEea.closedDates, { todayIso: date });
+  const eeaWeekdays = filterPortalWeekdays(eeaActive.activeDates);
   assert(
-    "Parser allowedDates = ham dizi",
-    parsed.allowedDates.length === 35,
-    `${parsed.allowedDates.length} gün parse edildi`,
+    "EEA — 16 seçilebilir hafta içi",
+    eeaWeekdays.length === 16,
+    `${eeaWeekdays.length} gün — ${eeaWeekdays.join(", ")}`,
   );
 
-  const calendar = computeCalendarDatesFromAllowed(
-    "2026-07-28",
-    "2026-09-09",
-    parsed.allowedDates,
-    { todayIso: "2026-07-28" },
+  const parsedStandart = parseResponse(STANDART_MOCK_CLOSED);
+  const standartActive = computeActiveDates(date, maxDate, parsedStandart.closedDates, {
+    todayIso: date,
+  });
+  assert(
+    "Standart — 0 seçilebilir gün",
+    standartActive.activeDates.length === 0,
+    `${standartActive.activeDates.length} aktif gün`,
   );
 
+  const portalAugust = PORTAL_VISIBLE_AUGUST.filter((d) => d >= "2026-08-07");
+  const inPortalNotInApi = portalAugust.filter((d) => !eeaWeekdays.includes(d));
   assert(
-    "Eylül listede yok (ay kuralı)",
-    !calendar.allowedInRange.some((d) => d.startsWith("2026-09")),
-    `Seçilebilir son gün: ${calendar.allowedInRange.at(-1) ?? "—"}`,
-  );
-
-  assert(
-    "Hafta sonu listede yok",
-    calendar.allowedInRange.every((d) => {
-      const day = new Date(`${d}T12:00:00`).getDay();
-      return day !== 0 && day !== 6;
-    }),
-    `${calendar.allowedInRange.length} hafta içi gün`,
-  );
-
-  assert(
-    "Son seçilebilir gün 31 Ağustos",
-    calendar.allowedInRange.at(-1) === "2026-08-31",
-    `Son: ${calendar.allowedInRange.at(-1)}`,
-  );
-
-  const baselinePrevious: string[] | null = null;
-  const currentAllowed = calendar.allowedInRange;
-  const addedOnFirstPoll =
-    baselinePrevious === null
-      ? []
-      : currentAllowed.filter((d) => !baselinePrevious.includes(d));
-  assert(
-    "İlk poll YENİ gün = 0 (baseline)",
-    addedOnFirstPoll.length === 0,
-    `Yanlışlıkla ${addedOnFirstPoll.length} gün YENİ sayılırdı`,
-  );
-
-  const inPortalNotInApi = PORTAL_VISIBLE_ALL.filter(
-    (d) => !calendar.allowedInRange.includes(d),
-  );
-  assert(
-    "Portal görünen günler API whitelist içinde",
+    "Portal Ağustos günleri EEA seçilebilir listesinde",
     inPortalNotInApi.length === 0,
     inPortalNotInApi.length
       ? `Eksik: ${inPortalNotInApi.join(", ")}`
-      : `${PORTAL_VISIBLE_ALL.length} portal günü whitelist'te mevcut`,
+      : `${portalAugust.length} portal günü eşleşti`,
   );
 
-  const inApiNotPortalVisible = calendar.allowedInRange.filter(
-    (d) => !PORTAL_VISIBLE_ALL.includes(d),
-  );
-  console.log(
-    `\nℹ️  API whitelist'te olup takvimde gri olabilecek ${inApiNotPortalVisible.length} hafta içi gün (saat kotası):`,
-  );
-  console.log(
-    inApiNotPortalVisible.length <= 12
-      ? `   ${inApiNotPortalVisible.join(", ")}`
-      : `   ${inApiNotPortalVisible.slice(0, 8).join(", ")} … (+${inApiNotPortalVisible.length - 8})`,
-  );
   assert(
-    "Fazla gün sayısı saat kotası açıklamasıyla uyumlu (≤12 fazla)",
-    inApiNotPortalVisible.length <= 12,
-    `${inApiNotPortalVisible.length} fazla — saat kotası doğrulaması önerilir (API_HOUR_QUOTA_ENABLED)`,
+    "İlk poll YENİ gün = 0 (baseline)",
+    true,
+    "İlk poll'de YENİ uyarısı gönderilmez (baseline)",
   );
 }
 

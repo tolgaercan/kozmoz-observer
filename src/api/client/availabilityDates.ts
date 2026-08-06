@@ -139,6 +139,29 @@ export function filterPortalWeekdays(isoDates: string[]): string[] {
 }
 
 /**
+ * Portal GetClosedDate maxDate — fallback formül (AdminDatas alınamazsa).
+ * Birincil kaynak: GET AdminDatas/GetDatasById?id=2329 → dataType=MaxAppointmentDate, name=yyyy-MM-dd
+ * DevTools: date=2026-08-06 → AdminDatas name=2026-09-01
+ */
+export function resolvePortalGetClosedDateMaxDate(rangeStartIso: string): string {
+  const base = new Date(`${rangeStartIso}T12:00:00`);
+  base.setMonth(base.getMonth() + 1, 1);
+  return formatIsoDateLocal(base);
+}
+
+/** İki yyyy-MM-dd arası gün farkı (end − start). */
+export function daysBetweenIso(startIso: string, endIso: string): number {
+  const start = new Date(`${startIso}T12:00:00`);
+  const end = new Date(`${endIso}T12:00:00`);
+  return Math.round((end.getTime() - start.getTime()) / 86_400_000);
+}
+
+/** GetClosedDate sorgu penceresi — maxDate − date (gün). */
+export function resolveClosedDateRangeDays(date: string, maxDate: string): number {
+  return Math.max(0, daysBetweenIso(date, maxDate));
+}
+
+/**
  * GetClosedDate maxDate sorgu üst sınırıdır — portal takviminde son gün dahil değil.
  */
 export function resolveBookableEnd(rangeEndIso: string, bookableStart: string): string {
@@ -158,7 +181,8 @@ export interface CalendarDateResult {
 }
 
 /**
- * GetClosedDate ham dizisi portalda allowedDates (whitelist) olarak kullanılır.
+ * GetClosedDate ham dizisi portalda kapalı günler (disabledDates) olarak kullanılır.
+ * Seçilebilir günler = sorgu penceresi − kapalı liste.
  * (bookableEnd = maxDate − 1 gün)
  */
 export function computeCalendarDatesFromAllowed(

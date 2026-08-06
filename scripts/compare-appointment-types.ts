@@ -8,7 +8,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { parseResponse } from "../src/api/client/closedDateParser.js";
-import { normalizeClosedDates } from "../src/api/client/availabilityDates.js";
+import {
+  computeActiveDates,
+  filterPortalWeekdays,
+  formatIsoDateLocal,
+  normalizeClosedDates,
+} from "../src/api/client/availabilityDates.js";
+import { parseMaxAppointmentDateResponse } from "../src/api/client/maxAppointmentDate.js";
 
 const projectRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const profileId = process.argv.includes("--profile")
@@ -28,15 +34,37 @@ function loadBearerToken(): string {
   return storage[jwtKey]!;
 }
 
+async function fetchMaxDate(bearer: string): Promise<string> {
+  const adminUrl =
+    "https://api.kosmosvize.com.tr/api/AdminDatas/GetDatasById?id=2329&_=" + Date.now();
+  const adminRes = await fetch(adminUrl, {
+    cache: "no-store",
+    headers: {
+      Accept: "application/json, text/plain, */*",
+      Authorization: `Bearer ${bearer}`,
+      Referer: "https://basvuru.kosmosvize.com.tr/",
+      Origin: "https://basvuru.kosmosvize.com.tr",
+    },
+  });
+  const adminRaw = await adminRes.json();
+  const fromAdmin = parseMaxAppointmentDateResponse(adminRaw);
+  if (!fromAdmin) {
+    throw new Error(`AdminDatas maxDate parse edilemedi — HTTP ${adminRes.status}`);
+  }
+  return fromAdmin;
+}
+
 async function fetchClosedDates(appointmentTypeId: string, bearer: string): Promise<{
   typeId: string;
   status: number;
   count: number;
+  activeCount: number;
   dates: string[];
+  closedDates: string[];
   cipherPrefix: string;
 }> {
-  const date = "2026-08-06";
-  const maxDate = "2026-09-18";
+  const date = formatIsoDateLocal(new Date());
+  const maxDate = await fetchMaxDate(bearer);
   const url =
     `https://api.kosmosvize.com.tr/api/AppointmentClosedDates/GetClosedDate` +
     `?dealerId=1014&date=${date}&maxDate=${maxDate}&appointmentTypeId=${appointmentTypeId}&_=${Date.now()}`;
@@ -59,13 +87,19 @@ async function fetchClosedDates(appointmentTypeId: string, bearer: string): Prom
   }
 
   const parsed = parseResponse(raw, bearer);
-  const dates = normalizeClosedDates(parsed.allowedDates);
+  const closedDates = normalizeClosedDates(parsed.closedDates);
+  const active = computeActiveDates(date, maxDate, closedDates, {
+    todayIso: formatIsoDateLocal(new Date()),
+  });
+  const activeWeekdays = filterPortalWeekdays(active.activeDates);
 
   return {
     typeId: appointmentTypeId,
     status: response.status,
-    count: dates.length,
-    dates,
+    count: closedDates.length,
+    activeCount: activeWeekdays.length,
+    dates: activeWeekdays,
+    closedDates,
     cipherPrefix: bodyText.slice(0, 48),
   };
 }
@@ -78,14 +112,17 @@ function datesEqual(a: string[], b: string[]): boolean {
 
 async function main(): Promise<void> {
   const bearer = loadBearerToken();
+  const date = formatIsoDateLocal(new Date());
+  const maxDate = await fetchMaxDate(bearer);
   console.log(`Profil: ${profileId}`);
+  console.log(`date=${date} maxDate=${maxDate} (AdminDatas/2329)`);
   console.log("─".repeat(60));
 
   const standart = await fetchClosedDates("16", bearer);
   const eea = await fetchClosedDates("2339", bearer);
 
-  console.log(`Standart (16):     HTTP ${standart.status} → ${standart.count} gün`);
-  console.log(`EEA AB Eşi (2339): HTTP ${eea.status} → ${eea.count} gün`);
+  console.log(`Standart (16):     HTTP ${standart.status} → ${standart.count} kapalı API, ${standart.activeCount} seçilebilir`);
+  console.log(`EEA AB Eşi (2339): HTTP ${eea.status} → ${eea.count} kapalı API, ${eea.activeCount} seçilebilir`);
   console.log(`Ham yanıt aynı mı (prefix): ${standart.cipherPrefix === eea.cipherPrefix ? "EVET ⚠️" : "HAYIR"}`);
   console.log(`Tarih listesi aynı mı: ${datesEqual(standart.dates, eea.dates) ? "EVET ⚠️" : "HAYIR"}`);
 

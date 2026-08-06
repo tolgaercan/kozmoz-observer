@@ -2,6 +2,7 @@ import type { ApiWatcherSettings } from "../../config/settings.js";
 import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { extractRawForm } from "../../profiles/profileContext.js";
 import { logger } from "../../utils/logger.js";
+import { resolvePortalGetClosedDateMaxDate } from "./availabilityDates.js";
 import {
   API_APPOINTMENT_CITY_IDS,
   API_DEALER_IDS,
@@ -182,13 +183,22 @@ function resolveClosedDateRange(
     readEnv("API_CLOSED_DATE") ||
     formatIsoDate(new Date());
 
+  const maxDateOverride = overrides?.maxDate?.trim() || readEnv("API_CLOSED_DATE_MAX");
+  if (maxDateOverride) {
+    return { date, maxDate: maxDateOverride };
+  }
+
+  const mode = (readEnv("API_CLOSED_DATE_MAX_MODE") ?? "api").toLowerCase();
   const maxDate =
-    overrides?.maxDate?.trim() ||
-    readEnv("API_CLOSED_DATE_MAX") ||
-    addDaysIso(date, apiSettings.closedDateRangeDays);
+    mode === "offset" || mode === "fixed"
+      ? addDaysIso(date, apiSettings.closedDateRangeDays)
+      : resolvePortalGetClosedDateMaxDate(date);
 
   return { date, maxDate };
 }
+
+/** Sorgu penceresi gün sayısı — Telegram / log için. */
+export { resolveClosedDateRangeDays } from "./availabilityDates.js";
 
 function resolveStyleLabel(
   profile: ResolvedProfile,

@@ -71,6 +71,18 @@ const MAX_NAV_ROUNDS = 4;
 
 type NavClickStrategy = "playwright" | "evaluate" | "human" | "goto";
 
+type NavStepOptions = { homeUrl?: string; allowGotoFallback?: boolean };
+
+function filterNavStrategies(
+  strategies: NavClickStrategy[],
+  allowGotoFallback: boolean,
+): NavClickStrategy[] {
+  if (allowGotoFallback) {
+    return strategies;
+  }
+  return strategies.filter((strategy) => strategy !== "goto");
+}
+
 export async function isRandevuProceduresOpen(page: Page): Promise<boolean> {
   const url = page.url();
   if (isRegisterFormPage(url)) {
@@ -262,18 +274,20 @@ function strategiesForRandevuAlRound(round: number): NavClickStrategy[] {
   return ["human", "goto"];
 }
 
-async function ensureRandevuIslemleri(
+export async function ensureRandevuIslemleri(
   page: Page,
   settings: NavigationSettings,
   round: number,
-  homeUrl?: string,
+  options: NavStepOptions = {},
 ): Promise<boolean> {
   if (await isRandevuProceduresOpen(page)) {
     return true;
   }
 
   const beforeUrl = page.url();
-  const strategies = strategiesForProceduresRound(round);
+  const homeUrl = options.homeUrl;
+  const allowGotoFallback = options.allowGotoFallback !== false;
+  const strategies = filterNavStrategies(strategiesForProceduresRound(round), allowGotoFallback);
   const proceduresUrl = homeUrl ? resolveAppointmentProceduresUrl(homeUrl) : undefined;
 
   for (const strategy of strategies) {
@@ -316,18 +330,20 @@ async function ensureRandevuIslemleri(
   return false;
 }
 
-async function ensureRandevuAl(
+export async function ensureRandevuAl(
   page: Page,
   settings: NavigationSettings,
   round: number,
-  homeUrl?: string,
+  options: NavStepOptions = {},
 ): Promise<boolean> {
   if (await isAppointmentWizardReady(page)) {
     return true;
   }
 
   const beforeUrl = page.url();
-  const strategies = strategiesForRandevuAlRound(round);
+  const homeUrl = options.homeUrl;
+  const allowGotoFallback = options.allowGotoFallback !== false;
+  const strategies = filterNavStrategies(strategiesForRandevuAlRound(round), allowGotoFallback);
   const formUrl = homeUrl ? resolveAppointmentFormUrl(homeUrl) : undefined;
 
   for (const strategy of strategies) {
@@ -402,9 +418,10 @@ export async function clickRandevuAl(
 export async function navigateKosmosAppointmentFlow(
   page: Page,
   settings: NavigationSettings,
-  options: { homeUrl?: string } = {},
+  options: NavStepOptions = {},
 ): Promise<void> {
   const homeUrl = options.homeUrl;
+  const allowGotoFallback = options.allowGotoFallback !== false;
 
   for (let round = 1; round <= MAX_NAV_ROUNDS; round++) {
     const state = detectPortalNavState(page.url());
@@ -417,12 +434,13 @@ export async function navigateKosmosAppointmentFlow(
 
     if (state === "registerForm" || state === "portalHome" || state === "unknown") {
       logger.info("[nav] Randevu İşlemleri — menü tıklaması öncelikli (URL son çare).");
-      const opened = await ensureRandevuIslemleri(page, settings, round, homeUrl);
+      const opened = await ensureRandevuIslemleri(page, settings, round, {
+        homeUrl,
+        allowGotoFallback,
+      });
       if (!opened) {
         if (round === MAX_NAV_ROUNDS) {
-          throw new Error(
-            "Randevu İşlemleri açılamadı. Menü görünür ama SPA tıklaması yanıt vermedi.",
-          );
+          logger.warn("[nav] Randevu İşlemleri acilamadi — sonraki tur/atlaniyor.");
         }
         continue;
       }
@@ -439,10 +457,10 @@ export async function navigateKosmosAppointmentFlow(
       (await isRandevuProceduresOpen(page))
     ) {
       logger.info("[nav] Randevu Al sekmesine geçiliyor.");
-      const opened = await ensureRandevuAl(page, settings, round, homeUrl);
+      const opened = await ensureRandevuAl(page, settings, round, { homeUrl, allowGotoFallback });
       if (!opened) {
         if (round === MAX_NAV_ROUNDS) {
-          throw new Error("Randevu Al açılamadı — randevu wizard yüklenmedi.");
+          logger.warn("[nav] Randevu Al acilamadi — wizard yuklenmedi.");
         }
         continue;
       }
@@ -454,7 +472,9 @@ export async function navigateKosmosAppointmentFlow(
     }
   }
 
-  throw new Error(
-    `[nav] Randevu akışına ${MAX_NAV_ROUNDS} turda ulaşılamadı — son URL: ${page.url()}`,
-  );
+  if (await isAppointmentWizardReady(page)) {
+    return;
+  }
+
+  logger.warn(`[nav] Randevu akisina ${MAX_NAV_ROUNDS} turda ulasilamadi — son URL: ${page.url()}`);
 }

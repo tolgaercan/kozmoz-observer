@@ -1,7 +1,10 @@
 /**
  * Portal dropdown etiketleri → API ID eşlemesi.
- * Kaynak: portal HTML + DevTools Network (GetClosedDate, il listesi API).
+ * Kaynak: portal HTML + DevTools Network (GetClosedDate, AdminDatas, il listesi API).
  */
+
+/** AdminDatas — GetClosedDate maxDate (dataType=MaxAppointmentDate, değer name alanında) */
+export const ADMIN_DATA_MAX_APPOINTMENT_DATE_ID = "2329";
 
 export const APPLICATION_TYPE_IDS: Record<string, string> = {
   Bireysel: "1",

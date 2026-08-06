@@ -193,3 +193,13 @@ export function closedDateUrl(ctx: ApiServiceContext, params: ApiQueryParams): s
 export function hourQuotaUrl(ctx: ApiServiceContext, params: ApiQueryParams): string {
   return buildApiUrl(ctx.settings.getHourQuotaUrl, params);
 }
+
+export function maxAppointmentDateUrl(
+  ctx: ApiServiceContext,
+  adminDataId: string,
+): string {
+  return ctx.settings.getMaxAppointmentDateUrl.replace(
+    "{adminDataId}",
+    encodeURIComponent(adminDataId),
+  );
+}

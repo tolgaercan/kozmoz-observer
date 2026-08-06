@@ -3,6 +3,7 @@ import { chromium, type Browser, type BrowserContext, type Page } from "playwrig
 import { detectWizardStepFromNav } from "../portal/wizardStepDetector.js";
 import { applyStealthToContext } from "./stealth.js";
 import { detectIntervention } from "../challenge/interventionDetector.js";
+import { isBasvuruPortalUrl } from "../portal/kosmosOrigin.js";
 import { logger } from "../utils/logger.js";
 
 export async function isCdpEndpointReady(endpoint: string): Promise<boolean> {
@@ -174,6 +175,25 @@ export async function findPortalTab(context: BrowserContext): Promise<Page | nul
   return bestScore > 0 ? best : null;
 }
 
+/** basvuru.kosmosvize.com.tr — tanitim ana sayfa (www) haric */
+export async function findBasvuruPortalTab(context: BrowserContext): Promise<Page | null> {
+  let best: Page | null = null;
+  let bestScore = -1;
+
+  for (const candidate of context.pages()) {
+    if (candidate.isClosed() || !isBasvuruPortalUrl(candidate.url())) {
+      continue;
+    }
+    const score = scorePortalTabUrl(candidate.url());
+    if (score > bestScore) {
+      bestScore = score;
+      best = candidate;
+    }
+  }
+
+  return bestScore > 0 ? best : null;
+}
+
 async function assessPortalTab(page: Page): Promise<PortalPollTabResult> {
   const intervention = await detectIntervention(page);
   if (intervention.type === "blocked") {
@@ -195,17 +215,17 @@ export async function waitForManualPortalTab(
   let loggedWait = false;
 
   while (Date.now() - started < maxWaitMs) {
-    const portalPage = await findPortalTab(context);
+    const portalPage = await findBasvuruPortalTab(context);
     if (portalPage) {
       await portalPage.bringToFront();
-      logger.info(`[portal] UI sekmesi hazir: ${portalPage.url()}`);
+      logger.info(`[portal] Basvuru sekmesi hazir: ${portalPage.url()}`);
       return assessPortalTab(portalPage);
     }
 
     if (!loggedWait) {
       logger.warn(
-        "[portal] UI adimi bekleniyor — Chrome adres cubugundan appointmentForm acin " +
-          "(otomasyon navigasyonu yok).",
+        "[portal] Basvuru sekmesi bekleniyor — ana sayfadan Vize Basvuru Adimlari veya " +
+          "appointmentForm (API_WIZARD_AUTO_NAVIGATE aciksa otomasyon dener).",
       );
       loggedWait = true;
     }

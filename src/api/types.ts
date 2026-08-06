@@ -11,10 +11,10 @@ export interface ClosedDatePollResult {
   hasOpenSlots: boolean;
   summary: string;
   raw?: unknown;
-  /** GetClosedDate ham dizisi — portal allowedDates (seçilebilir günler) */
-  allowedDates?: string[];
-  /** Sorgu penceresinde allowedDates dışında kalan günler (hesaplanan) */
+  /** GetClosedDate ham dizisi — portal kapalı günler (disabledDates) */
   closedDates?: string[];
+  /** Sorgu penceresinde seçilebilir günler (aralık − kapalı, hafta içi) */
+  allowedDates?: string[];
   /** Portal takvimiyle uyumlu seçilebilir günler (allowedInRange) */
   activeDates?: string[];
   /** Geriye dönük alias — activeDates ile aynı */
@@ -22,6 +22,9 @@ export interface ClosedDatePollResult {
   bookableStart?: string;
   bookableEnd?: string;
   closedInRange?: string[];
+  /** Poll sırasında kullanılan GetClosedDate parametreleri (AdminDatas maxDate dahil) */
+  queryDate?: string;
+  queryMaxDate?: string;
   unauthorized?: boolean;
   /** HTTP 429 — çok sık poll */
   rateLimited?: boolean;

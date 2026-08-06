@@ -1,11 +1,12 @@
 import {
   gotoKosmosMarketingHome,
 } from "../../navigation/kosmosHomeEntry.js";
+import { ensurePortalAppointmentEntry } from "../../navigation/ensurePortalAppointmentEntry.js";
 import { resolveAppointmentFormUrl } from "../../navigation/kosmosPortalNav.js";
 import { detectManualAuthStep } from "../../auth/authStepDetector.js";
 import { detectIntervention } from "../../challenge/interventionDetector.js";
 import { isBasvuruPortalUrl, isKosmosMarketingHome, isKosmosPortalUrl } from "../../portal/kosmosOrigin.js";
-import { waitForManualPortalTab } from "../../browser/cdpConnector.js";
+import { waitForManualPortalTab, findBasvuruPortalTab } from "../../browser/cdpConnector.js";
 import { readStorageFile } from "../../session/sessionReader.js";
 import { persistPortalStorage, readPortalLocalStorage } from "../../session/sessionPersister.js";
 import { extractJwtFromStorage, stripBearerPrefix } from "../../api/token/jwtExtractor.js";
@@ -319,6 +320,72 @@ function manualAuthRequiredDetail(): string {
   );
 }
 
+/** banSafe: insani menu navigasyonu (goto yok) + JWT bekle */
+async function tryHumanPortalEntryForJwt(
+  runtime: ScenarioRuntime,
+): Promise<ApiAuthBootstrapResult | null> {
+  if (!runtime.settings.apiWatcher.apiWizardAutoNavigate || !runtime.session?.context) {
+    return null;
+  }
+
+  const { context, page } = runtime.session;
+  const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
+  const sessionPaths = runtime.profileManager.toSessionPaths(profile);
+  const apiSettings = runtime.settings.apiWatcher;
+  const allowGotoFallback = !runtime.banSafe;
+
+  logger.info(
+    `[api-auth] Insani portal girisi — adim tespiti (goto=${allowGotoFallback ? "acik" : "kapali"}).`,
+  );
+
+  const entry = await ensurePortalAppointmentEntry(page, context, runtime.settings, {
+    allowGotoFallback,
+  });
+  runtime.session.page = entry.page;
+
+  if (!entry.ok) {
+    logger.warn(`[api-auth] Portal girisi kismen: ${entry.reason ?? entry.step ?? "?"}`);
+  }
+
+  const jwt = await readTokenFromPortalPage(runtime, entry.page);
+  if (jwt) {
+    const record = saveApiToken(runtime.projectRoot, profile.id, jwt, "localStorage");
+    setRuntimeBearerToken(record.authorization);
+    return {
+      ok: true,
+      detail: `Token localStorage (${entry.page.url()}) — insani giris`,
+    };
+  }
+
+  if (!isBasvuruPortalUrl(entry.page.url())) {
+    return null;
+  }
+
+  const captured = await waitForPortalJwtSession(
+    runtime,
+    entry.page,
+    context,
+    apiSettings,
+    Math.min(apiSettings.tokenCaptureWaitMs, 180_000),
+  );
+  if (captured) {
+    await persistPortalStorage(entry.page, sessionPaths.storageFile);
+    const record = saveApiToken(
+      runtime.projectRoot,
+      profile.id,
+      captured.token,
+      captured.source,
+    );
+    setRuntimeBearerToken(record.authorization);
+    return {
+      ok: true,
+      detail: `Token kaydedildi (${captured.source}) — insani giris + JWT`,
+    };
+  }
+
+  return null;
+}
+
 /** banSafe: portali kullanicinin acmasini bekle, JWT yakala — page.goto yok */
 async function waitForManualPortalJwt(
   runtime: ScenarioRuntime,
@@ -399,6 +466,10 @@ export async function runApiAuthBootstrapPhase(
     const passive = await runApiAuthBootstrapPassive(runtime, params);
     if (passive.ok) {
       return passive;
+    }
+    const humanEntry = await tryHumanPortalEntryForJwt(runtime);
+    if (humanEntry?.ok) {
+      return humanEntry;
     }
     if (runtime.banSafe || !allowActiveAuthNavigation(runtime, params)) {
       return waitForManualPortalJwt(runtime);

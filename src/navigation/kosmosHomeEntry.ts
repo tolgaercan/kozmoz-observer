@@ -13,7 +13,15 @@ const POPUP_CLOSE_SELECTORS = [
   "a.close-popup-btn img[src*='popup-close']",
 ];
 
+const COOKIE_CONSENT_SELECTORS = [
+  "button:has-text('Tamam')",
+  "a.button:has-text('Tamam')",
+  ".cookie-banner button:has-text('Tamam')",
+  "#cookieConsent button:has-text('Tamam')",
+];
+
 export const VIZE_BASVURU_ADIMLARI_SELECTORS = [
+  "li.nav-item a.btn-online-services[href*='registerform']",
   "a.btn-online-services[href*='registerform']",
   "a.button.btn-blue-gradient[href*='registerform']",
   "a.btn-blue-gradient:has-text('Vize Başvuru Adımları')",
@@ -116,6 +124,12 @@ export function resolveRegisterFormUrl(homeUrl?: string): string {
   return "https://basvuru.kosmosvize.com.tr/registerform";
 }
 
+/** Duyuru popup + cerez — varsa kapat, yoksa sessizce devam (patlamaz). */
+export async function dismissKosmosHomeOverlays(page: Page): Promise<void> {
+  await dismissKosmosHomePopup(page).catch(() => undefined);
+  await dismissKosmosCookieBanner(page).catch(() => undefined);
+}
+
 /** Duyuru popup — varsa kapat, yoksa sessizce devam */
 export async function dismissKosmosHomePopup(page: Page): Promise<boolean> {
   for (const selector of POPUP_CLOSE_SELECTORS) {
@@ -133,6 +147,27 @@ export async function dismissKosmosHomePopup(page: Page): Promise<boolean> {
   }
 
   logger.info("[home] Popup bulunamadi — atlaniyor (normal).");
+  return false;
+}
+
+/** Çerez banner — varsa Tamam (insani tıklama) */
+export async function dismissKosmosCookieBanner(page: Page): Promise<boolean> {
+  for (const selector of COOKIE_CONSENT_SELECTORS) {
+    const locator = page.locator(selector).first();
+    try {
+      if (await locator.isVisible({ timeout: 600 })) {
+        logger.info(`[home] Cerez banner kapatiliyor: ${selector}`);
+        await humanClickLocator(page, locator, {
+          label: "Cerez Tamam",
+          waitTimeoutMs: 5000,
+        });
+        await page.waitForTimeout(350);
+        return true;
+      }
+    } catch {
+      // sonraki selector
+    }
+  }
   return false;
 }
 
@@ -229,7 +264,9 @@ export async function bootstrapFromKosmosHome(
   page: Page,
   context: BrowserContext,
   settings: AppSettings,
+  options: { allowGotoFallback?: boolean } = {},
 ): Promise<Page> {
+  const allowGotoFallback = options.allowGotoFallback !== false;
   const url = page.url();
 
   if (isBasvuruPortalUrl(url)) {
@@ -242,16 +279,20 @@ export async function bootstrapFromKosmosHome(
     return page;
   }
 
-  logger.info("[home] Kosmos ana sayfa — popup + basvuru portalina gecis.");
+  logger.info("[home] Kosmos ana sayfa — overlay + basvuru portalina gecis.");
 
-  await dismissKosmosHomePopup(page);
+  await dismissKosmosHomeOverlays(page);
 
   const registerUrl = resolveRegisterFormUrl(settings.visaPortalHomeUrl);
   let activePage = await openRegisterFormViaClick(page, context, settings);
 
   if (!isBasvuruPortalUrl(activePage.url())) {
-    logger.info("[home] Buton yeni sekme acmadi — dogrudan URL deneniyor.");
-    activePage = await openRegisterFormViaGoto(activePage, registerUrl);
+    if (allowGotoFallback) {
+      logger.info("[home] Buton yeni sekme acmadi — dogrudan URL deneniyor.");
+      activePage = await openRegisterFormViaGoto(activePage, registerUrl);
+    } else {
+      logger.info("[home] Goto kapali — acik basvuru sekmesi araniyor.");
+    }
   }
 
   activePage = await waitForBasvuruPortalPage(context, activePage);
