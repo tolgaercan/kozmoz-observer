@@ -17,22 +17,12 @@ export function resolveAppointmentCity(
   return fallback || null;
 }
 
-export async function selectProfileCity(
+async function selectCityByLabel(
   page: Page,
-  profile: ResolvedProfile,
+  city: string,
   settings: AppointmentSettings,
+  logContext: string,
 ): Promise<void> {
-  if (!settings.citySelectEnabled) {
-    return;
-  }
-
-  const city = resolveAppointmentCity(profile, settings.defaultCity);
-  if (!city) {
-    logger.warn(`İl seçimi atlandı — ${profile.id} için appointmentCity tanımlı değil.`);
-    return;
-  }
-
-  logger.info(`İl seçimi: ${city} (profil: ${profile.id})`);
   const scrollAnchors = settings.cityScrollLocator
     .split("|")
     .map((part) => part.trim())
@@ -61,7 +51,46 @@ export async function selectProfileCity(
     }
   }
 
-  throw new Error(`İl seçilemedi (${city}).`, {
+  throw new Error(`İl seçilemedi (${city}, ${logContext}).`, {
     cause: lastError instanceof Error ? lastError : undefined,
   });
+}
+
+export async function selectProfileCity(
+  page: Page,
+  profile: ResolvedProfile,
+  settings: AppointmentSettings,
+): Promise<void> {
+  if (!settings.citySelectEnabled) {
+    return;
+  }
+
+  const city = resolveAppointmentCity(profile, settings.defaultCity);
+  if (!city) {
+    logger.warn(`İl seçimi atlandı — ${profile.id} için appointmentCity tanımlı değil.`);
+    return;
+  }
+
+  logger.info(`İl seçimi: ${city} (profil: ${profile.id})`);
+  await selectCityByLabel(page, city, settings, `profil: ${profile.id}`);
+}
+
+/** Panel ofisi / ikamet ili — manifest yerine acik etiket */
+export async function selectAppointmentCityByLabel(
+  page: Page,
+  cityLabel: string,
+  settings: AppointmentSettings,
+): Promise<void> {
+  if (!settings.citySelectEnabled) {
+    return;
+  }
+
+  const city = cityLabel.trim();
+  if (!city) {
+    logger.warn("İl seçimi atlandı — hedef il etiketi bos.");
+    return;
+  }
+
+  logger.info(`İl seçimi: ${city} (panel ofis bolgesi)`);
+  await selectCityByLabel(page, city, settings, "panel ofis");
 }

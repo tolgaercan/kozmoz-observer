@@ -4,11 +4,16 @@ const INTERVAL_OPTIONS = [
   { label: "5 dk", ms: 300_000 },
   { label: "10 dk", ms: 600_000 },
   { label: "15 dk", ms: 900_000 },
+  { label: "30 dk", ms: 1_800_000 },
+  { label: "60 dk", ms: 3_600_000 },
 ];
 
 function formatIntervalLabel(ms) {
   const match = INTERVAL_OPTIONS.find((option) => option.ms === ms);
   if (match) return match.label;
+  if (ms >= 60_000 && ms % 60_000 === 0) {
+    return `${Math.round(ms / 60_000)} dk`;
+  }
   return `${Math.round(ms / 1000)} sn`;
 }
 
@@ -325,17 +330,34 @@ function renderChromeActions(status) {
   }
 }
 
+function readWorkerApiFromForm() {
+  return {
+    dealerOffice: $("dealerOffice").value,
+    appointmentStyle: $("appointmentStyle").value,
+    applicationType: $("applicationType").value,
+    nationalityNumber: $("nationalityNumber").value.replace(/\D/g, ""),
+  };
+}
+
+function maskTc(value) {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (digits.length <= 3) return digits ? "***" : "—";
+  return `${digits.slice(0, 3)}${"*".repeat(digits.length - 3)}`;
+}
+
 function renderApiPreview() {
-  const dealer = $("dealerOffice").value;
-  const style = $("appointmentStyle").value;
-  const office = state.bootstrap?.dealerOffices?.find((o) => o.name === dealer);
-  const styleOpt = state.bootstrap?.appointmentStyles?.find((s) => s.label === style);
+  const api = readWorkerApiFromForm();
+  const office = state.bootstrap?.dealerOffices?.find((o) => o.name === api.dealerOffice);
+  const styleOpt = state.bootstrap?.appointmentStyles?.find((s) => s.label === api.appointmentStyle);
+  const typeOpt = state.bootstrap?.applicationTypes?.find((t) => t.label === api.applicationType);
 
   $("apiPreview").innerHTML = office
     ? `
-      <strong>GetClosedDate</strong><br>
-      dealerOffice: <code>${office.name}</code> → dealerId <code>${office.dealerId}</code><br>
-      appointmentStyle: <code>${style}</code> → appointmentTypeId <code>${styleOpt?.appointmentTypeId ?? "?"}</code>
+      <strong>GetClosedDate + wizard</strong><br>
+      Adım 1 şube: <code>${office.name}</code> → dealerId <code>${office.dealerId}</code><br>
+      Adım 2 tip: <code>${api.applicationType}</code> → applicationTypeId <code>${typeOpt?.applicationTypeId ?? "?"}</code><br>
+      Adım 2 şekil: <code>${api.appointmentStyle}</code> → appointmentTypeId <code>${styleOpt?.appointmentTypeId ?? "?"}</code><br>
+      TC: <code>${maskTc(api.nationalityNumber)}</code>
     `
     : "Ofis seçin";
   renderWorkerSummary();
@@ -616,6 +638,12 @@ function applyWorkerToForm(worker) {
   if (worker.api?.appointmentStyle) {
     $("appointmentStyle").value = worker.api.appointmentStyle;
   }
+  if (worker.api?.applicationType && $("applicationType")) {
+    $("applicationType").value = worker.api.applicationType;
+  }
+  if ($("nationalityNumber")) {
+    $("nationalityNumber").value = worker.api?.nationalityNumber ?? "";
+  }
   const intervalOptions = state.bootstrap?.runtimeOptionsMs;
   const pollMs = worker.timing?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
   const telegramMs = worker.timing?.telegramReportIntervalMs ?? INTERVAL_OPTIONS[2].ms;
@@ -643,7 +671,13 @@ function renderWorkflowSteps(status, processes) {
   const btnStart = $("btnStartWorkflow");
 
   stepProfile.className = state.profileId ? "done" : "";
-  stepApi.className = $("dealerOffice").value && $("appointmentStyle").value ? "done" : "";
+  const apiForm = readWorkerApiFromForm();
+  const apiReady =
+    apiForm.dealerOffice &&
+    apiForm.appointmentStyle &&
+    apiForm.applicationType &&
+    (!apiForm.nationalityNumber || apiForm.nationalityNumber.length === 11);
+  stepApi.className = apiReady ? "done" : "";
   stepChrome.className = status?.chrome?.ready ? "done" : "";
   if (stepPortal) {
     stepPortal.className = status?.chrome?.ready ? "active" : "";
@@ -815,6 +849,14 @@ async function loadBootstrap() {
     data.worker?.api?.appointmentStyle ?? "Standart",
   );
 
+  fillSelect(
+    $("applicationType"),
+    data.applicationTypes ?? [{ label: "Bireysel", applicationTypeId: "1" }],
+    (t) => t.label,
+    (t) => `${t.label} (${t.applicationTypeId})`,
+    data.worker?.api?.applicationType ?? "Bireysel",
+  );
+
   const proxyPool = data.proxyPool ?? [];
   fillSelect(
     $("proxyUrl"),
@@ -881,6 +923,8 @@ $("proxyUrl").addEventListener("change", () => {
 
 $("dealerOffice").addEventListener("change", renderApiPreview);
 $("appointmentStyle").addEventListener("change", renderApiPreview);
+$("applicationType").addEventListener("change", renderApiPreview);
+$("nationalityNumber").addEventListener("input", renderApiPreview);
 $("workerPollInterval").addEventListener("change", () => {
   renderWorkerSummary();
   renderWorkflowTimingNote();
@@ -967,11 +1011,13 @@ $("btnSaveNetwork").addEventListener("click", async () => {
 });
 
 $("btnSaveApi").addEventListener("click", async () => {
+  const api = readWorkerApiFromForm();
+  if (api.nationalityNumber && api.nationalityNumber.length !== 11) {
+    toast("TC Kimlik 11 hane olmalı veya boş bırakın", "error");
+    return;
+  }
   await saveWorkerConfig({
-    api: {
-      dealerOffice: $("dealerOffice").value,
-      appointmentStyle: $("appointmentStyle").value,
-    },
+    api,
     timing: readWorkerTimingFromForm(),
   });
 });
@@ -1026,10 +1072,10 @@ $("btnStartWorkflow").addEventListener("click", async () => {
         "Chrome CDP hazır değil. Önce Profil kartından «Chrome Aç», elle portala gidin, sonra watcher başlatın.",
       );
     }
-    const apiParams = {
-      dealerOffice: $("dealerOffice").value,
-      appointmentStyle: $("appointmentStyle").value,
-    };
+    const apiParams = readWorkerApiFromForm();
+    if (apiParams.nationalityNumber && apiParams.nationalityNumber.length !== 11) {
+      throw new Error("TC Kimlik 11 hane olmalı — Worker ayarlarını kontrol edin");
+    }
     const timing = readWorkerTimingFromForm();
     const result = await api("/api/run/api-watcher-workflow", {
       method: "POST",

@@ -4,6 +4,8 @@ export const RUNTIME_INTERVAL_OPTIONS_MS = [
   300_000,
   600_000,
   900_000,
+  1_800_000,
+  3_600_000,
 ] as const;
 
 export const MIN_RUNTIME_INTERVAL_MS = 60_000;

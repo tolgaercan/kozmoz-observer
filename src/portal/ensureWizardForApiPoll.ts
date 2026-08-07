@@ -14,19 +14,62 @@ import {
 } from "./wizardStepDetector.js";
 import {
   advanceWizardStep1ToStep2Only,
-  ensureApiPollStep2FieldsFilled,
+  ensureApiPollInfoStepFieldsFilled,
 } from "./wizardStepAutofill.js";
+import { clickWizardNextButton } from "./wizardNavigation.js";
 import { waitForWizardStepGate } from "./wizardStepGate.js";
 
-/** API poll güvenli üst sınır — başvuru şekli burada (panel typeId). */
-const API_SAFE_MAX_STEP = 2 as WizardStepId;
-/** Bilgi formu — captcha / rate limit riski; API watcher GİTMEZ. */
-const FORBIDDEN_STEP = 3 as WizardStepId;
+/** API poll güvenli üst sınır — bilgi formu (TC + başvuru şekli). Portal adım 3. */
+const API_SAFE_MAX_STEP = 3 as WizardStepId;
+/** Takvim — captcha / rate limit; API watcher GİTMEZ. Portal adım 4. */
+const FORBIDDEN_STEP = 4 as WizardStepId;
 const CALENDAR_STEP = 4 as WizardStepId;
+const INFO_STEP = 3 as WizardStepId;
 
 export interface EnsureWizardForApiPollResult {
   ok: boolean;
   reason?: string;
+}
+
+export async function isPortalAppointmentTypeReady(
+  page: Page,
+  apiSettings: ApiWatcherSettings,
+  targetTypeId: string,
+): Promise<boolean> {
+  return isAppointmentTypeSelectReady(page, apiSettings.appointmentTypeSelectLocator, targetTypeId);
+}
+
+export async function isPortalSessionReadyForPoll(
+  page: Page,
+  apiSettings: ApiWatcherSettings,
+  queryParams: ApiQueryParams,
+  options?: { requireTypeReady?: boolean },
+): Promise<{ ready: boolean; reason?: string }> {
+  const calendarVisible = await isCalendarStepVisible(page);
+  const contentStep = await detectViewStepFromContent(page);
+
+  if (calendarVisible || (contentStep ?? 0) >= FORBIDDEN_STEP) {
+    return {
+      ready: false,
+      reason: calendarVisible
+        ? "takvim gorunur (adim 4+)"
+        : `icerik adimi ${contentStep} (>= ${FORBIDDEN_STEP})`,
+    };
+  }
+
+  if (options?.requireTypeReady) {
+    const targetTypeId = queryParams.appointmentTypeId.trim();
+    const typeReady = await isAppointmentTypeSelectReady(
+      page,
+      apiSettings.appointmentTypeSelectLocator,
+      targetTypeId,
+    );
+    if (!typeReady) {
+      return { ready: false, reason: `typeId=${targetTypeId} DOM hazir degil` };
+    }
+  }
+
+  return { ready: true };
 }
 
 async function isAppointmentTypeSelectReady(
@@ -65,66 +108,71 @@ async function retreatFromForbiddenSteps(
   await waitForWizardStepGate(page, appointmentSettings);
 }
 
-function resolveVisibleWizardStep(
-  state: Awaited<ReturnType<typeof detectWizardStep>>,
-  contentStep: WizardStepId | null,
-): WizardStepId {
-  const viewStep = state?.viewStep ?? contentStep ?? 1;
-  return Math.min(viewStep, API_SAFE_MAX_STEP) as WizardStepId;
-}
-
-async function ensureStep2ViewForApiPoll(
+async function ensureInfoStepViewForApiPoll(
   page: Page,
   profile: ResolvedProfile,
   appointmentSettings: AppointmentSettings,
   apiSettings: ApiWatcherSettings,
   queryParams: ApiQueryParams,
 ): Promise<void> {
-  const state = await detectWizardStep(page, apiSettings.wizardNavLocator);
-  const contentStep = await detectViewStepFromContent(page);
-  const viewStep = resolveVisibleWizardStep(state, contentStep);
-  const progress = state?.progressStep ?? 0;
+  let contentStep = await detectViewStepFromContent(page);
 
-  if (viewStep >= 2 || progress >= 2) {
-    if (viewStep < 2 && progress >= 2) {
-      logger.info("[wizard-prep] Ilerleme adim 2+ — wizard sekmesine geciliyor (Sonraki yok).");
-      await navigateToWizardViewStep(page, 2, apiSettings.wizardNavLocator);
-      await page.waitForTimeout(400);
-    }
+  if ((contentStep ?? 0) >= INFO_STEP) {
     return;
   }
 
-  const gateBeforeNext = await waitForWizardStepGate(page, appointmentSettings);
-  if (!gateBeforeNext.ok) {
-    if (
-      gateBeforeNext.blockedBy === "otp" ||
-      gateBeforeNext.blockedBy === "login" ||
-      gateBeforeNext.blockedBy === "captcha"
-    ) {
-      throw new Error(gateBeforeNext.message ?? "Adim 1 Sonraki oncesi captcha/giris bekleniyor");
-    }
+  const state = await detectWizardStep(page, apiSettings.wizardNavLocator);
+  const progress = state?.progressStep ?? 0;
+
+  if (progress >= INFO_STEP) {
+    logger.info("[wizard-prep] Bilgi formu (adim 3) sekmesine geciliyor (Sonraki yok).");
+    await navigateToWizardViewStep(page, INFO_STEP, apiSettings.wizardNavLocator);
+    await page.waitForTimeout(400);
+    return;
   }
 
-  logger.info("[wizard-prep] Adim 1 tamam (il+merkez) — tek Sonraki ile adim 2'ye.");
-  await advanceWizardStep1ToStep2Only(page, profile, appointmentSettings, queryParams);
-
-  const gateAfterNext = await waitForWizardStepGate(page, appointmentSettings);
-  if (!gateAfterNext.ok) {
-    if (
-      gateAfterNext.blockedBy === "otp" ||
-      gateAfterNext.blockedBy === "login" ||
-      gateAfterNext.blockedBy === "captcha"
-    ) {
-      throw new Error(gateAfterNext.message ?? "Adim 1→2 Sonraki sonrasi captcha/giris bekleniyor");
+  if ((contentStep ?? 0) < 2) {
+    const gateBeforeNext = await waitForWizardStepGate(page, appointmentSettings);
+    if (!gateBeforeNext.ok) {
+      if (
+        gateBeforeNext.blockedBy === "otp" ||
+        gateBeforeNext.blockedBy === "login" ||
+        gateBeforeNext.blockedBy === "captcha"
+      ) {
+        throw new Error(gateBeforeNext.message ?? "Adim 1 Sonraki oncesi captcha/giris bekleniyor");
+      }
     }
+
+    logger.info("[wizard-prep] Adim 1 tamam (il+merkez) — tek Sonraki ile adim 2'ye.");
+    await advanceWizardStep1ToStep2Only(page, profile, appointmentSettings, queryParams);
+
+    const gateAfterNext = await waitForWizardStepGate(page, appointmentSettings);
+    if (!gateAfterNext.ok) {
+      if (
+        gateAfterNext.blockedBy === "otp" ||
+        gateAfterNext.blockedBy === "login" ||
+        gateAfterNext.blockedBy === "captcha"
+      ) {
+        throw new Error(gateAfterNext.message ?? "Adim 1→2 Sonraki sonrasi captcha/giris bekleniyor");
+      }
+    }
+
+    contentStep = await detectViewStepFromContent(page);
+  }
+
+  if ((contentStep ?? 0) < INFO_STEP) {
+    logger.info("[wizard-prep] Adim 2 → 3 tek Sonraki (bilgi formu — TC/sekil sayfasi).");
+    await clickWizardNextButton(page, appointmentSettings);
+    await page.waitForTimeout(appointmentSettings.waitAfterWizardNextMs || 400);
   }
 }
 
 /**
  * API poll öncesi wizard:
- * - Adim 1: il + merkez (panel) → tek Sonraki
- * - Adim 2: basvuru tipi + sekli (panel) — Sonraki YOK
- * - Adim 3+ / takvim: geri adim 2 (Sonraki yok)
+ * - Adim 1: il + merkez (panel) → Sonraki
+ * - Adim 2: gerekirse → Sonraki (adim 3'e)
+ * - Adim 3: basvuru tipi → TC → bos tik → basvuru sekli — Sonraki YOK
+ * - Adim 4+ / takvim: geri adim 3
  */
 export async function ensureWizardForApiPoll(
   page: Page,
@@ -164,11 +212,11 @@ export async function ensureWizardForApiPoll(
         page,
         apiSettings,
         appointmentSettings,
-        `Adim ${FORBIDDEN_STEP}+ (bilgi formu / captcha riski)`,
+        `Adim ${FORBIDDEN_STEP}+ (takvim)`,
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      return { ok: false, reason: `adim 3'ten geri donulemedi: ${message}` };
+      return { ok: false, reason: `adim 4'ten geri donulemedi: ${message}` };
     }
   }
 
@@ -180,15 +228,8 @@ export async function ensureWizardForApiPoll(
     }
   }
 
-  if (await isAppointmentTypeSelectReady(page, selector, targetTypeId)) {
-    logger.info(
-      `[wizard-prep] Basvuru sekli hazir — typeId=${targetTypeId} (${styleLabel ?? "?"})`,
-    );
-    return { ok: true };
-  }
-
   try {
-    await ensureStep2ViewForApiPoll(
+    await ensureInfoStepViewForApiPoll(
       page,
       profile,
       appointmentSettings,
@@ -197,12 +238,12 @@ export async function ensureWizardForApiPoll(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    logger.warn(`[wizard-prep] Adim 1→2 gecis: ${message}`);
+    logger.warn(`[wizard-prep] Bilgi formu (adim 3) gorunumu: ${message}`);
     return { ok: false, reason: message };
   }
 
-  await ensureApiPollStep2FieldsFilled(page, profile, appointmentSettings, queryParams);
-  logger.info("[wizard-prep] Adim 2 — panel degerleri dolduruldu, Sonraki YOK.");
+  await ensureApiPollInfoStepFieldsFilled(page, profile, appointmentSettings, queryParams);
+  logger.info("[wizard-prep] Adim 3 — tip/TC/sekil dolduruldu, Sonraki YOK.");
 
   if (await isAppointmentTypeSelectReady(page, selector, targetTypeId)) {
     logger.info(
@@ -213,6 +254,6 @@ export async function ensureWizardForApiPoll(
 
   return {
     ok: false,
-    reason: `Basvuru sekli (typeId=${targetTypeId}) adim 2'de hazir degil — panel: ${styleLabel ?? "?"}`,
+    reason: `Basvuru sekli (typeId=${targetTypeId}) adim 3'de hazir degil — panel: ${styleLabel ?? "?"}`,
   };
 }

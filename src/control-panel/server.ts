@@ -141,7 +141,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
   if (method === "POST" && pathname === "/api/run/api-watcher-workflow") {
     const body = await readJsonBody<{
       profileId: string;
-      api: { dealerOffice: string; appointmentStyle: string };
+      api: {
+        dealerOffice: string;
+        appointmentStyle: string;
+        applicationType: string;
+        nationalityNumber: string;
+      };
       timing?: { pollIntervalMs?: number; telegramReportIntervalMs?: number };
     }>(req);
     const result = await service.startApiWatcherWorkflow(body.profileId, body.api, body.timing);

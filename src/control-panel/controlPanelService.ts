@@ -4,7 +4,9 @@ import { ApiHealthStore, type ApiHealthRecord } from "./apiHealthStore.js";
 import { loadSettings } from "../config/settings.js";
 import {
   APPOINTMENT_STYLE_OPTIONS,
+  APPLICATION_TYPE_OPTIONS,
   listDealerOffices,
+  resolveApplicationTypeIdFromLabel,
   resolveAppointmentTypeIdFromLabel,
 } from "../api/client/portalApiCatalog.js";
 import {
@@ -66,6 +68,7 @@ export interface ControlPanelBootstrap {
   profiles: ProfileOption[];
   dealerOffices: ReturnType<typeof listDealerOffices>;
   appointmentStyles: typeof APPOINTMENT_STYLE_OPTIONS;
+  applicationTypes: typeof APPLICATION_TYPE_OPTIONS;
   publicIp: string;
   /** Ev interneti IP (proxy çıkış IP'leri hariç) */
   homePublicIp: string;
@@ -147,6 +150,7 @@ export class ControlPanelService {
       profiles: this.listProfiles(),
       dealerOffices: listDealerOffices(),
       appointmentStyles: APPOINTMENT_STYLE_OPTIONS,
+      applicationTypes: APPLICATION_TYPE_OPTIONS,
       publicIp,
       homePublicIp,
       measuredWanIp: home.measuredIp !== "unknown" ? home.measuredIp : undefined,
@@ -376,16 +380,28 @@ export class ControlPanelService {
   buildApiEnv(profileId: string, api: WorkerApiParams): NodeJS.ProcessEnv {
     const profileKey = profileId.toUpperCase().replace(/-/g, "_");
     const appointmentTypeId = resolveAppointmentTypeIdFromLabel(api.appointmentStyle);
+    const applicationTypeId = resolveApplicationTypeIdFromLabel(api.applicationType);
     const env: NodeJS.ProcessEnv = {
       API_DEALER_OFFICE: api.dealerOffice,
       APPOINTMENT_STYLE: api.appointmentStyle,
+      APPLICATION_TYPE: api.applicationType,
       [`API_DEALER_OFFICE_${profileKey}`]: api.dealerOffice,
       [`APPOINTMENT_STYLE_${profileKey}`]: api.appointmentStyle,
+      [`APPLICATION_TYPE_${profileKey}`]: api.applicationType,
       NODE_OPTIONS: [process.env.NODE_OPTIONS, "--use-system-ca"].filter(Boolean).join(" "),
     };
     if (appointmentTypeId) {
       env.API_APPOINTMENT_TYPE_ID = appointmentTypeId;
       env[`API_APPOINTMENT_TYPE_ID_${profileKey}`] = appointmentTypeId;
+    }
+    if (applicationTypeId) {
+      env.API_APPLICATION_TYPE_ID = applicationTypeId;
+      env[`API_APPLICATION_TYPE_ID_${profileKey}`] = applicationTypeId;
+    }
+    const tc = api.nationalityNumber?.trim();
+    if (tc) {
+      env.NATIONALITY_NUMBER = tc;
+      env[`NATIONALITY_NUMBER_${profileKey}`] = tc;
     }
     return env;
   }

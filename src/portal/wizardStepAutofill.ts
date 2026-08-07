@@ -3,11 +3,13 @@ import type { Page } from "playwright";
 import type { ApiQueryParams } from "../api/client/resolveApiQueryParams.js";
 import type { AppointmentSettings } from "../config/settings.js";
 import { dismissOpenOverlay } from "../interaction/dismissOverlay.js";
+import { humanClickBlankArea } from "../interaction/humanClick.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { logger } from "../utils/logger.js";
 import { selectApplicationType } from "./applicationTypeSelector.js";
 import { selectAppointmentStyle } from "./appointmentStyleSelector.js";
-import { resolveAppointmentCity, selectProfileCity } from "./citySelector.js";
+import { resolveWizardProvinceForDealerOffice } from "../api/client/portalApiCatalog.js";
+import { selectAppointmentCityByLabel, selectProfileCity } from "./citySelector.js";
 import { clickAppointmentLocationButton } from "./locationButton.js";
 import {
   fillNationalityNumber,
@@ -95,16 +97,37 @@ async function isLocationButtonVisible(page: Page, settings: AppointmentSettings
   return false;
 }
 
-function resolveOfficeLabelForStep1(
-  queryParams: ApiQueryParams,
-  profile: ResolvedProfile,
-  settings: AppointmentSettings,
-): string | null {
-  return (
-    queryParams.dealerOfficeLabel?.trim() ??
-    queryParams.cityLabel?.trim() ??
-    resolveAppointmentCity(profile, settings.defaultCity)
-  );
+function resolveOfficeLabelForStep1(queryParams: ApiQueryParams): string | null {
+  return queryParams.dealerOfficeLabel?.trim() ?? queryParams.cityLabel?.trim() ?? null;
+}
+
+function normalizeCityLabel(value: string): string {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase("tr-TR");
+}
+
+function cityLabelsMatch(left: string | null | undefined, right: string | null | undefined): boolean {
+  if (!left?.trim() || !right?.trim()) {
+    return false;
+  }
+  return normalizeCityLabel(left) === normalizeCityLabel(right);
+}
+
+async function readSelectedCityLabel(
+  page: Page,
+  selectors: string[],
+): Promise<string | null> {
+  const found = await firstVisibleLocator(page, selectors);
+  if (!found) {
+    return null;
+  }
+
+  const selectedText = (
+    await found.locator.locator("option:checked").innerText().catch(() => "")
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return selectedText || null;
 }
 
 async function isNationalityInputEmpty(page: Page, selectors: string[]): Promise<boolean> {
@@ -144,31 +167,39 @@ export async function hasWizardValidationError(page: Page): Promise<boolean> {
  */
 export async function ensureApiPollStep1FieldsFilled(
   page: Page,
-  profile: ResolvedProfile,
+  _profile: ResolvedProfile,
   settings: AppointmentSettings,
   queryParams: ApiQueryParams,
 ): Promise<void> {
   const citySelectors = parseLocatorList(settings.citySelectLocator);
-  const cityWasEmpty = await isSelectEmpty(page, citySelectors);
+  const officeLabel = resolveOfficeLabelForStep1(queryParams);
+  const targetProvince = officeLabel
+    ? resolveWizardProvinceForDealerOffice(officeLabel)
+    : null;
+  const currentProvince = await readSelectedCityLabel(page, citySelectors);
+  const cityNeedsUpdate =
+    Boolean(targetProvince) &&
+    (await isSelectEmpty(page, citySelectors) ||
+      !cityLabelsMatch(currentProvince, targetProvince));
 
-  if (cityWasEmpty) {
-    logger.info("[wizard-fill] Adim 1 — il alani dolduruluyor (panel).");
+  if (cityNeedsUpdate && targetProvince) {
+    logger.info(
+      `[wizard-fill] Adim 1 — il seciliyor: ${targetProvince} (panel ofis: ${officeLabel}, onceki: ${currentProvince ?? "—"})`,
+    );
     try {
-      await selectProfileCity(page, profile, settings);
+      await selectAppointmentCityByLabel(page, targetProvince, settings);
     } catch (error) {
       logger.warn(`[wizard-fill] İl: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  if (cityWasEmpty && settings.waitAfterCitySelectMs > 0) {
+  if (cityNeedsUpdate && settings.waitAfterCitySelectMs > 0) {
     await page.waitForTimeout(settings.waitAfterCitySelectMs);
   }
 
   if (settings.blankClickEnabled) {
     await dismissOpenOverlay(page, mouseOptions(settings)).catch(() => undefined);
   }
-
-  const officeLabel = resolveOfficeLabelForStep1(queryParams, profile, settings);
   if (!officeLabel) {
     logger.warn("[wizard-fill] Adim 1 — merkez/sube etiketi yok (panel ofis / il).");
     return;
@@ -190,9 +221,9 @@ export async function ensureApiPollStep1FieldsFilled(
 }
 
 /**
- * Wizard adım 2 — başvuru tipi + başvuru şekli (panel). Sonraki YOK.
+ * Portal adım 3 (Bilgilerinizi Girin) — başvuru tipi → TC → boş tık → başvuru şekli. Sonraki YOK.
  */
-export async function ensureApiPollStep2FieldsFilled(
+export async function ensureApiPollInfoStepFieldsFilled(
   page: Page,
   profile: ResolvedProfile,
   settings: AppointmentSettings,
@@ -200,7 +231,7 @@ export async function ensureApiPollStep2FieldsFilled(
 ): Promise<void> {
   const applicationSelectors = parseLocatorList(settings.applicationTypeLocator);
   if (await isSelectEmpty(page, applicationSelectors)) {
-    logger.info("[wizard-fill] Adim 2 — basvuru tipi dolduruluyor (panel).");
+    logger.info("[wizard-fill] Adim 3 — basvuru tipi dolduruluyor (panel).");
     try {
       await selectApplicationType(page, profile, settings);
     } catch (error) {
@@ -210,12 +241,35 @@ export async function ensureApiPollStep2FieldsFilled(
     }
   }
 
+  if (settings.waitAfterApplicationTypeMs > 0) {
+    await page.waitForTimeout(settings.waitAfterApplicationTypeMs);
+  }
+
+  const nationalitySelectors = parseLocatorList(settings.nationalityNumberLocator);
+  if (await isNationalityInputEmpty(page, nationalitySelectors)) {
+    logger.info("[wizard-fill] Adim 3 — TC Kimlik dolduruluyor (panel).");
+    try {
+      await fillNationalityNumber(page, profile, settings);
+    } catch (error) {
+      logger.warn(`[wizard-fill] TC: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } else if (settings.nationalityNumberBlankClickEnabled) {
+    const found = await firstVisibleLocator(page, nationalitySelectors);
+    if (found) {
+      logger.info("[wizard-fill] Adim 3 — TC dolu, dogrulama icin bos tik.");
+      if (settings.waitAfterNationalityNumberMs > 0) {
+        await page.waitForTimeout(settings.waitAfterNationalityNumberMs);
+      }
+      await humanClickBlankArea(page, mouseOptions(settings));
+    }
+  }
+
   const styleLabel = queryParams.appointmentStyleLabel?.trim();
   const styleSelectors = parseLocatorList(settings.appointmentStyleLocator);
   const styleVisible = (await firstVisibleLocator(page, styleSelectors)) !== null;
 
   if (styleVisible && (await isSelectEmpty(page, styleSelectors))) {
-    logger.info("[wizard-fill] Adim 2 — basvuru sekli dolduruluyor (panel).");
+    logger.info("[wizard-fill] Adim 3 — basvuru sekli dolduruluyor (panel).");
     try {
       await selectAppointmentStyle(page, profile, settings, styleLabel);
     } catch (error) {
@@ -232,6 +286,16 @@ export async function ensureApiPollStep2FieldsFilled(
       );
     }
   }
+}
+
+/** @deprecated ensureApiPollInfoStepFieldsFilled kullanın */
+export async function ensureApiPollStep2FieldsFilled(
+  page: Page,
+  profile: ResolvedProfile,
+  settings: AppointmentSettings,
+  queryParams: ApiQueryParams,
+): Promise<void> {
+  return ensureApiPollInfoStepFieldsFilled(page, profile, settings, queryParams);
 }
 
 /** Adim 1 tamam (il+merkez) → tek Sonraki → adim 2. Adim 2'den Sonraki YOK. */
@@ -269,7 +333,7 @@ export async function ensureApiPollStepFieldsFilled(
     appointmentStyleLabel: appointmentStyleOverride,
   };
   await ensureApiPollStep1FieldsFilled(page, profile, settings, stubParams);
-  await ensureApiPollStep2FieldsFilled(page, profile, settings, stubParams);
+  await ensureApiPollInfoStepFieldsFilled(page, profile, settings, stubParams);
 }
 
 /** Ekranda görünen boş wizard alanlarını doldurur. */

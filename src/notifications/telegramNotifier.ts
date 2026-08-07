@@ -44,7 +44,9 @@ export class TelegramNotifier {
   constructor(private readonly settings: TelegramSettings) {}
 
   isConfigured(): boolean {
-    return Boolean(this.settings.enabled && this.settings.botToken && this.settings.chatId);
+    return Boolean(
+      this.settings.enabled && this.settings.botToken && this.settings.chatIds.length > 0,
+    );
   }
 
   async sendStartupPing(
@@ -200,10 +202,26 @@ export class TelegramNotifier {
 
   private async send(text: string, dedupeKey: string, skipCooldown = false): Promise<boolean> {
     if (!this.isConfigured()) {
-      logger.warn("Telegram bildirimi atlanıyor — TELEGRAM_BOT_TOKEN veya TELEGRAM_CHAT_ID eksik.");
+      logger.warn(
+        "Telegram bildirimi atlanıyor — TELEGRAM_BOT_TOKEN veya chat ID (TELEGRAM_CHAT_ID) eksik.",
+      );
       return false;
     }
 
+    let anyOk = false;
+    for (const chatId of this.settings.chatIds) {
+      const ok = await this.sendToChat(text, `${dedupeKey}:${chatId}`, chatId, skipCooldown);
+      anyOk = anyOk || ok;
+    }
+    return anyOk;
+  }
+
+  private async sendToChat(
+    text: string,
+    dedupeKey: string,
+    chatId: string,
+    skipCooldown = false,
+  ): Promise<boolean> {
     const failureUntil = this.failureBackoffUntil.get(dedupeKey) ?? 0;
     if (Date.now() < failureUntil) {
       logger.debug(`Telegram hata backoff aktif (${dedupeKey})`);
@@ -224,7 +242,7 @@ export class TelegramNotifier {
       return this.lastAlertAt.has(dedupeKey);
     }
 
-    const task = this.sendWithRetry(text, dedupeKey);
+    const task = this.sendWithRetry(text, dedupeKey, chatId);
     this.sendInFlight.set(dedupeKey, task);
 
     try {
@@ -234,11 +252,11 @@ export class TelegramNotifier {
     }
   }
 
-  private async sendWithRetry(text: string, dedupeKey: string): Promise<boolean> {
+  private async sendWithRetry(text: string, dedupeKey: string, chatId: string): Promise<boolean> {
     let lastError = "bilinmeyen hata";
     const url = `https://api.telegram.org/bot${this.settings.botToken}/sendMessage`;
     const payload = {
-      chat_id: this.settings.chatId,
+      chat_id: chatId,
       text,
       parse_mode: "HTML",
       disable_web_page_preview: true,
@@ -257,7 +275,7 @@ export class TelegramNotifier {
 
         this.lastAlertAt.set(dedupeKey, Date.now());
         this.failureBackoffUntil.delete(dedupeKey);
-        logger.info(`Telegram bildirimi gönderildi (${dedupeKey}).`);
+        logger.info(`Telegram bildirimi gönderildi (${dedupeKey}, chat ${chatId}).`);
         return true;
       } catch (error) {
         lastError = formatHttpError(error);
@@ -278,7 +296,7 @@ export class TelegramNotifier {
             if (retryResponse.status >= 200 && retryResponse.status < 300) {
               this.lastAlertAt.set(dedupeKey, Date.now());
               this.failureBackoffUntil.delete(dedupeKey);
-              logger.info(`Telegram bildirimi gönderildi (${dedupeKey}, TLS insecure).`);
+              logger.info(`Telegram bildirimi gönderildi (${dedupeKey}, chat ${chatId}, TLS insecure).`);
               logger.warn(
                 ".env dosyasına TELEGRAM_TLS_INSECURE=true ekleyin (antivirüs/kurumsal proxy TLS kesintisi).",
               );

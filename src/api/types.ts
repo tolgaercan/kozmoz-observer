@@ -25,6 +25,8 @@ export interface ClosedDatePollResult {
   /** Poll sırasında kullanılan GetClosedDate parametreleri (AdminDatas maxDate dahil) */
   queryDate?: string;
   queryMaxDate?: string;
+  /** Poll atlandi — oturum hazir degil; baseline/telegram guncellenmez */
+  skipped?: boolean;
   unauthorized?: boolean;
   /** HTTP 429 — çok sık poll */
   rateLimited?: boolean;

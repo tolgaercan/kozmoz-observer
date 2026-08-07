@@ -10,8 +10,6 @@ import {
 import { WorkerConfigStore, normalizeLockedIp } from "../../control-panel/workerConfigStore.js";
 import { WorkerRuntimeStore } from "../../control-panel/workerRuntimeStore.js";
 import { detectPublicIpForWorker } from "../../config/proxyResolver.js";
-import { ensurePortalAppointmentEntry } from "../../navigation/ensurePortalAppointmentEntry.js";
-import { ensureWizardForApiPoll } from "../../portal/ensureWizardForApiPoll.js";
 import { logger } from "../../utils/logger.js";
 import type { ScenarioRuntime } from "../scenarioRuntime.js";
 import type { ScenarioStepParams } from "../types.js";
@@ -48,6 +46,7 @@ function readParamOverrides(params?: ScenarioStepParams): ApiQueryParamOverrides
     appointmentTypeId: params?.appointmentTypeId as string | undefined,
     appointmentStyle: params?.appointmentStyle as string | undefined,
     applicationTypeId: params?.applicationTypeId as string | undefined,
+    applicationType: params?.applicationType as string | undefined,
     appointmentDate: params?.appointmentDate as string | undefined,
   };
 }
@@ -80,6 +79,7 @@ export async function runApiWatcherPhase(
       ...paramOverrides,
       dealerOffice: worker.api.dealerOffice,
       appointmentStyle: worker.api.appointmentStyle,
+      applicationType: worker.api.applicationType,
     };
   };
 
@@ -122,43 +122,6 @@ export async function runApiWatcherPhase(
       `[api-watcher] Poll sekmesi: ${runtime.session.page.url()} — ` +
         `dealerId=${queryParams.dealerId}, typeId=${queryParams.appointmentTypeId}`,
     );
-
-    if (apiSettings.apiWizardAutoNavigate) {
-      const entry = await ensurePortalAppointmentEntry(
-        runtime.session.page,
-        runtime.session.context,
-        runtime.settings,
-        { allowGotoFallback: process.env.API_AUTO_OPEN_PORTAL_TAB === "true" },
-      );
-      runtime.session.page = entry.page;
-      if (!entry.ok) {
-        logger.warn(`[api-watcher] Portal girisi: ${entry.reason ?? entry.step ?? "?"}`);
-      }
-
-      if (apiSettings.syncPortalAppointmentType) {
-        const prep = await ensureWizardForApiPoll(
-          runtime.session.page,
-          profile,
-          runtime.settings.appointment,
-          apiSettings,
-          queryParams,
-        );
-        if (!prep.ok) {
-          logger.warn(`[api-watcher] Wizard hazirlik (poll oncesi): ${prep.reason}`);
-        }
-      }
-    } else if (apiSettings.syncPortalAppointmentType) {
-      const prep = await ensureWizardForApiPoll(
-        runtime.session.page,
-        profile,
-        runtime.settings.appointment,
-        apiSettings,
-        queryParams,
-      );
-      if (!prep.ok) {
-        logger.warn(`[api-watcher] Wizard hazirlik (poll oncesi): ${prep.reason}`);
-      }
-    }
   }
 
   const resolveFreshQueryParams = (): ReturnType<typeof resolveApiQueryParams> =>

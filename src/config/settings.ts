@@ -5,7 +5,10 @@ import { join, resolve } from "node:path";
 export interface TelegramSettings {
   enabled: boolean;
   botToken: string;
+  /** Ilk kanal — geriye donuk uyumluluk */
   chatId: string;
+  /** Tum hedef kanallar / gruplar (sayisal chat_id) */
+  chatIds: string[];
   notifyOnResolved: boolean;
   notifyCooldownMs: number;
   /** Antivirüs/kurumsal proxy TLS kesintisinde true yapın */
@@ -375,6 +378,24 @@ function loadNavigationSteps(): string[] {
   return [step1, step2Raw || DEFAULT_NAV_STEP_2];
 }
 
+/** TELEGRAM_CHAT_ID + TELEGRAM_EXTRA_CHAT_IDS veya TELEGRAM_CHAT_IDS (virgulle) */
+export function resolveTelegramChatIds(env: NodeJS.ProcessEnv = process.env): string[] {
+  const fromList = env.TELEGRAM_CHAT_IDS?.split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (fromList?.length) {
+    return [...new Set(fromList)];
+  }
+
+  const primary = env.TELEGRAM_CHAT_ID?.trim();
+  const extra =
+    env.TELEGRAM_EXTRA_CHAT_IDS?.split(",")
+      .map((part) => part.trim())
+      .filter(Boolean) ?? [];
+  const ids = [primary, ...extra].filter((value): value is string => Boolean(value));
+  return [...new Set(ids)];
+}
+
 export function loadSettings(projectRoot: string): AppSettings {
   loadEnvFile(projectRoot);
 
@@ -401,7 +422,8 @@ export function loadSettings(projectRoot: string): AppSettings {
     telegram: {
       enabled: process.env.TELEGRAM_ENABLED !== "false",
       botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
-      chatId: process.env.TELEGRAM_CHAT_ID ?? "",
+      chatIds: resolveTelegramChatIds(process.env),
+      chatId: resolveTelegramChatIds(process.env)[0] ?? "",
       notifyOnResolved: process.env.TELEGRAM_NOTIFY_ON_RESOLVED === "true",
       notifyCooldownMs: parseIntEnv("TELEGRAM_NOTIFY_COOLDOWN_MS", 300_000),
       tlsInsecure: process.env.TELEGRAM_TLS_INSECURE === "true",
@@ -579,7 +601,7 @@ export function loadSettings(projectRoot: string): AppSettings {
         process.env.API_APPOINTMENT_TYPE_SELECT_LOCATOR?.trim() ??
         process.env.APPOINTMENT_STYLE_LOCATOR?.trim()?.split("|")[0]?.trim() ??
         "select[name='appointmentTypeId']",
-      appointmentTypeWizardStep: parseIntEnv("API_APPOINTMENT_TYPE_WIZARD_STEP", 2),
+      appointmentTypeWizardStep: parseIntEnv("API_APPOINTMENT_TYPE_WIZARD_STEP", 3),
       wizardNavLocator:
         process.env.WIZARD_NAV_LOCATOR?.trim() ?? "ul.wizard-nav-pills|ul.wizard-nav",
       syncHumanMinStepDelayMs: parseIntEnv("HUMAN_MOUSE_MIN_STEP_MS", 4),

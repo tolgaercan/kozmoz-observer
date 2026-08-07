@@ -202,6 +202,11 @@ export function startAvailabilityWatcher(
     };
     const nowIso = new Date().toISOString();
 
+    if (result.skipped) {
+      logger.info(`[api-watcher] Poll atlandi — ${result.summary}`);
+      return;
+    }
+
     if (result.rateLimited) {
       const bodyText = rawBodyText(result.raw);
       const backoffMs = resolveRateLimitBackoffMs({

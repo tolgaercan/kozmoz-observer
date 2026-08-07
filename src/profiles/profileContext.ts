@@ -69,8 +69,8 @@ export function resolveProfileForm(
   );
 
   const nationalityNumber = pickString(
-    resolvePerProfileEnv(profile.id, "NATIONALITY_NUMBER", settings),
     raw.nationalityNumber,
+    resolvePerProfileEnv(profile.id, "NATIONALITY_NUMBER", settings),
     process.env.NATIONALITY_NUMBER,
   );
 

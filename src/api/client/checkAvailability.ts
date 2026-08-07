@@ -24,7 +24,9 @@ import type { ClosedDatePollResult } from "../types.js";
 import { rawJwtFromBearer, resolveBearerToken } from "../auth/tokenProvider.js";
 import { loadSettings } from "../../config/settings.js";
 import { ensurePortalAppointmentEntry } from "../../navigation/ensurePortalAppointmentEntry.js";
-import { ensureWizardForApiPoll } from "../../portal/ensureWizardForApiPoll.js";
+import { mergeWorkerApiIntoProfile } from "../../control-panel/workerWizardForm.js";
+import { WorkerConfigStore } from "../../control-panel/workerConfigStore.js";
+import { ensureWizardForApiPoll, isPortalSessionReadyForPoll } from "../../portal/ensureWizardForApiPoll.js";
 import { isBasvuruPortalUrl, isKosmosMarketingHome } from "../../portal/kosmosOrigin.js";
 import { ProfileManager } from "../../profiles/profileManager.js";
 import { logger } from "../../utils/logger.js";
@@ -249,60 +251,90 @@ export async function checkAvailability(
       try {
         let pollPage = page;
         const appSettings = loadSettings(ctx.projectRoot);
+        const pollPrepRounds = 2;
+        const pollSessionSettleMs = 1_500;
 
-        if (ctx.settings.apiWizardAutoNavigate) {
-          const entry = await ensurePortalAppointmentEntry(
-            pollPage,
-            pollPage.context(),
-            appSettings,
-            { allowGotoFallback: process.env.API_AUTO_OPEN_PORTAL_TAB === "true" },
-          );
-          pollPage = entry.page;
-          if (!entry.ok) {
-            logger.warn(`[checkAvailability] Portal girisi: ${entry.reason ?? entry.step ?? "?"}`);
-          }
-        }
-
-        if (ctx.settings.syncPortalAppointmentType) {
-          const profile = new ProfileManager(ctx.projectRoot, appSettings.manifestPath).resolveProfile(
-            ctx.profileId,
-            appSettings,
-          );
-
+        for (let round = 1; round <= pollPrepRounds; round++) {
           if (ctx.settings.apiWizardAutoNavigate) {
-            const prep = await ensureWizardForApiPoll(
+            const entry = await ensurePortalAppointmentEntry(
               pollPage,
-              profile,
-              appSettings.appointment,
-              ctx.settings,
-              effectiveParams,
+              pollPage.context(),
+              appSettings,
+              { allowGotoFallback: process.env.API_AUTO_OPEN_PORTAL_TAB === "true" },
             );
-            if (!prep.ok) {
-              logger.warn(`[checkAvailability] Wizard hazirlik: ${prep.reason}`);
+            pollPage = entry.page;
+            if (!entry.ok) {
+              logger.warn(`[checkAvailability] Portal girisi: ${entry.reason ?? entry.step ?? "?"}`);
             }
           }
 
-          const syncResult = await syncPortalAppointmentType(pollPage, effectiveParams, ctx.settings);
-          if (syncResult.synced) {
-            logger.info(
-              `[checkAvailability] Portal typeId=${syncResult.targetValue} senkron OK — GetClosedDate poll`,
+          if (ctx.settings.syncPortalAppointmentType) {
+            const workerStore = new WorkerConfigStore(ctx.projectRoot);
+            const worker = workerStore.getWorker(ctx.profileId, "", {
+              pollIntervalMs: ctx.settings.pollIntervalMs,
+              telegramReportIntervalMs: ctx.settings.telegramReportIntervalMs,
+            });
+            const baseProfile = new ProfileManager(ctx.projectRoot, appSettings.manifestPath).resolveProfile(
+              ctx.profileId,
+              appSettings,
             );
-          } else if (
-            syncResult.skipped &&
-            syncResult.reason &&
-            syncResult.reason !== "zaten eslesiyor"
-          ) {
-            logger.warn(
-              `[checkAvailability] Portal basvuru sekli senkron atlandi: ${syncResult.reason}`,
-            );
-          } else if (!syncResult.skipped && !syncResult.synced && syncResult.reason) {
-            logger.warn(
-              `[checkAvailability] Portal basvuru sekli senkron basarisiz: ${syncResult.reason}`,
-            );
+            const profile = mergeWorkerApiIntoProfile(baseProfile, worker.api);
+
+            if (ctx.settings.apiWizardAutoNavigate) {
+              const prep = await ensureWizardForApiPoll(
+                pollPage,
+                profile,
+                appSettings.appointment,
+                ctx.settings,
+                effectiveParams,
+              );
+              if (!prep.ok) {
+                logger.warn(`[checkAvailability] Wizard hazirlik: ${prep.reason}`);
+              }
+            }
+
+            const syncResult = await syncPortalAppointmentType(pollPage, effectiveParams, ctx.settings);
+            if (syncResult.synced) {
+              logger.info(
+                `[checkAvailability] Portal typeId=${syncResult.targetValue} senkron OK — GetClosedDate poll`,
+              );
+            } else if (
+              syncResult.skipped &&
+              syncResult.reason &&
+              syncResult.reason !== "zaten eslesiyor"
+            ) {
+              logger.warn(
+                `[checkAvailability] Portal basvuru sekli senkron atlandi: ${syncResult.reason}`,
+              );
+            } else if (!syncResult.skipped && !syncResult.synced && syncResult.reason) {
+              logger.warn(
+                `[checkAvailability] Portal basvuru sekli senkron basarisiz: ${syncResult.reason}`,
+              );
+            }
+          }
+
+          const session = await isPortalSessionReadyForPoll(pollPage, ctx.settings, effectiveParams, {
+            requireTypeReady: ctx.settings.syncPortalAppointmentType,
+          });
+          if (session.ready) {
+            return await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
+          }
+
+          logger.warn(
+            `[checkAvailability] Oturum hazir degil (${session.reason ?? "?"}) — tur ${round}/${pollPrepRounds}`,
+          );
+          if (round < pollPrepRounds) {
+            await pollPage.waitForTimeout(pollSessionSettleMs);
           }
         }
 
-        return await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
+        return {
+          ok: false,
+          status: 0,
+          hasOpenSlots: false,
+          skipped: true,
+          summary: "Portal oturumu hazir degil (takvim/adim 3+ veya typeId) — poll atlandi",
+        };
       } catch (browserError) {
         const message =
           browserError instanceof Error ? browserError.message : String(browserError);

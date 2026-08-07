@@ -114,29 +114,57 @@
         <section class="card card-api">
           <div class="card-head">
             <h2>Worker ayarları</h2>
-            <span class="hint">Profil bazlı — kaydedilir, watcher başlatınca uygulanır</span>
+            <span class="hint">Portal wizard alanları + poll — profil bazlı kayıt</span>
           </div>
 
-          <label class="field">
-            <span>Başvuru noktası (dealerOffice)</span>
-            <select id="dealerOffice"></select>
-          </label>
-
-          <label class="field">
-            <span>Başvuru şekli (appointmentStyle)</span>
-            <select id="appointmentStyle"></select>
-          </label>
-
-          <div class="field-grid-2">
+          <div class="wizard-section">
+            <p class="wizard-section-title">Wizard adım 1 — il + merkez/şube</p>
             <label class="field">
-              <span>Poll aralığı (istekler arası)</span>
-              <select id="workerPollInterval"></select>
+              <span>Başvuru noktası (şube)</span>
+              <select id="dealerOffice"></select>
+              <small class="field-hint">İl otomatik eşlenir (ör. İstanbul → Istanbul)</small>
             </label>
+          </div>
 
+          <div class="wizard-section">
+            <p class="wizard-section-title">Portal adım 3 — bilgi formu (Bilgilerinizi Girin)</p>
+            <div class="field-grid-2">
+              <label class="field">
+                <span>Başvuru tipi</span>
+                <select id="applicationType"></select>
+              </label>
+              <label class="field">
+                <span>Başvuru şekli</span>
+                <select id="appointmentStyle"></select>
+              </label>
+            </div>
             <label class="field">
-              <span>Telegram özet aralığı</span>
-              <select id="workerTelegramInterval"></select>
+              <span>TC Kimlik No</span>
+              <input
+                type="password"
+                id="nationalityNumber"
+                inputmode="numeric"
+                autocomplete="off"
+                maxlength="11"
+                placeholder="11 haneli TC"
+              />
+              <small class="field-hint">Portal adım 2 — yalnızca worker-config'te saklanır</small>
             </label>
+          </div>
+
+          <div class="wizard-section">
+            <p class="wizard-section-title">İzleme aralıkları</p>
+            <div class="field-grid-2">
+              <label class="field">
+                <span>Poll aralığı (istekler arası)</span>
+                <select id="workerPollInterval"></select>
+              </label>
+
+              <label class="field">
+                <span>Telegram özet aralığı</span>
+                <select id="workerTelegramInterval"></select>
+              </label>
+            </div>
           </div>
 
           <div class="api-preview" id="apiPreview"></div>

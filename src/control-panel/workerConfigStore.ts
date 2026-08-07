@@ -11,6 +11,10 @@ export type ProxyMode = "direct" | "proxy";
 export interface WorkerApiParams {
   dealerOffice: string;
   appointmentStyle: string;
+  /** Wizard adım 2 — Bireysel / Aile */
+  applicationType: string;
+  /** Wizard adım 2 — TC Kimlik No (11 hane) */
+  nationalityNumber: string;
 }
 
 export interface WorkerTimingParams {
@@ -70,6 +74,8 @@ function defaultWorkerConfig(
     api: {
       dealerOffice: "Ankara",
       appointmentStyle: "Standart",
+      applicationType: "Bireysel",
+      nationalityNumber: "",
     },
     timing: resolveWorkerTiming(undefined, timingDefaults),
     updatedAt: new Date().toISOString(),
@@ -126,6 +132,8 @@ export class WorkerConfigStore {
       api: {
         dealerOffice: existing.api?.dealerOffice ?? "Ankara",
         appointmentStyle: existing.api?.appointmentStyle ?? "Standart",
+        applicationType: existing.api?.applicationType ?? "Bireysel",
+        nationalityNumber: existing.api?.nationalityNumber ?? "",
       },
       timing: resolveWorkerTiming(existing.timing, timingDefaults),
       updatedAt: existing.updatedAt,

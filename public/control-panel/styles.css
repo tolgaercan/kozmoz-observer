@@ -215,6 +215,41 @@ input:focus {
   }
 }
 
+.wizard-section {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.wizard-section:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.wizard-section-title {
+  margin: 0 0 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.card-api .field input[type="password"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.card-api .field input[type="password"]:focus {
+  outline: 2px solid rgba(59, 130, 246, 0.45);
+  border-color: rgba(59, 130, 246, 0.55);
+}
+
 .chrome-status.ready {
   border-color: rgba(34, 197, 94, 0.35);
   color: #bbf7d0;

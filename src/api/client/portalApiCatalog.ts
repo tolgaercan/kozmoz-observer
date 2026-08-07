@@ -247,6 +247,11 @@ export function resolveAppointmentTypeIdFromLabel(label: string | undefined): st
   return lookupId(APPOINTMENT_STYLE_IDS, label);
 }
 
+/** Panel etiketinden applicationTypeId — Bireysel=1, Aile=2 */
+export function resolveApplicationTypeIdFromLabel(label: string | undefined): string | undefined {
+  return lookupId(APPLICATION_TYPE_IDS, label);
+}
+
 export function findDealerOfficeByName(name: string): DealerOffice | undefined {
   const id = lookupId(API_DEALER_IDS, name);
   if (!id) {
@@ -264,4 +269,47 @@ export function findAppointmentProvince(label: string): AppointmentProvince | un
 
 export function resolveProvinceCenterDealerId(provinceLabel: string): string | undefined {
   return findAppointmentProvince(provinceLabel)?.centerDealerId;
+}
+
+/**
+ * Wizard adim 1 #cities — panel basvuru ofisine gore ikamet ili.
+ * API dealerId panelden gelir; manifest appointmentCity kullanilmaz.
+ */
+export function resolveWizardProvinceForDealerOffice(officeLabel: string): string | null {
+  const label = officeLabel.trim();
+  if (!label) {
+    return null;
+  }
+
+  const provinceIdFromLabel = lookupId(API_APPOINTMENT_CITY_IDS, label);
+  if (provinceIdFromLabel) {
+    const province = APPOINTMENT_PROVINCES.find((item) => item.id === provinceIdFromLabel);
+    if (province) {
+      return province.name;
+    }
+  }
+
+  const office = findDealerOfficeByName(label);
+  if (office) {
+    const provinceIdFromOffice = lookupId(API_APPOINTMENT_CITY_IDS, office.name);
+    if (provinceIdFromOffice) {
+      const province = APPOINTMENT_PROVINCES.find((item) => item.id === provinceIdFromOffice);
+      if (province) {
+        return province.name;
+      }
+    }
+
+    const regionMerkez = DEALER_OFFICES.find(
+      (item) => item.centerDealerId === office.centerDealerId && item.kind === "merkez",
+    );
+    if (regionMerkez) {
+      const provinceIdFromMerkez = lookupId(API_APPOINTMENT_CITY_IDS, regionMerkez.name);
+      const province = APPOINTMENT_PROVINCES.find((item) => item.id === provinceIdFromMerkez);
+      if (province) {
+        return province.name;
+      }
+    }
+  }
+
+  return findAppointmentProvince(label)?.name ?? label;
 }

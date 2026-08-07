@@ -41,15 +41,15 @@ export function resolveNationalityNumber(
   profile: ResolvedProfile,
   defaultNumber: string,
 ): string | null {
+  const fromProfile = profile.nationalityNumber?.trim();
+  if (fromProfile && !fromProfile.startsWith("${")) {
+    return normalizeNationalityNumber(fromProfile);
+  }
+
   const profileEnvKey = `NATIONALITY_NUMBER_${profile.id.toUpperCase().replace(/-/g, "_")}`;
   const fromProfileEnv = process.env[profileEnvKey]?.trim();
   if (fromProfileEnv) {
     return normalizeNationalityNumber(fromProfileEnv);
-  }
-
-  const fromProfile = profile.nationalityNumber?.trim();
-  if (fromProfile) {
-    return normalizeNationalityNumber(fromProfile);
   }
 
   const fallback = normalizeNationalityNumber(defaultNumber.trim());

@@ -46,6 +46,8 @@ export interface ApiQueryParamOverrides {
   appointmentTypeId?: string;
   /** Başvuru şekli etiketi — Standart, EEA AB Eşi … */
   appointmentStyle?: string;
+  /** Başvuru tipi etiketi — Bireysel, Aile */
+  applicationType?: string;
   /** Yalnızca saat kotası — GetClosedDate için gerekmez */
   applicationTypeId?: string;
   appointmentDate?: string;
@@ -258,6 +260,14 @@ function resolveApplicationTypeId(
   overrides?: ApiQueryParamOverrides,
 ): { id: string; label?: string } {
   const form = readProfileForm(profile);
+
+  const fromOverrideLabel = overrides?.applicationType?.trim();
+  if (fromOverrideLabel) {
+    const id =
+      resolveCatalogId(APPLICATION_TYPE_IDS, fromOverrideLabel, apiSettings.defaultApplicationTypeId) ??
+      apiSettings.defaultApplicationTypeId;
+    return { id, label: fromOverrideLabel };
+  }
 
   const fromOverride = overrides?.applicationTypeId?.trim();
   if (fromOverride) {
