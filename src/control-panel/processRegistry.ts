@@ -1,6 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 
+import { isCdpEndpointReady } from "../browser/cdpConnector.js";
+
 export type ManagedProcessKind = "chrome" | "api-watcher" | "dom-observer";
 
 export type ManagedProcessStatus = "starting" | "running" | "exited" | "failed";
@@ -41,6 +43,56 @@ export class ProcessRegistry {
         (!kind || entry.kind === kind) &&
         (entry.status === "running" || entry.status === "starting"),
     );
+  }
+
+  listActive(): ManagedProcess[] {
+    return this.list().filter(
+      (entry) => entry.status === "running" || entry.status === "starting",
+    );
+  }
+
+  remove(id: string): boolean {
+    this.childById.delete(id);
+    return this.processes.delete(id);
+  }
+
+  markExited(id: string, message?: string): void {
+    const record = this.processes.get(id);
+    if (!record) {
+      return;
+    }
+    record.status = "exited";
+    record.exitedAt = new Date().toISOString();
+    if (message) {
+      record.lastError = message;
+    }
+    this.childById.delete(id);
+  }
+
+  private isPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async reconcile(): Promise<void> {
+    for (const record of this.listActive()) {
+      if (record.kind === "chrome" && record.cdpPort) {
+        const endpoint = `http://127.0.0.1:${record.cdpPort}`;
+        const ready = await isCdpEndpointReady(endpoint, { exact: true });
+        if (!ready) {
+          this.markExited(record.id, "Chrome kapatıldı (CDP yanıt vermiyor)");
+          continue;
+        }
+      }
+
+      if (record.pid && !this.isPidAlive(record.pid)) {
+        this.markExited(record.id, "Süreç PID artık çalışmıyor");
+      }
+    }
   }
 
   register(entry: Omit<ManagedProcess, "id" | "startedAt" | "status"> & { status?: ManagedProcessStatus }): ManagedProcess {
@@ -109,30 +161,38 @@ export class ProcessRegistry {
   kill(id: string): boolean {
     const child = this.childById.get(id);
     const record = this.processes.get(id);
-    if (!child && !record?.pid) {
-      if (record) {
-        record.status = "exited";
-        record.exitedAt = new Date().toISOString();
-      }
+    if (!record) {
       return false;
+    }
+
+    if (record.status === "exited" || record.status === "failed") {
+      this.remove(id);
+      return true;
+    }
+
+    if (!child && !record.pid) {
+      this.markExited(id, "Süreç zaten kapalı");
+      return true;
     }
 
     try {
       if (child?.pid) {
         process.kill(child.pid, "SIGTERM");
-      } else if (record?.pid) {
+      } else if (record.pid) {
         process.kill(record.pid, "SIGTERM");
       }
-      if (record) {
-        record.status = "exited";
-        record.exitedAt = new Date().toISOString();
-      }
-      this.childById.delete(id);
+      this.markExited(id);
       return true;
     } catch (error) {
-      if (record) {
-        record.lastError = error instanceof Error ? error.message : String(error);
+      const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+      if (code === "ESRCH") {
+        this.markExited(id, "Süreç zaten sonlanmış");
+        return true;
       }
+      record.lastError = error instanceof Error ? error.message : String(error);
+      record.status = "failed";
+      record.exitedAt = new Date().toISOString();
+      this.childById.delete(id);
       return false;
     }
   }

@@ -8,6 +8,7 @@ import {
   type ApiQueryParamOverrides,
 } from "../../api/client/resolveApiQueryParams.js";
 import { WorkerConfigStore, normalizeLockedIp } from "../../control-panel/workerConfigStore.js";
+import { WatcherSessionStore } from "../../control-panel/watcherSessionStore.js";
 import { WorkerRuntimeStore } from "../../control-panel/workerRuntimeStore.js";
 import { detectPublicIpForWorker } from "../../config/proxyResolver.js";
 import { logger } from "../../utils/logger.js";
@@ -16,6 +17,7 @@ import type { ScenarioStepParams } from "../types.js";
 import {
   getBearerTokenForProfile,
   runApiAuthBootstrapPhase,
+  runPortalBootstrapForJwt,
   tryRefreshTokenFromActivePage,
 } from "./apiAuthBootstrap.js";
 
@@ -68,13 +70,31 @@ export async function runApiWatcherPhase(
   const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);
   const paramOverrides = readParamOverrides(params);
   const workerStore = new WorkerConfigStore(runtime.projectRoot);
+  const watcherSessionStore = new WatcherSessionStore(runtime.projectRoot);
+  const activeSession = watcherSessionStore.get(profile.id);
   const timingDefaults = {
     pollIntervalMs: apiSettings.pollIntervalMs,
     telegramReportIntervalMs: apiSettings.telegramReportIntervalMs,
   };
 
+  const resolveWorkerConfig = () => {
+    if (activeSession) {
+      return {
+        profileId: profile.id,
+        proxyMode: activeSession.network.proxyMode,
+        lockedIp: activeSession.network.lockedIp,
+        proxyId: activeSession.network.proxyId ?? "",
+        proxyUrl: activeSession.network.proxyUrl ?? "",
+        api: activeSession.api,
+        timing: activeSession.timing,
+        updatedAt: activeSession.updatedAt,
+      };
+    }
+    return workerStore.getWorker(profile.id, "", timingDefaults);
+  };
+
   const buildQueryOverrides = (): ApiQueryParamOverrides => {
-    const worker = workerStore.getWorker(profile.id, "", timingDefaults);
+    const worker = resolveWorkerConfig();
     return {
       ...paramOverrides,
       dealerOffice: worker.api.dealerOffice,
@@ -98,11 +118,22 @@ export async function runApiWatcherPhase(
 
   if (runtime.session?.context) {
     const appointmentFormUrl = resolveAppointmentFormUrl(runtime.settings.visaPortalHomeUrl);
-    const pollTab = await resolvePortalTabForApiPoll(
+    let pollTab = await resolvePortalTabForApiPoll(
       runtime.session.context,
       appointmentFormUrl,
-      0,
+      process.env.PANEL_MANAGED_PORTAL_FLOW === "true" ? 0 : 0,
     );
+
+    if (!pollTab.onPortal && process.env.PANEL_MANAGED_PORTAL_FLOW === "true") {
+      logger.info("[api-watcher] Portal sekmesi yok — otomatik portal akisi tekrar deneniyor...");
+      const portalRetry = await runPortalBootstrapForJwt(runtime, params);
+      if (portalRetry.ok) {
+        pollTab = await resolvePortalTabForApiPoll(runtime.session.context, appointmentFormUrl, 0);
+      } else {
+        logger.warn(`[api-watcher] Portal tekrar denemesi: ${portalRetry.detail}`);
+      }
+    }
+
     runtime.session.page = pollTab.page;
     if (pollTab.blocked) {
       return {
@@ -138,14 +169,19 @@ export async function runApiWatcherPhase(
   );
   logger.info(`[api-watcher] Poll URL: ${pollUrl}`);
 
-  const worker = workerStore.getWorker(profile.id, "", timingDefaults);
-  const publicIp = await detectPublicIpForWorker(runtime.projectRoot, profile, worker);
-  const lockedIp = normalizeLockedIp(worker.lockedIp) || publicIp;
+  const worker = resolveWorkerConfig();
+  const workerForIp = {
+    ...worker,
+    lockedIp: worker.lockedIp || activeSession?.network.lockedIp || "",
+  };
+  const publicIp = await detectPublicIpForWorker(runtime.projectRoot, profile, workerForIp);
+  const lockedIp = normalizeLockedIp(workerForIp.lockedIp) || publicIp;
 
   const runtimeStore = new WorkerRuntimeStore(runtime.projectRoot);
   runtimeStore.ensure(profile.id, {
-    pollIntervalMs: apiSettings.pollIntervalMs,
-    telegramReportIntervalMs: apiSettings.telegramReportIntervalMs,
+    pollIntervalMs: activeSession?.timing.pollIntervalMs ?? timingDefaults.pollIntervalMs,
+    telegramReportIntervalMs:
+      activeSession?.timing.telegramReportIntervalMs ?? timingDefaults.telegramReportIntervalMs,
   });
 
   if (!apiSettings.hourQuotaEnabled) {

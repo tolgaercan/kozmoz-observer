@@ -260,7 +260,7 @@ export async function checkAvailability(
               pollPage,
               pollPage.context(),
               appSettings,
-              { allowGotoFallback: process.env.API_AUTO_OPEN_PORTAL_TAB === "true" },
+              { allowGotoFallback: process.env.API_AUTO_OPEN_PORTAL_TAB === "true" || process.env.PANEL_MANAGED_PORTAL_FLOW === "true" },
             );
             pollPage = entry.page;
             if (!entry.ok) {
@@ -269,6 +269,7 @@ export async function checkAvailability(
           }
 
           if (ctx.settings.syncPortalAppointmentType) {
+            /*
             const workerStore = new WorkerConfigStore(ctx.projectRoot);
             const worker = workerStore.getWorker(ctx.profileId, "", {
               pollIntervalMs: ctx.settings.pollIntervalMs,
@@ -311,10 +312,12 @@ export async function checkAvailability(
                 `[checkAvailability] Portal basvuru sekli senkron basarisiz: ${syncResult.reason}`,
               );
             }
+            */
+            logger.info("[checkAvailability] BAN-SAFE: wizard/typeId senkron atlandi (ek istek yok).");
           }
 
           const session = await isPortalSessionReadyForPoll(pollPage, ctx.settings, effectiveParams, {
-            requireTypeReady: ctx.settings.syncPortalAppointmentType,
+            requireTypeReady: false,
           });
           if (session.ready) {
             return await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);

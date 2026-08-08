@@ -9,6 +9,7 @@ import {
   isGoogleSignInRejected,
   isGoogleSignInEmailFieldVisible,
   isGoogleSignInPasswordFieldVisible,
+  isGoogleProfilePicturePromptVisible,
 } from "./chromeGoogleBootstrap.js";
 
 export type ChromeBootstrapPhaseId =
@@ -16,6 +17,7 @@ export type ChromeBootstrapPhaseId =
   | "google_home"
   | "google_signin_email"
   | "google_signin_password"
+  | "google_profile_picture"
   | "google_signin_challenge"
   | "google_signin_rejected"
   | "unknown";
@@ -25,6 +27,7 @@ export const CHROME_BOOTSTRAP_PHASE_TITLES: Record<ChromeBootstrapPhaseId, strin
   google_home: "Google anasayfa — giriş gerekli",
   google_signin_email: "Google email adımı",
   google_signin_password: "Google şifre adımı",
+  google_profile_picture: "Google profil resmi — Atla",
   google_signin_challenge: "Google ek doğrulama (2FA / challenge)",
   google_signin_rejected: "Google oturum reddedildi",
   unknown: "Bilinmeyen sayfa",
@@ -51,6 +54,10 @@ export async function detectChromeBootstrapPhase(page: Page): Promise<ChromeBoot
 
   if (await isGoogleSignInEmailFieldVisible(page)) {
     return "google_signin_email";
+  }
+
+  if (await isGoogleProfilePicturePromptVisible(page)) {
+    return "google_profile_picture";
   }
 
   if (isGoogleHomePage(url)) {

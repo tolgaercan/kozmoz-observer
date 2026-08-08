@@ -60,14 +60,16 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
   const method = req.method ?? "GET";
 
   if (method === "GET" && pathname === "/api/bootstrap") {
-    const profileId = new URL(req.url ?? "", "http://local").searchParams.get("profileId") ?? "profile-1";
-    const data = await service.getBootstrap(profileId);
+    const url = new URL(req.url ?? "", "http://local");
+    const profileId = url.searchParams.get("profileId") ?? "profile-1";
+    const light = url.searchParams.get("light") === "true";
+    const data = await service.getBootstrap(profileId, { light });
     sendJson(res, 200, data);
     return;
   }
 
   if (method === "GET" && pathname === "/api/processes") {
-    sendJson(res, 200, { processes: service.listProcesses() });
+    sendJson(res, 200, { processes: await service.listProcesses() });
     return;
   }
 
@@ -92,8 +94,21 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
   }
 
   if (method === "POST" && pathname === "/api/chrome/start") {
-    const body = await readJsonBody<{ profileId: string }>(req);
-    const result = await service.startChrome(body.profileId);
+    const body = await readJsonBody<{
+      profileId: string;
+      proxyMode?: "direct" | "proxy";
+      proxyId?: string;
+      proxyUrl?: string;
+      cdpPort?: number | null;
+      lockedIp?: string;
+    }>(req);
+    const result = await service.startChrome(body.profileId, {
+      proxyMode: body.proxyMode,
+      proxyId: body.proxyId,
+      proxyUrl: body.proxyUrl,
+      cdpPort: body.cdpPort,
+      lockedIp: body.lockedIp,
+    });
     sendJson(res, result.launch.ok ? 200 : 500, result);
     return;
   }
@@ -177,7 +192,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
       sendJson(res, 400, { error: "processId gerekli" });
       return;
     }
-    const result = service.updateProcessRuntimeConfig(body.processId, {
+    const result = await service.updateProcessRuntimeConfig(body.processId, {
       pollIntervalMs: body.pollIntervalMs,
       telegramReportIntervalMs: body.telegramReportIntervalMs,
     });
@@ -187,8 +202,52 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
 
   if (method === "POST" && pathname === "/api/process/kill") {
     const body = await readJsonBody<{ processId: string }>(req);
-    const ok = service.killProcess(body.processId);
-    sendJson(res, ok ? 200 : 404, { ok, processes: service.listProcesses() });
+    const result = await service.killProcess(body.processId);
+    sendJson(res, 200, {
+      ok: result.ok,
+      message: result.message,
+      processes: await service.listProcesses(),
+    });
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/chrome-profiles") {
+    sendJson(res, 200, { profiles: service.listChromeProfiles() });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/chrome-profiles/create") {
+    const body = await readJsonBody<{
+      name: string;
+      chromeEmail: string;
+      chromePassword: string;
+      id?: string;
+      preferredCdpPort?: number | null;
+    }>(req);
+    const profile = service.createChromeProfile(body);
+    sendJson(res, 200, { profile });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/chrome-profiles/update") {
+    const body = await readJsonBody<{
+      profileId: string;
+      name?: string;
+      chromeEmail?: string;
+      chromePassword?: string;
+      preferredCdpPort?: number | null;
+      enabled?: boolean;
+    }>(req);
+    const { profileId, ...patch } = body;
+    const profile = service.updateChromeProfile(profileId, patch);
+    sendJson(res, 200, { profile });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/chrome-profiles/delete") {
+    const body = await readJsonBody<{ profileId: string }>(req);
+    service.deleteChromeProfile(body.profileId);
+    sendJson(res, 200, { ok: true });
     return;
   }
 

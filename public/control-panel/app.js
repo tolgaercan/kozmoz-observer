@@ -50,7 +50,57 @@ const state = {
   profileId: "profile-1",
   bootstrap: null,
   worker: null,
+  editingChromeProfileId: null,
+  profileSwitchToken: 0,
+  bootstrapAbort: null,
 };
+
+function readCdpPortInput() {
+  const raw = $("cdpPortInput")?.value?.trim();
+  if (!raw) return null;
+  const port = Number.parseInt(raw, 10);
+  if (!Number.isFinite(port) || port < 9222 || port > 9230) {
+    throw new Error("CDP port 9222–9230 arasında olmalı veya boş bırakın.");
+  }
+  return port;
+}
+
+function readNetworkDraft() {
+  const proxyMode = $("proxyMode").value;
+  const proxySelection = $("proxyUrl").value;
+  const isPoolId = state.bootstrap?.proxyPool?.some((p) => p.id === proxySelection);
+  return {
+    proxyMode,
+    proxyId: proxyMode === "proxy" && isPoolId ? proxySelection : "",
+    proxyUrl: proxyMode === "proxy" && !isPoolId && proxySelection ? proxySelection : "",
+  };
+}
+
+function validateChromeLaunchReady() {
+  if (!state.profileId) {
+    return "Chrome profili seçin.";
+  }
+  const chromeProfile = state.bootstrap?.chromeProfiles?.find((p) => p.id === state.profileId);
+  if (!chromeProfile?.chromeEmail) {
+    return "Seçili profilde Chrome email tanımlı değil — Profil yönet.";
+  }
+  if (!chromeProfile?.hasPassword) {
+    return "Seçili profilde Chrome şifre tanımlı değil — Profil yönet.";
+  }
+  const network = readNetworkDraft();
+  if (network.proxyMode === "proxy" && !network.proxyId && !network.proxyUrl) {
+    return "Proxy modu seçili — proxy havuzundan bir IP seçin.";
+  }
+  return null;
+}
+
+function updateChromeLaunchButtonState() {
+  const btn = $("btnStartChrome");
+  if (!btn) return;
+  const error = validateChromeLaunchReady();
+  btn.disabled = Boolean(error);
+  btn.title = error ?? "Seçili profil ve ağ ayarı ile Chrome aç";
+}
 
 function toast(message, type = "success") {
   const stack = $("toastStack");
@@ -62,15 +112,25 @@ function toast(message, type = "success") {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
-    ...options,
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(body.error ?? body.message ?? `HTTP ${response.status}`);
+  try {
+    const response = await fetch(path, {
+      headers: { "Content-Type": "application/json", ...(options.headers ?? {}) },
+      ...options,
+    });
+    if (options.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(body.error ?? body.message ?? `HTTP ${response.status}`);
+    }
+    return body;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw error;
+    }
+    throw error;
   }
-  return body;
 }
 
 function formatTime(iso) {
@@ -85,13 +145,86 @@ function statusClass(status) {
 function renderProfileMeta(profile) {
   if (!profile) {
     $("profileMeta").textContent = "Profil seçin";
+    $("selectedProfileLabel").textContent = "Profil seçilmedi";
     return;
   }
+  const chromeProfile = state.bootstrap?.chromeProfiles?.find((p) => p.id === profile.id);
+  $("selectedProfileLabel").innerHTML = `<strong>${profile.name}</strong> · <code>${profile.id}</code>`;
   $("profileMeta").innerHTML = `
-    <strong>${profile.name}</strong> · <code>${profile.id}</code><br>
-    CDP port: <code>${profile.cdpPort}</code> · Mod: ${profile.mode}
-    ${profile.lifecycleState ? ` · Durum: ${profile.lifecycleState}` : ""}
+    Chrome email: <code>${chromeProfile?.chromeEmail ?? "—"}</code>
+    · Klasör: <code>${chromeProfile?.userDataDir ?? `data/chrome/${profile.id}`}</code>
+    · CDP: <code>${profile.assignedCdpPort ?? profile.cdpPort ?? "otomatik"}</code>
   `;
+  updateChromeLaunchButtonState();
+}
+
+function renderChromeProfileCards() {
+  const container = $("chromeProfileListInline");
+  if (!container) return;
+  const profiles = state.bootstrap?.chromeProfiles ?? [];
+  if (profiles.length === 0) {
+    container.innerHTML = `<p class="note">Henüz profil yok — «+ Yeni profil» ile ekleyin.</p>`;
+    return;
+  }
+
+  container.innerHTML = profiles
+    .map((p) => {
+      const active = p.id === state.profileId;
+      return `
+        <div class="profile-list-row profile-card ${active ? "profile-list-row-active" : ""}" data-profile-id="${p.id}" role="button" tabindex="0" aria-pressed="${active}">
+          <div class="profile-card-body">
+            <strong>${p.name}</strong>
+            <code>${p.id}</code>
+            ${active ? '<span class="status-pill starting">Aktif</span>' : ""}
+            <small>${p.chromeEmail || "email eksik"}</small>
+          </div>
+          <div class="inline-actions" data-profile-actions="${p.id}">
+            <button type="button" class="btn btn-ghost btn-compact" data-edit-chrome-profile="${p.id}">Düzenle</button>
+            <button type="button" class="btn btn-danger btn-compact" data-delete-chrome-profile="${p.id}" ${
+              profiles.length <= 1 ? "disabled" : ""
+            }>Sil</button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+}
+
+async function selectProfile(profileId, options = {}) {
+  const { light = true, refreshWorkflow = true } = options;
+  if (!profileId || profileId === state.profileId) {
+    renderChromeProfileCards();
+    return;
+  }
+
+  state.profileId = profileId;
+  state.network = null;
+  state.profileSwitchToken += 1;
+  const switchToken = state.profileSwitchToken;
+
+  renderChromeProfileCards();
+  const cached = state.bootstrap?.profiles?.find((p) => p.id === profileId);
+  if (cached) {
+    renderProfileMeta(cached);
+  }
+  $("panelStatus").textContent = "Profil yükleniyor…";
+  $("panelStatus").className = "badge";
+
+  try {
+    await loadBootstrap({ light, switchToken });
+    if (switchToken !== state.profileSwitchToken) return;
+    if (refreshWorkflow) {
+      await refreshWorkflowUi();
+    }
+    $("panelStatus").textContent = "Panel bağlı";
+    $("panelStatus").className = "badge online";
+  } catch (error) {
+    if (switchToken !== state.profileSwitchToken) return;
+    if (error?.name === "AbortError") return;
+    $("panelStatus").textContent = "Profil yüklenemedi";
+    $("panelStatus").className = "badge error";
+    toast(error.message, "error");
+  }
 }
 
 function formatCountdown(iso) {
@@ -488,6 +621,7 @@ async function refreshNetworkIp() {
   $("lockedIp").textContent = locked;
 
   renderNetworkFromSnapshot(network);
+  renderNetworkHints();
 
   const manualField = $("manualHomeIpField");
   if (manualField) {
@@ -537,8 +671,6 @@ function renderNetworkFromSnapshot(network) {
       hint.textContent = network.warning ?? sourceHint;
     }
   }
-
-  renderNetworkHints();
 }
 
 function fillSelect(select, options, getValue, getLabel, selected) {
@@ -593,6 +725,8 @@ function renderCurrentIpDisplay() {
       hint.textContent = homeWarning ?? "Doğrudan mod — proxy bypass (direct://)";
     }
   }
+
+  renderNetworkHints();
 }
 
 function renderNetworkHints() {
@@ -601,8 +735,6 @@ function renderNetworkHints() {
   const proxyHint = $("proxyExitHint");
   const selectedId = $("proxyUrl").value;
   const selected = state.bootstrap?.proxyPool?.find((p) => p.id === selectedId);
-
-  renderCurrentIpDisplay();
 
   if (mode === "direct") {
     hint.textContent =
@@ -623,7 +755,8 @@ function renderNetworkHints() {
   }
 }
 
-function applyWorkerToForm(worker) {
+function applyWorkerToForm(worker, options = {}) {
+  const skipNetwork = options.skipNetwork === true;
   $("proxyMode").value = worker.proxyMode ?? "direct";
   $("lockedIp").textContent = worker.lockedIp || "—";
   $("proxyUrlField").hidden = worker.proxyMode !== "proxy";
@@ -650,8 +783,13 @@ function applyWorkerToForm(worker) {
   fillIntervalSelect($("workerPollInterval"), pollMs, intervalOptions);
   fillIntervalSelect($("workerTelegramInterval"), telegramMs, intervalOptions);
   renderApiPreview();
-  renderNetworkHints();
-  void refreshNetworkIp().catch(() => {});
+  renderCurrentIpDisplay();
+  if (!skipNetwork) {
+    void refreshNetworkIp().catch(() => {});
+  } else if (state.worker?.lockedIp) {
+    $("lockedIp").textContent = worker.lockedIp || "—";
+  }
+  updateChromeLaunchButtonState();
 }
 
 function renderWorkflowSteps(status, processes) {
@@ -693,7 +831,7 @@ function renderWorkflowSteps(status, processes) {
   if (btnStart) {
     btnStart.disabled = apiWatcherRunning || status?.rateLimit?.blocked || !status?.chrome?.ready;
     btnStart.title = !status?.chrome?.ready
-      ? "Once Profil kartindan Chrome Ac"
+      ? "Once Chrome oturumu kartindan Chrome Ac"
       : status?.rateLimit?.blocked
         ? "Ban / rate limit aktif — bekleyin"
         : apiWatcherRunning
@@ -803,35 +941,45 @@ function renderProcesses(processes) {
   tbody.querySelectorAll("[data-kill]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       try {
-        await api("/api/process/kill", {
+        const result = await api("/api/process/kill", {
           method: "POST",
           body: JSON.stringify({ processId: btn.dataset.kill }),
         });
-        toast("Süreç sonlandırıldı");
-        await refreshProcesses();
+        toast(result.message ?? "Süreç listeden kaldırıldı");
+        renderProcesses(result.processes);
       } catch (error) {
         toast(error.message, "error");
+        await refreshProcesses();
       }
     });
   });
 }
 
-async function loadBootstrap() {
-  const data = await api(`/api/bootstrap?profileId=${encodeURIComponent(state.profileId)}`);
+async function loadBootstrap(options = {}) {
+  const { light = false, switchToken = state.profileSwitchToken } = options;
+
+  if (state.bootstrapAbort) {
+    state.bootstrapAbort.abort();
+  }
+  state.bootstrapAbort = new AbortController();
+  const signal = state.bootstrapAbort.signal;
+
+  const query = new URLSearchParams({
+    profileId: state.profileId,
+    ...(light ? { light: "true" } : {}),
+  });
+  const data = await api(`/api/bootstrap?${query.toString()}`, { signal });
+  if (switchToken !== state.profileSwitchToken) {
+    return data;
+  }
+
   state.bootstrap = data;
   state.worker = data.worker;
 
-  renderCurrentIpDisplay();
-  $("panelStatus").textContent = "Panel bağlı";
-  $("panelStatus").className = "badge online";
-
-  fillSelect(
-    $("profileSelect"),
-    data.profiles.filter((p) => p.enabled),
-    (p) => p.id,
-    (p) => `${p.name} (${p.id})`,
-    state.profileId,
-  );
+  if (!light) {
+    $("panelStatus").textContent = "Panel bağlı";
+    $("panelStatus").className = "badge online";
+  }
 
   fillSelect(
     $("dealerOffice"),
@@ -868,8 +1016,16 @@ async function loadBootstrap() {
 
   const profile = data.profiles.find((p) => p.id === state.profileId);
   renderProfileMeta(profile);
-  applyWorkerToForm(data.worker);
+  applyWorkerToForm(data.worker, { skipNetwork: light });
+
+  const assigned = profile?.assignedCdpPort ?? profile?.preferredCdpPort ?? "";
+  if ($("cdpPortInput")) {
+    $("cdpPortInput").value = assigned ? String(assigned) : "";
+  }
+
   $("lastUpdated").textContent = `Son güncelleme: ${new Date().toLocaleString("tr-TR")}`;
+  renderChromeProfileCards();
+  return data;
 }
 
 async function refreshStatus() {
@@ -899,27 +1055,61 @@ async function saveWorkerConfig(patch) {
   });
   state.worker = body.worker;
   applyWorkerToForm(body.worker);
-  toast("Ayarlar kaydedildi");
+  toast("Taslak kaydedildi");
 }
 
 async function refreshAll() {
-  await loadBootstrap();
+  await loadBootstrap({ light: false });
   await refreshWorkflowUi();
 }
 
-$("profileSelect").addEventListener("change", async (event) => {
-  state.profileId = event.target.value;
-  await refreshAll();
-});
+function wireChromeProfileList() {
+  const container = $("chromeProfileListInline");
+  if (!container || container.dataset.wired === "1") return;
+  container.dataset.wired = "1";
+
+  container.addEventListener("click", (event) => {
+    const editBtn = event.target.closest("[data-edit-chrome-profile]");
+    if (editBtn) {
+      event.stopPropagation();
+      openChromeProfileEditor(editBtn.dataset.editChromeProfile);
+      return;
+    }
+    const deleteBtn = event.target.closest("[data-delete-chrome-profile]");
+    if (deleteBtn) {
+      event.stopPropagation();
+      void deleteChromeProfile(deleteBtn.dataset.deleteChromeProfile);
+      return;
+    }
+    const card = event.target.closest(".profile-card[data-profile-id]");
+    if (card) {
+      void selectProfile(card.dataset.profileId);
+    }
+  });
+
+  container.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target.closest(".profile-card[data-profile-id]");
+    if (!card) return;
+    event.preventDefault();
+    void selectProfile(card.dataset.profileId);
+  });
+}
+
+wireChromeProfileList();
 
 $("proxyMode").addEventListener("change", (event) => {
   $("proxyUrlField").hidden = event.target.value !== "proxy";
   refreshNetworkIp().catch((e) => toast(e.message, "error"));
+  updateChromeLaunchButtonState();
 });
 
 $("proxyUrl").addEventListener("change", () => {
   refreshNetworkIp().catch((e) => toast(e.message, "error"));
+  updateChromeLaunchButtonState();
 });
+
+$("cdpPortInput")?.addEventListener("input", updateChromeLaunchButtonState);
 
 $("dealerOffice").addEventListener("change", renderApiPreview);
 $("appointmentStyle").addEventListener("change", renderApiPreview);
@@ -1007,7 +1197,8 @@ $("btnSaveNetwork").addEventListener("click", async () => {
   $("lockedIp").textContent = "—";
   await loadBootstrap();
   await refreshNetworkIp();
-  toast("Ağ ayarı kaydedildi — IP'yi yeniden kilitleyin");
+  toast("Ağ taslağı kaydedildi — IP'yi kilitleyin");
+  updateChromeLaunchButtonState();
 });
 
 $("btnSaveApi").addEventListener("click", async () => {
@@ -1024,18 +1215,56 @@ $("btnSaveApi").addEventListener("click", async () => {
 
 $("btnStartChrome").addEventListener("click", async () => {
   const btn = $("btnStartChrome");
+  const launchError = validateChromeLaunchReady();
+  if (launchError) {
+    toast(launchError, "error");
+    return;
+  }
   btn.disabled = true;
+  const previousLabel = btn.textContent;
   try {
+    const network = readNetworkDraft();
+    const cdpPort = readCdpPortInput();
+    await saveWorkerConfig({
+      proxyMode: network.proxyMode,
+      proxyId: network.proxyId,
+      proxyUrl: network.proxyUrl,
+    });
+    const lockedIp = $("lockedIp").textContent.trim().replace("—", "");
+    btn.textContent = "Chrome açılıyor…";
     const result = await api("/api/chrome/start", {
       method: "POST",
-      body: JSON.stringify({ profileId: state.profileId }),
+      body: JSON.stringify({
+        profileId: state.profileId,
+        proxyMode: network.proxyMode,
+        proxyId: network.proxyId,
+        proxyUrl: network.proxyUrl,
+        cdpPort,
+        lockedIp: lockedIp || undefined,
+      }),
     });
     const launch = result.launch ?? result;
-    toast(launch.message ?? "Chrome baslatildi");
+    const portNote = result.assignedCdpPort ? ` (port ${result.assignedCdpPort})` : "";
+    if (launch.reusedExisting) {
+      toast((launch.message ?? "Chrome zaten açık") + portNote);
+    } else {
+      toast((launch.message ?? "Chrome başlatıldı") + portNote, launch.ok ? "success" : "error");
+    }
+    if (result.googleLogin && !result.googleLogin.skipped) {
+      toast(
+        result.googleLogin.detail,
+        result.googleLogin.ready ? "success" : "error",
+      );
+    }
+    if (result.assignedCdpPort && $("cdpPortInput")) {
+      $("cdpPortInput").value = String(result.assignedCdpPort);
+    }
   } catch (error) {
     toast(error.message, "error");
   } finally {
+    btn.textContent = previousLabel ?? "Chrome Aç";
     await refreshWorkflowUi();
+    updateChromeLaunchButtonState();
   }
 });
 
@@ -1069,7 +1298,7 @@ $("btnStartWorkflow").addEventListener("click", async () => {
     const status = await api(`/api/status?profileId=${encodeURIComponent(state.profileId)}`);
     if (!status?.chrome?.ready) {
       throw new Error(
-        "Chrome CDP hazır değil. Önce Profil kartından «Chrome Aç», elle portala gidin, sonra watcher başlatın.",
+        "Chrome CDP hazır değil. Önce «Chrome Aç», ardından API İzlemeyi Başlatın (portal akışı otomatik).",
       );
     }
     const apiParams = readWorkerApiFromForm();
@@ -1098,7 +1327,7 @@ $("btnStopApiWatcher").addEventListener("click", async () => {
     });
     toast(
       result.stopped > 0
-        ? `API Watcher durduruldu (${result.stopped} süreç)`
+        ? `API Watcher durduruldu (${result.stopped} süreç) — watcher oturumu silindi`
         : "Çalışan API Watcher yok",
     );
     await refreshWorkflowUi();
@@ -1124,6 +1353,146 @@ $("btnRefreshAll").addEventListener("click", () => refreshAll().catch((e) => toa
 $("btnRefreshProcesses").addEventListener("click", () =>
   refreshProcesses().catch((e) => toast(e.message, "error")),
 );
+
+function openChromeProfileEditor(profileId = null) {
+  state.editingChromeProfileId = profileId;
+  const dialog = $("chromeProfileDialog");
+  const profile = profileId
+    ? state.bootstrap?.chromeProfiles?.find((p) => p.id === profileId)
+    : null;
+  $("chromeProfileDialogTitle").textContent = profile ? "Chrome profili düzenle" : "Yeni Chrome profili";
+  $("chromeProfileName").value = profile?.name ?? "";
+  $("chromeProfileId").value = profile?.id ?? "";
+  $("chromeProfileId").disabled = Boolean(profile);
+  $("chromeProfileEmail").value = profile?.chromeEmail ?? "";
+  $("chromeProfilePassword").value = "";
+  $("chromeProfilePreferredPort").value = profile?.preferredCdpPort ?? "";
+  dialog?.showModal();
+}
+
+async function saveChromeProfileFromDialog(event) {
+  event.preventDefault();
+  const name = $("chromeProfileName").value.trim();
+  const chromeEmail = $("chromeProfileEmail").value.trim();
+  const chromePassword = $("chromeProfilePassword").value;
+  const preferredRaw = $("chromeProfilePreferredPort").value.trim();
+  const preferredCdpPort = preferredRaw ? Number.parseInt(preferredRaw, 10) : null;
+  const saveBtn = $("btnSaveChromeProfile");
+
+  if (!name || !chromeEmail) {
+    toast("Ad ve Chrome email zorunlu", "error");
+    return;
+  }
+  if (!state.editingChromeProfileId && !chromePassword.trim()) {
+    toast("Yeni profil için Chrome şifre zorunlu", "error");
+    return;
+  }
+  if (state.editingChromeProfileId && !chromePassword.trim()) {
+    toast("Şifre değiştirmek için yeni şifreyi yazın (boş bırakırsanız eski şifre kalır)", "error");
+    return;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "Kaydediliyor…";
+  }
+
+  try {
+    if (state.editingChromeProfileId) {
+      const result = await api("/api/chrome-profiles/update", {
+        method: "POST",
+        body: JSON.stringify({
+          profileId: state.editingChromeProfileId,
+          name,
+          chromeEmail,
+          chromePassword: chromePassword.trim(),
+          preferredCdpPort,
+        }),
+      });
+      const profile = result.profile ?? result;
+      if (state.bootstrap?.chromeProfiles && profile) {
+        state.bootstrap.chromeProfiles = state.bootstrap.chromeProfiles.map((p) =>
+          p.id === profile.id ? profile : p,
+        );
+      }
+      if (result.passwordUpdated) {
+        toast("Şifre kaydedildi — Chrome'u kapatıp yeniden açın", "success");
+      } else {
+        toast("Profil güncellendi (şifre değişmedi)", "success");
+      }
+      $("chromeProfileDialog")?.close();
+      renderChromeProfileCards();
+      await loadBootstrap({ light: true });
+    } else {
+      const id = $("chromeProfileId").value.trim() || undefined;
+      const result = await api("/api/chrome-profiles/create", {
+        method: "POST",
+        body: JSON.stringify({
+          name,
+          id,
+          chromeEmail,
+          chromePassword,
+          preferredCdpPort,
+        }),
+      });
+      toast("Chrome profili oluşturuldu");
+      $("chromeProfileDialog")?.close();
+
+      if (result.profile) {
+        const profiles = state.bootstrap?.chromeProfiles ?? [];
+        state.bootstrap = state.bootstrap ?? {};
+        state.bootstrap.chromeProfiles = [...profiles.filter((p) => p.id !== result.profile.id), result.profile];
+        state.profileId = result.profile.id;
+        renderChromeProfileCards();
+        renderProfileMeta({ id: result.profile.id, name: result.profile.name });
+        void selectProfile(result.profile.id, { light: true });
+      }
+      void refreshAll().catch((error) => toast(error.message, "error"));
+    }
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "Kaydet";
+    }
+  }
+}
+
+async function deleteChromeProfile(profileId) {
+  if (!profileId) return;
+  const profile = state.bootstrap?.chromeProfiles?.find((p) => p.id === profileId);
+  const label = profile?.name ?? profileId;
+  if (!window.confirm(`«${label}» Chrome profilini silmek istediğinize emin misiniz?`)) {
+    return;
+  }
+  try {
+    await api("/api/chrome-profiles/delete", {
+      method: "POST",
+      body: JSON.stringify({ profileId }),
+    });
+    if (state.bootstrap?.chromeProfiles) {
+      state.bootstrap.chromeProfiles = state.bootstrap.chromeProfiles.filter((p) => p.id !== profileId);
+    }
+    if (state.profileId === profileId) {
+      const nextId = state.bootstrap?.chromeProfiles?.[0]?.id ?? "profile-1";
+      state.profileId = nextId;
+      renderChromeProfileCards();
+      await selectProfile(nextId, { light: true });
+    } else {
+      renderChromeProfileCards();
+    }
+    toast("Chrome profili silindi");
+    void refreshAll().catch((error) => toast(error.message, "error"));
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+$("btnManageChromeProfiles")?.addEventListener("click", () => openChromeProfileEditor(null));
+$("btnAddChromeProfile")?.addEventListener("click", () => openChromeProfileEditor(null));
+$("chromeProfileForm")?.addEventListener("submit", saveChromeProfileFromDialog);
+$("btnCancelChromeProfile")?.addEventListener("click", () => $("chromeProfileDialog")?.close());
 
 refreshAll().catch((error) => {
   $("panelStatus").textContent = "Panel bağlantı hatası";

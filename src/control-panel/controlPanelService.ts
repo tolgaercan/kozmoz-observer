@@ -25,6 +25,21 @@ import {
   launchChromeForProfile,
   detectPublicIp,
 } from "./chromeLauncher.js";
+import { ensureChromeGoogleLoginAfterLaunch, type ChromeGoogleLoginResult } from "./chromeGoogleLoginService.js";
+import { allocateCdpPort } from "./cdpPortAllocator.js";
+import {
+  ChromeProfileStore,
+  type PanelChromeProfile,
+} from "./chromeProfileStore.js";
+import { ChromeSessionStore } from "./chromeSessionStore.js";
+import { WatcherSessionStore } from "./watcherSessionStore.js";
+import {
+  buildChromeCredentialEnv,
+  importManifestCredentialsIntoStore,
+  migrateManifestToChromeProfiles,
+  shouldImportManifestCredentials,
+  syncManifestFromChromeProfiles,
+} from "./profileBridge.js";
 import type { ProcessRegistry } from "./processRegistry.js";
 import { runMockApiDateValidation, type ApiDateValidationReport } from "../api/validation/apiDateLogicValidation.js";
 import {
@@ -41,6 +56,7 @@ import {
   type WorkerRuntimeConfig,
 } from "./workerRuntimeStore.js";
 import type { ManagedProcess } from "./processRegistry.js";
+import { logger } from "../utils/logger.js";
 
 export interface NetworkIpInfo {
   mode: ProxyMode;
@@ -60,12 +76,27 @@ export interface ProfileOption {
   name: string;
   enabled: boolean;
   cdpPort: number;
+  preferredCdpPort?: number | null;
+  assignedCdpPort?: number;
+  chromeEmail?: string;
   mode: string;
   lifecycleState?: string;
 }
 
+export interface ChromeProfilePanelView {
+  id: string;
+  name: string;
+  chromeEmail: string;
+  hasPassword: boolean;
+  userDataDir: string;
+  preferredCdpPort?: number | null;
+  assignedCdpPort?: number;
+  enabled: boolean;
+}
+
 export interface ControlPanelBootstrap {
   profiles: ProfileOption[];
+  chromeProfiles: ChromeProfilePanelView[];
   dealerOffices: ReturnType<typeof listDealerOffices>;
   appointmentStyles: typeof APPOINTMENT_STYLE_OPTIONS;
   applicationTypes: typeof APPLICATION_TYPE_OPTIONS;
@@ -77,6 +108,7 @@ export interface ControlPanelBootstrap {
   connectionMode: "direct" | "proxy";
   proxyPool: ProxyPanelOption[];
   worker: WorkerConfig;
+  activeWatcherSession?: boolean;
   runtimeOptionsMs: readonly number[];
   envTimingDefaults: {
     pollIntervalMs: number;
@@ -91,18 +123,188 @@ export interface ManagedProcessWithRuntime extends ManagedProcess {
 
 export class ControlPanelService {
   private readonly projectRoot: string;
-  private readonly profileManager: ProfileManager;
+  private readonly manifestPath: string;
+  private profileManager: ProfileManager;
   private readonly workerStore: WorkerConfigStore;
   private readonly runtimeStore: WorkerRuntimeStore;
+  private readonly chromeProfileStore: ChromeProfileStore;
+  private readonly chromeSessionStore: ChromeSessionStore;
+  private readonly watcherSessionStore: WatcherSessionStore;
   private readonly registry: ProcessRegistry;
 
   constructor(projectRoot: string, registry: ProcessRegistry) {
     this.projectRoot = projectRoot;
     const settings = loadSettings(projectRoot);
+    this.manifestPath = settings.manifestPath;
     this.profileManager = new ProfileManager(projectRoot, settings.manifestPath);
     this.workerStore = new WorkerConfigStore(projectRoot);
     this.runtimeStore = new WorkerRuntimeStore(projectRoot);
+    this.chromeProfileStore = new ChromeProfileStore(projectRoot);
+    this.chromeSessionStore = new ChromeSessionStore(projectRoot);
+    this.watcherSessionStore = new WatcherSessionStore(projectRoot);
     this.registry = registry;
+    this.ensureChromeProfilesReady();
+  }
+
+  private ensureChromeProfilesReady(): void {
+    if (this.chromeProfileStore.listAll().length === 0) {
+      const migrated = migrateManifestToChromeProfiles(this.manifestPath, process.env);
+      if (migrated.length > 0) {
+        this.chromeProfileStore.replaceAll(migrated, migrated[0]?.id);
+      }
+    }
+    this.importManifestCredentialsIfNeeded();
+    this.syncManifestFromPanelProfiles();
+  }
+
+  private importManifestCredentialsIfNeeded(): void {
+    const storePath = this.chromeProfileStore.getStorePath();
+    if (!shouldImportManifestCredentials(this.manifestPath, storePath)) {
+      return;
+    }
+    const imported = importManifestCredentialsIntoStore(this.manifestPath, this.chromeProfileStore);
+    if (imported > 0) {
+      logger.info(`[panel] manifest.json'dan ${imported} profil kimlik bilgisi aktarıldı`);
+      this.syncManifestFromPanelProfiles();
+    }
+  }
+
+  private syncManifestFromPanelProfiles(): void {
+    const profiles = this.chromeProfileStore.listAll();
+    const cdpPortById: Record<string, number> = {};
+    for (const profile of profiles) {
+      const session = this.chromeSessionStore.get(profile.id);
+      cdpPortById[profile.id] =
+        session?.assignedCdpPort ?? profile.preferredCdpPort ?? 9222;
+    }
+    syncManifestFromChromeProfiles(this.projectRoot, this.manifestPath, profiles, cdpPortById);
+    this.profileManager.reload(this.manifestPath);
+  }
+
+  private toChromeProfilePanelView(profile: PanelChromeProfile): ChromeProfilePanelView {
+    const session = this.chromeSessionStore.get(profile.id);
+    return {
+      id: profile.id,
+      name: profile.name,
+      chromeEmail: profile.chromeEmail,
+      hasPassword: Boolean(profile.chromePassword),
+      userDataDir: profile.userDataDir,
+      preferredCdpPort: profile.preferredCdpPort ?? null,
+      assignedCdpPort: session?.assignedCdpPort,
+      enabled: profile.enabled !== false,
+    };
+  }
+
+  private resolveEffectiveWorker(profileId: string, fallbackIp = ""): WorkerConfig {
+    const timingDefaults = this.runtimeDefaults();
+    const activeWatcher = this.watcherSessionStore.get(profileId);
+    if (activeWatcher) {
+      return {
+        profileId,
+        proxyMode: activeWatcher.network.proxyMode,
+        lockedIp: activeWatcher.network.lockedIp,
+        proxyId: activeWatcher.network.proxyId ?? "",
+        proxyUrl: activeWatcher.network.proxyUrl ?? "",
+        api: activeWatcher.api,
+        timing: activeWatcher.timing,
+        updatedAt: activeWatcher.updatedAt,
+      };
+    }
+
+    const chromeSession = this.chromeSessionStore.get(profileId);
+    const legacy = this.workerStore.getWorker(profileId, fallbackIp, timingDefaults);
+    const timing = chromeSession?.draftTiming ?? legacy.timing;
+    const api = chromeSession?.draftApi ?? legacy.api;
+
+    return {
+      profileId,
+      proxyMode: chromeSession?.proxyMode ?? legacy.proxyMode ?? "direct",
+      lockedIp: chromeSession?.lockedIp ?? legacy.lockedIp ?? "",
+      lastKnownHomeIp: chromeSession?.lastKnownHomeIp ?? legacy.lastKnownHomeIp,
+      proxyId: chromeSession?.proxyId ?? legacy.proxyId ?? "",
+      proxyUrl: chromeSession?.proxyUrl ?? legacy.proxyUrl ?? "",
+      api,
+      timing,
+      updatedAt: chromeSession?.updatedAt ?? legacy.updatedAt,
+    };
+  }
+
+  listChromeProfiles(): ChromeProfilePanelView[] {
+    return this.chromeProfileStore.listAll().map((p) => this.toChromeProfilePanelView(p));
+  }
+
+  createChromeProfile(input: {
+    name: string;
+    chromeEmail: string;
+    chromePassword: string;
+    id?: string;
+    preferredCdpPort?: number | null;
+  }): ChromeProfilePanelView {
+    const created = this.chromeProfileStore.create(input);
+    this.syncManifestFromPanelProfiles();
+    return this.toChromeProfilePanelView(created);
+  }
+
+  updateChromeProfile(
+    profileId: string,
+    patch: Partial<
+      Pick<PanelChromeProfile, "name" | "chromeEmail" | "chromePassword" | "preferredCdpPort" | "enabled">
+    >,
+  ): ChromeProfilePanelView & { passwordUpdated: boolean; emailUpdated: boolean } {
+    const { profile: updated, passwordUpdated, emailUpdated } = this.chromeProfileStore.update(
+      profileId,
+      patch,
+    );
+    this.syncManifestFromPanelProfiles();
+    return {
+      ...this.toChromeProfilePanelView(updated),
+      passwordUpdated,
+      emailUpdated,
+    };
+  }
+
+  deleteChromeProfile(profileId: string): void {
+    this.stopApiWatcher(profileId);
+    this.stopChrome(profileId);
+    this.chromeSessionStore.clear(profileId);
+    this.watcherSessionStore.clear(profileId);
+    this.chromeProfileStore.delete(profileId);
+    this.syncManifestFromPanelProfiles();
+  }
+
+  savePanelDraft(
+    profileId: string,
+    patch: {
+      proxyMode?: ProxyMode;
+      proxyId?: string;
+      proxyUrl?: string;
+      lockedIp?: string;
+      lastKnownHomeIp?: string;
+      api?: WorkerApiParams;
+      timing?: WorkerTimingParams;
+    },
+  ): WorkerConfig {
+    const existing = this.chromeSessionStore.get(profileId);
+    const timingDefaults = this.runtimeDefaults();
+    const legacy = this.workerStore.getWorker(profileId, "", timingDefaults);
+
+    this.chromeSessionStore.patch(profileId, {
+      profileId,
+      assignedCdpPort:
+        existing?.assignedCdpPort ??
+        this.chromeProfileStore.get(profileId)?.preferredCdpPort ??
+        9222,
+      proxyMode: patch.proxyMode ?? existing?.proxyMode ?? legacy.proxyMode ?? "direct",
+      proxyId: patch.proxyId !== undefined ? patch.proxyId : existing?.proxyId,
+      proxyUrl: patch.proxyUrl !== undefined ? patch.proxyUrl : existing?.proxyUrl,
+      lockedIp: patch.lockedIp !== undefined ? patch.lockedIp : existing?.lockedIp,
+      lastKnownHomeIp:
+        patch.lastKnownHomeIp !== undefined ? patch.lastKnownHomeIp : existing?.lastKnownHomeIp,
+      draftApi: patch.api ?? existing?.draftApi ?? legacy.api,
+      draftTiming: patch.timing ?? existing?.draftTiming ?? legacy.timing,
+    });
+
+    return this.resolveEffectiveWorker(profileId);
   }
 
   private runtimeDefaults(): {
@@ -117,14 +319,21 @@ export class ControlPanelService {
   }
 
   listProfiles(): ProfileOption[] {
-    return this.profileManager.listProfiles().map((profile) => ({
-      id: profile.id,
-      name: profile.name,
-      enabled: profile.enabled !== false,
-      cdpPort: profile.browser?.cdpPort ?? 9222,
-      mode: profile.mode ?? "observer",
-      lifecycleState: profile.lifecycle?.state,
-    }));
+    return this.chromeProfileStore.list().map((profile) => {
+      const session = this.chromeSessionStore.get(profile.id);
+      const assigned = session?.assignedCdpPort ?? profile.preferredCdpPort ?? 9222;
+      return {
+        id: profile.id,
+        name: profile.name,
+        enabled: profile.enabled !== false,
+        cdpPort: assigned,
+        preferredCdpPort: profile.preferredCdpPort ?? null,
+        assignedCdpPort: session?.assignedCdpPort,
+        chromeEmail: profile.chromeEmail,
+        mode: "observer",
+        lifecycleState: "ready",
+      };
+    });
   }
 
   resolveProfile(profileId: string) {
@@ -132,15 +341,30 @@ export class ControlPanelService {
     return this.profileManager.resolveProfile(profileId, settings);
   }
 
-  async getBootstrap(profileId: string): Promise<ControlPanelBootstrap> {
-    const profile = this.resolveProfile(profileId);
-    const worker = this.workerStore.getWorker(profileId, "");
-    const home = await resolveHomePublicIp(this.projectRoot);
-    const homePublicIp = home.ip === "unavailable" ? "unknown" : home.ip;
+  async getBootstrap(profileId: string, options?: { light?: boolean }): Promise<ControlPanelBootstrap> {
+    this.importManifestCredentialsIfNeeded();
+    this.chromeProfileStore.getOrThrow(profileId);
+    const worker = this.resolveEffectiveWorker(profileId);
+    let homePublicIp = process.env.HOME_PUBLIC_IP?.trim() || "unknown";
+    let measuredWanIp: string | undefined;
+    let homeIpWarning: string | undefined;
     let publicIp = homePublicIp;
 
+    if (!options?.light) {
+      const home = await resolveHomePublicIp(this.projectRoot);
+      homePublicIp = home.ip === "unavailable" ? "unknown" : home.ip;
+      measuredWanIp = home.measuredIp !== "unknown" ? home.measuredIp : undefined;
+      homeIpWarning = home.warning;
+      publicIp = homePublicIp;
+    }
+
+    const profile = this.resolveProfile(profileId);
     if (worker.proxyMode === "proxy") {
-      publicIp = await resolveProxyPublicIp(this.projectRoot, profile, worker);
+      if (options?.light) {
+        publicIp = worker.lockedIp?.trim() || homePublicIp;
+      } else {
+        publicIp = await resolveProxyPublicIp(this.projectRoot, profile, worker);
+      }
     }
 
     const proxyStore = new ProxyPoolStore(this.projectRoot);
@@ -148,23 +372,33 @@ export class ControlPanelService {
     this.runtimeStore.ensure(profileId, timingDefaults);
     return {
       profiles: this.listProfiles(),
+      chromeProfiles: this.listChromeProfiles(),
       dealerOffices: listDealerOffices(),
       appointmentStyles: APPOINTMENT_STYLE_OPTIONS,
       applicationTypes: APPLICATION_TYPE_OPTIONS,
       publicIp,
       homePublicIp,
-      measuredWanIp: home.measuredIp !== "unknown" ? home.measuredIp : undefined,
-      homeIpWarning: home.warning,
+      measuredWanIp,
+      homeIpWarning,
       connectionMode: worker.proxyMode ?? "direct",
       proxyPool: proxyStore.listForPanel(),
-      worker: this.workerStore.getWorker(profileId, publicIp, timingDefaults),
+      worker,
+      activeWatcherSession: Boolean(this.watcherSessionStore.get(profileId)),
       runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
       envTimingDefaults: timingDefaults,
     };
   }
 
   saveWorkerConfig(profileId: string, patch: Partial<WorkerConfig>): WorkerConfig {
-    return this.workerStore.updateWorker(profileId, patch, this.runtimeDefaults());
+    return this.savePanelDraft(profileId, {
+      proxyMode: patch.proxyMode,
+      proxyId: patch.proxyId,
+      proxyUrl: patch.proxyUrl,
+      lockedIp: patch.lockedIp,
+      lastKnownHomeIp: patch.lastKnownHomeIp,
+      api: patch.api,
+      timing: patch.timing,
+    });
   }
 
   async getNetworkIp(
@@ -173,7 +407,7 @@ export class ControlPanelService {
     options?: { measureViaChrome?: boolean; autoLock?: boolean; skipServerMeasure?: boolean },
   ): Promise<NetworkIpInfo> {
     const profile = this.resolveProfile(profileId);
-    const worker = this.workerStore.getWorker(profileId, "");
+    const worker = this.resolveEffectiveWorker(profileId);
     const mode = draft?.proxyMode ?? worker.proxyMode ?? "direct";
     const proxyId = draft?.proxyId !== undefined ? draft.proxyId : worker.proxyId;
     const draftWorker: WorkerConfig = {
@@ -244,14 +478,14 @@ export class ControlPanelService {
     const validDirectIp = displayIp !== "unknown" && displayIp !== "unavailable";
 
     if (shouldAutoLock && validDirectIp && !lockedIp) {
-      const saved = this.workerStore.updateWorker(profileId, {
+      this.savePanelDraft(profileId, {
         lockedIp: displayIp,
         lastKnownHomeIp: displayIp,
       });
-      lockedIp = normalizeLockedIp(saved.lockedIp);
+      lockedIp = displayIp;
       autoLocked = true;
     } else if (validDirectIp && mode === "direct" && !worker.lastKnownHomeIp) {
-      this.workerStore.updateWorker(profileId, { lastKnownHomeIp: displayIp });
+      this.savePanelDraft(profileId, { lastKnownHomeIp: displayIp });
     }
 
     const proxyStore = new ProxyPoolStore(this.projectRoot);
@@ -282,7 +516,12 @@ export class ControlPanelService {
     );
 
     for (const job of running) {
-      const otherWorker = this.workerStore.getWorker(job.profileId, "");
+      const otherWatcher = this.watcherSessionStore.get(job.profileId);
+      const otherWorker = otherWatcher
+        ? {
+            lockedIp: otherWatcher.network.lockedIp,
+          }
+        : this.resolveEffectiveWorker(job.profileId);
       const otherHealth = healthStore.get(job.profileId);
       const otherIp =
         normalizeLockedIp(otherWorker.lockedIp) ||
@@ -298,12 +537,12 @@ export class ControlPanelService {
   }
 
   private async validateWatcherStart(profileId: string): Promise<{ worker: WorkerConfig; effectiveIp: string }> {
-    let worker = this.workerStore.getWorker(profileId, "");
+    let worker = this.resolveEffectiveWorker(profileId);
     let lockedIp = normalizeLockedIp(worker.lockedIp);
 
     if (worker.proxyMode === "direct" && !lockedIp) {
       await this.ensureDirectHomeIp(profileId);
-      worker = this.workerStore.getWorker(profileId, "");
+      worker = this.resolveEffectiveWorker(profileId);
       lockedIp = normalizeLockedIp(worker.lockedIp);
     }
 
@@ -317,7 +556,7 @@ export class ControlPanelService {
       const hint =
         network.displayIp !== "unknown"
           ? network.displayIp
-          : "ev IP ölçülemedi — ProxyNet kapatın veya .env HOME_PUBLIC_IP=... yazın";
+          : "ev IP ölçülemedi — ProxyNet kapatın veya panelden IP kilitleyin";
       throw new Error(
         `IP kilitlemeden watcher başlatılamaz (${hint}). Ev modu: panelde «Ev IP'yi yeniden ölç» deyin (tarayıcı ölçer, antivirüs engellemez).`,
       );
@@ -334,7 +573,8 @@ export class ControlPanelService {
     }
 
     this.assertIpNotUsedByOtherWatcher(profileId, lockedIp);
-    return { worker: this.workerStore.getWorker(profileId, ""), effectiveIp: lockedIp };
+    worker = { ...worker, lockedIp };
+    return { worker, effectiveIp: lockedIp };
   }
 
   async setManualHomeIp(
@@ -346,7 +586,7 @@ export class ControlPanelService {
     if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed)) {
       throw new Error("Geçerli bir IPv4 adresi girin.");
     }
-    this.workerStore.updateWorker(profileId, {
+    this.savePanelDraft(profileId, {
       lastKnownHomeIp: trimmed,
       lockedIp: trimmed,
     });
@@ -406,16 +646,68 @@ export class ControlPanelService {
     return env;
   }
 
-  async startChrome(profileId: string) {
+  async startChrome(
+    profileId: string,
+    launch?: {
+      proxyMode?: ProxyMode;
+      proxyId?: string;
+      proxyUrl?: string;
+      cdpPort?: number | null;
+      lockedIp?: string;
+    },
+  ) {
+    this.chromeProfileStore.getOrThrow(profileId);
+    const chromeProfile = this.chromeProfileStore.getOrThrow(profileId);
+    const existingSession = this.chromeSessionStore.get(profileId);
+
+    const proxyMode = launch?.proxyMode ?? existingSession?.proxyMode ?? "direct";
+    const proxyId = launch?.proxyId ?? existingSession?.proxyId ?? "";
+    const proxyUrl = launch?.proxyUrl ?? existingSession?.proxyUrl ?? "";
+
+    if (proxyMode === "proxy" && !proxyId && !proxyUrl.trim()) {
+      throw new Error("Proxy modu için proxy seçin (Chrome Aç öncesi zorunlu).");
+    }
+
+    const assignedCdpPort = await allocateCdpPort(
+      this.registry,
+      launch?.cdpPort ?? existingSession?.assignedCdpPort ?? chromeProfile.preferredCdpPort,
+    );
+
+    this.chromeSessionStore.upsert({
+      profileId,
+      assignedCdpPort,
+      proxyMode,
+      proxyId: proxyMode === "proxy" ? proxyId : "",
+      proxyUrl: proxyMode === "proxy" ? proxyUrl : "",
+      lockedIp: launch?.lockedIp ?? existingSession?.lockedIp,
+      lastKnownHomeIp: existingSession?.lastKnownHomeIp,
+      draftApi: existingSession?.draftApi,
+      draftTiming: existingSession?.draftTiming,
+      updatedAt: new Date().toISOString(),
+    });
+
+    this.syncManifestFromPanelProfiles();
     const profile = this.resolveProfile(profileId);
-    const worker = this.workerStore.getWorker(profileId, "");
-    const directMode = worker.proxyMode !== "proxy";
-    const proxyUrl =
-      worker.proxyMode === "proxy"
+    const worker = this.resolveEffectiveWorker(profileId);
+    const directMode = proxyMode !== "proxy";
+    const proxyServer =
+      proxyMode === "proxy"
         ? await resolveChromeProxyServer(this.projectRoot, profile, worker)
         : undefined;
-    const launch = await launchChromeForProfile(profile, this.registry, proxyUrl, directMode);
-    return { launch };
+    const launchResult = await launchChromeForProfile(profile, this.registry, proxyServer, directMode);
+
+    let googleLogin: ChromeGoogleLoginResult | undefined;
+    if (launchResult.ok && !launchResult.reusedExisting) {
+      const settings = loadSettings(this.projectRoot);
+      googleLogin = await ensureChromeGoogleLoginAfterLaunch(
+        profile,
+        chromeProfile,
+        settings,
+        launchResult,
+      );
+    }
+
+    return { launch: launchResult, assignedCdpPort, googleLogin };
   }
 
   stopChrome(profileId: string): { stopped: number; processIds: string[] } {
@@ -440,7 +732,7 @@ export class ControlPanelService {
     publicIp: string,
   ): ApiHealthRecord {
     const profile = profiles.find((p) => p.id === record.profileId);
-    const worker = this.workerStore.getWorker(record.profileId, publicIp);
+    const worker = this.resolveEffectiveWorker(record.profileId, publicIp);
     return {
       ...record,
       profileName: record.profileName ?? profile?.name,
@@ -461,7 +753,7 @@ export class ControlPanelService {
       if (existing) {
         return this.enrichHealthRecord(existing, profiles, publicIp);
       }
-      const worker = this.workerStore.getWorker(profileOption.id, publicIp);
+      const worker = this.resolveEffectiveWorker(profileOption.id, publicIp);
       return {
         profileId: profileOption.id,
         profileName: profileOption.name,
@@ -503,31 +795,45 @@ export class ControlPanelService {
     api: WorkerApiParams,
     timing?: Partial<WorkerTimingParams>,
   ) {
-    this.workerStore.updateWorker(
-      profileId,
-      {
-        api,
-        ...(timing ? { timing } : {}),
-      },
-      this.runtimeDefaults(),
-    );
-    await this.validateWatcherStart(profileId);
+    const timingDefaults = this.runtimeDefaults();
+    const resolvedTiming = {
+      pollIntervalMs: timing?.pollIntervalMs ?? timingDefaults.pollIntervalMs,
+      telegramReportIntervalMs:
+        timing?.telegramReportIntervalMs ?? timingDefaults.telegramReportIntervalMs,
+    };
+
+    this.savePanelDraft(profileId, { api, timing: resolvedTiming });
+    const { worker, effectiveIp } = await this.validateWatcherStart(profileId);
 
     const profile = this.resolveProfile(profileId);
     const cdpPort = profile.browser?.cdpPort ?? 9222;
     const chrome = await getChromeStatus(cdpPort);
 
     const steps: string[] = [];
-    steps.push("API ayarları kaydedildi");
+    steps.push("Watcher oturumu hazırlandı");
 
     if (!chrome.ready) {
       throw new Error(
-        "Chrome CDP hazır değil. Önce Profil kartından «Chrome Aç» ile tarayıcıyı açın, " +
-          "elle portala gidip giriş yapın, sonra API İzlemeyi Başlatın. " +
-          "(Watcher artık otomatik yeni Chrome açmaz — açık sekmeleriniz korunur.)",
+        "Chrome CDP hazır değil. Önce «Chrome Aç» ile tarayıcıyı başlatın, ardından API İzlemeyi Başlatın.",
       );
     }
-    steps.push("Chrome CDP zaten hazır");
+    steps.push(`Chrome CDP hazır (:${cdpPort})`);
+
+    const chromeSession = this.chromeSessionStore.get(profileId);
+    this.watcherSessionStore.upsert({
+      profileId,
+      network: {
+        proxyMode: worker.proxyMode,
+        proxyId: worker.proxyId,
+        proxyUrl: worker.proxyUrl,
+        lockedIp: effectiveIp,
+        assignedCdpPort: chromeSession?.assignedCdpPort ?? cdpPort,
+      },
+      api: worker.api,
+      timing: worker.timing ?? resolvedTiming,
+      startedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
 
     const process = await this.startApiWatcher(profileId, api);
     steps.push("API Watcher başlatıldı");
@@ -548,6 +854,17 @@ export class ControlPanelService {
         processIds.push(job.id);
       }
     }
+
+    this.watcherSessionStore.clear(profileId);
+    const session = this.chromeSessionStore.get(profileId);
+    if (session) {
+      this.chromeSessionStore.patch(profileId, {
+        draftApi: undefined,
+        draftTiming: undefined,
+        lockedIp: session.proxyMode === "direct" ? session.lockedIp : "",
+      });
+    }
+
     return { stopped, processIds };
   }
 
@@ -577,9 +894,15 @@ export class ControlPanelService {
     this.runtimeStore.ensure(profileId, this.runtimeDefaults());
 
     const profile = this.resolveProfile(profileId);
+    const chromeProfile = this.chromeProfileStore.getOrThrow(profileId);
     const tsx = resolve(this.projectRoot, "node_modules/tsx/dist/cli.mjs");
     const script = resolve(this.projectRoot, "src/scenarios/runScenario.ts");
-    const env = this.buildApiEnv(profileId, api);
+    const env = {
+      ...this.buildApiEnv(profileId, api),
+      ...buildChromeCredentialEnv(chromeProfile),
+      PANEL_MANAGED_PORTAL_FLOW: "true",
+      API_WIZARD_AUTO_NAVIGATE: "true",
+    };
 
     return this.registry.spawnManaged(
       "api-watcher",
@@ -591,23 +914,26 @@ export class ControlPanelService {
     );
   }
 
-  listProcesses(): ManagedProcessWithRuntime[] {
+  async listProcesses(): Promise<ManagedProcessWithRuntime[]> {
+    await this.registry.reconcile();
     const defaults = this.runtimeDefaults();
-    return this.registry.list().map((proc) => ({
-      ...proc,
-      runtime:
-        proc.kind === "api-watcher" &&
-        (proc.status === "running" || proc.status === "starting")
-          ? this.runtimeStore.get(proc.profileId, defaults)
-          : undefined,
-      runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
-    }));
+    return this.registry
+      .listActive()
+      .map((proc) => ({
+        ...proc,
+        runtime:
+          proc.kind === "api-watcher" &&
+          (proc.status === "running" || proc.status === "starting")
+            ? this.runtimeStore.get(proc.profileId, defaults)
+            : undefined,
+        runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
+      }));
   }
 
-  updateProcessRuntimeConfig(
+  async updateProcessRuntimeConfig(
     processId: string,
     patch: { pollIntervalMs?: number; telegramReportIntervalMs?: number },
-  ): { runtime: WorkerRuntimeConfig; process: ManagedProcessWithRuntime } {
+  ): Promise<{ runtime: WorkerRuntimeConfig; process: ManagedProcessWithRuntime }> {
     const proc = this.registry.get(processId);
     if (!proc) {
       throw new Error("Süreç bulunamadı");
@@ -620,14 +946,53 @@ export class ControlPanelService {
     }
 
     const runtime = this.runtimeStore.update(proc.profileId, patch, this.runtimeDefaults());
-    const updated = this.listProcesses().find((entry) => entry.id === processId);
+    const processes = await this.listProcesses();
+    const updated = processes.find((entry) => entry.id === processId);
     if (!updated) {
       throw new Error("Süreç listesinde bulunamadı");
     }
     return { runtime, process: updated };
   }
 
-  killProcess(processId: string): boolean {
-    return this.registry.kill(processId);
+  async killProcess(processId: string): Promise<{ ok: boolean; message: string }> {
+    await this.registry.reconcile();
+
+    const proc = this.registry.get(processId);
+    if (!proc) {
+      return { ok: true, message: "Süreç zaten listede yok" };
+    }
+
+    if (proc.status === "exited" || proc.status === "failed") {
+      this.registry.remove(processId);
+      return { ok: true, message: "Süreç zaten sonlanmış — listeden kaldırıldı" };
+    }
+
+    if (proc.kind === "chrome" && proc.cdpPort) {
+      const ready = await getChromeStatus(proc.cdpPort);
+      if (!ready.ready) {
+        this.registry.markExited(processId, "Chrome zaten kapalı");
+        return { ok: true, message: "Chrome zaten kapalı — listeden kaldırıldı" };
+      }
+    }
+
+    const killed = this.registry.kill(processId);
+    if (killed && proc.kind === "api-watcher") {
+      this.watcherSessionStore.clear(proc.profileId);
+      const session = this.chromeSessionStore.get(proc.profileId);
+      if (session) {
+        this.chromeSessionStore.patch(proc.profileId, {
+          draftApi: undefined,
+          draftTiming: undefined,
+        });
+      }
+      return { ok: true, message: "Süreç sonlandırıldı" };
+    }
+
+    if (killed) {
+      return { ok: true, message: "Süreç sonlandırıldı" };
+    }
+
+    this.registry.markExited(processId, "Süreç zaten kapalı");
+    return { ok: true, message: "Süreç zaten kapalı — listeden kaldırıldı" };
   }
 }

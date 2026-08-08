@@ -21,6 +21,8 @@ import {
   tryAcceptChromeProfileSyncPrompt,
   waitAndAcceptChromeProfileSyncPrompt,
   waitForGoogleSignInCompletion,
+  trySkipGoogleProfilePicturePrompt,
+  tryAcceptChromePersonalizeBanner,
   type ChromeGoogleBootstrapOptions,
   type ChromeGoogleBootstrapResult,
 } from "./chromeGoogleBootstrap.js";
@@ -64,6 +66,11 @@ async function executeChromeBootstrapPhase(
         break;
       }
       await fillGooglePasswordIfNeeded(page, googlePassword);
+      await trySkipGoogleProfilePicturePrompt(page);
+      break;
+
+    case "google_profile_picture":
+      await trySkipGoogleProfilePicturePrompt(page);
       break;
 
     case "google_signin_challenge":
@@ -187,6 +194,8 @@ export async function runChromeBootstrapLoop(
   for (let round = 1; round <= maxRounds; round++) {
     await page.bringToFront().catch(() => {});
     await tryAcceptChromeProfileSyncPrompt(page, profileName);
+    await trySkipGoogleProfilePicturePrompt(page);
+    await tryAcceptChromePersonalizeBanner(page, profileName);
 
     const state = await detectChromeBootstrapState(page);
     logger.info(`[chrome] [tur ${round}/${maxRounds}] ${formatChromeBootstrapLog(state)}`);

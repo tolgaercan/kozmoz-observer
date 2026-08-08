@@ -4,7 +4,7 @@
   "description": "CDP attach → JWT (yoksa Kosmos ana sayfa) → GetClosedDate poll. Wizard navigasyonu yok.",
   "status": "active",
   "banSafe": true,
-  "note": "Chrome debug acik → panelden API Watcher. JWT yoksa kosmosvize.com.tr → appointmentForm (sifre/OTP).",
+  "note": "Chrome debug acik → panelden API Watcher. Otomatik: ana sayfa → DUYURU kapat → basvuru portali → JWT.",
   "steps": [
     {
       "phase": "chrome-login",
@@ -16,9 +16,10 @@
     },
     {
       "phase": "api-auth-bootstrap",
-      "label": "JWT (gerekirse ana sayfa)",
+      "label": "JWT + portal akisi",
       "params": {
-        "apiOnly": true
+        "apiOnly": true,
+        "panelPortalFlow": true
       }
     },
     {

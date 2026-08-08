@@ -45,11 +45,161 @@ function sleep(ms: number): Promise<void> {
 }
 
 function resolveChromeButtonFirstName(profileName: string): string {
+  const candidates = resolveChromeButtonNameCandidates(profileName);
+  return candidates[0] ?? "";
+}
+
+/** "Tolga-profile-2" → ["Tolga", "Tolga-profile-2"] gibi buton eslestirme adaylari */
+function resolveChromeButtonNameCandidates(profileName: string): string[] {
   const trimmed = profileName.trim();
   if (!trimmed) {
-    return "";
+    return [];
   }
-  return trimmed.split(/\s+/)[0] ?? trimmed;
+
+  const candidates: string[] = [];
+  const push = (value: string | undefined) => {
+    const next = value?.trim();
+    if (next && !candidates.includes(next)) {
+      candidates.push(next);
+    }
+  };
+
+  push(trimmed.split(/\s+/)[0]);
+  push(trimmed.split("-")[0]);
+  push(trimmed.split("_")[0]);
+  push(trimmed);
+
+  return candidates;
+}
+
+export async function isChromePersonalizeBannerVisible(page: Page): Promise<boolean> {
+  const patterns = [
+    /Chrome'u kendinize uyarlay/i,
+    /Customize Chrome/i,
+    /Chrome'da oturum açmak istiyor musunuz/i,
+    /Sign in to Chrome/i,
+  ];
+
+  for (const pattern of patterns) {
+    if (
+      await page
+        .getByText(pattern)
+        .first()
+        .isVisible({ timeout: 800 })
+        .catch(() => false)
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function tryClickContinueAsOnPage(page: Page, profileName?: string): Promise<boolean> {
+  const nameCandidates = profileName ? resolveChromeButtonNameCandidates(profileName) : [];
+
+  for (const firstName of nameCandidates) {
+    const namedButton = page.getByRole("button", {
+      name: new RegExp(`${escapeRegExp(firstName)}.*olarak devam et`, "i"),
+    });
+    if (await clickSyncContinueButton(page, namedButton)) {
+      logger.info(`[chrome] Chrome banner — "${firstName} olarak devam et" tiklandi.`);
+      return true;
+    }
+
+    const namedTextButton = page.locator(`button:has-text("${firstName} olarak devam et")`);
+    if (await clickSyncContinueButton(page, namedTextButton)) {
+      return true;
+    }
+  }
+
+  const genericRole = page.getByRole("button", { name: /olarak devam et|continue as/i });
+  if (await clickSyncContinueButton(page, genericRole)) {
+    logger.info("[chrome] Chrome banner — devam et tiklandi.");
+    return true;
+  }
+
+  const cssSelectors = [
+    'button:has-text("olarak devam et")',
+    'button:has-text("Continue as")',
+    '[role="button"]:has-text("devam et")',
+  ];
+
+  for (const selector of cssSelectors) {
+    const button = page.locator(selector).first();
+    if (await clickSyncContinueButton(page, button)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/** google.com uzerindeki "Chrome'u kendinize uyarlayin" banner — varsa devam et, yoksa false */
+export async function tryAcceptChromePersonalizeBanner(
+  page: Page,
+  profileName?: string,
+): Promise<boolean> {
+  const context = page.context();
+
+  for (const targetPage of context.pages()) {
+    if (targetPage.isClosed()) {
+      continue;
+    }
+
+    try {
+      await targetPage.bringToFront();
+    } catch {
+      // ignore
+    }
+
+    if (!(await isChromePersonalizeBannerVisible(targetPage))) {
+      continue;
+    }
+
+    logger.info("[chrome] Chrome kisisellestirme banner algilandi — devam et deneniyor...");
+
+    if (await tryClickContinueAsOnPage(targetPage, profileName)) {
+      return true;
+    }
+
+    for (const frame of targetPage.frames()) {
+      try {
+        const frameBanner = await frame
+          .getByText(/Chrome'u kendinize uyarlay|Customize Chrome|oturum açmak istiyor musunuz/i)
+          .first()
+          .isVisible({ timeout: 400 })
+          .catch(() => false);
+        if (!frameBanner) {
+          continue;
+        }
+
+        for (const firstName of profileName ? resolveChromeButtonNameCandidates(profileName) : []) {
+          const frameButton = frame.getByRole("button", {
+            name: new RegExp(`${escapeRegExp(firstName)}.*olarak devam et`, "i"),
+          });
+          if (await frameButton.isVisible({ timeout: 500 }).catch(() => false)) {
+            await frameButton.click({ timeout: 5000 });
+            logger.info(`[chrome] Chrome banner (frame) — "${firstName} olarak devam et" tiklandi.`);
+            await targetPage.waitForTimeout(800);
+            return true;
+          }
+        }
+
+        const genericFrameButton = frame.getByRole("button", { name: /olarak devam et|continue as/i });
+        if (await genericFrameButton.isVisible({ timeout: 500 }).catch(() => false)) {
+          await genericFrameButton.click({ timeout: 5000 });
+          logger.info("[chrome] Chrome banner (frame) — devam et tiklandi.");
+          await targetPage.waitForTimeout(800);
+          return true;
+        }
+      } catch {
+        // cross-origin frame
+      }
+    }
+  }
+
+  return false;
 }
 
 export function isGoogleHomePage(url: string): boolean {
@@ -163,6 +313,49 @@ export async function isGoogleSignInPasswordFieldVisible(page: Page): Promise<bo
     .catch(() => false);
 }
 
+/** Google hesap kurulumu — "Profil resmi ekleyin" adımı */
+export async function isGoogleProfilePicturePromptVisible(page: Page): Promise<boolean> {
+  const heading = page
+    .getByRole("heading", { name: /profil resmi ekleyin|add a profile picture/i })
+    .first();
+  if (await heading.isVisible({ timeout: 1000 }).catch(() => false)) {
+    return true;
+  }
+
+  return page
+    .getByText(/profil resmi ekleyin|add a profile picture/i)
+    .first()
+    .isVisible({ timeout: 1000 })
+    .catch(() => false);
+}
+
+/** Profil resmi ekranında Atla / Skip — yoksa false döner, akış devam eder. */
+export async function trySkipGoogleProfilePicturePrompt(page: Page): Promise<boolean> {
+  if (!(await isGoogleProfilePicturePromptVisible(page))) {
+    return false;
+  }
+
+  logger.info("[chrome] Google profil resmi ekranı algılandı — Atla tıklanıyor...");
+
+  const candidates = [
+    page.getByRole("button", { name: /^atla$|^skip$/i }).first(),
+    page.locator('button:has-text("Atla"), [role="button"]:has-text("Atla")').first(),
+    page.locator('button:has-text("Skip"), [role="button"]:has-text("Skip")').first(),
+    page.getByRole("link", { name: /^atla$|^skip$/i }).first(),
+  ];
+
+  for (const locator of candidates) {
+    if (await clickSyncContinueButton(page, locator)) {
+      logger.info("[chrome] Profil resmi adımı atlandı.");
+      await page.waitForTimeout(1200);
+      return true;
+    }
+  }
+
+  logger.warn("[chrome] Profil resmi ekranı var ama Atla bulunamadı — manuel Atla gerekebilir.");
+  return false;
+}
+
 export async function fillGoogleEmailIfNeeded(page: Page, googleEmail: string): Promise<void> {
   const emailInput = page.locator(
     'input[type="email"], input[name="identifier"], input[autocomplete="username"]',
@@ -255,7 +448,12 @@ export async function tryAcceptChromeProfileSyncPrompt(
     return true;
   }
 
+  if (await tryAcceptChromePersonalizeBanner(page, profileName)) {
+    return true;
+  }
+
   const firstName = profileName ? resolveChromeButtonFirstName(profileName) : "";
+  const nameCandidates = profileName ? resolveChromeButtonNameCandidates(profileName) : [];
 
   const chromeNativeSelectors = [
     "#interceptDialog #accept-button",
@@ -273,26 +471,28 @@ export async function tryAcceptChromeProfileSyncPrompt(
   }
 
   if (firstName) {
-    const ariaLabelButton = page.locator(
-      `#accept-button[aria-label*="${firstName}"][aria-label*="olarak devam et" i]`,
-    );
-    if (await clickSyncContinueButton(page, ariaLabelButton)) {
-      logger.info("[chrome] Chrome senkron popup — aria-label ile devam et tiklandi.");
-      return true;
-    }
+    for (const candidate of nameCandidates) {
+      const ariaLabelButton = page.locator(
+        `#accept-button[aria-label*="${candidate}"][aria-label*="olarak devam et" i]`,
+      );
+      if (await clickSyncContinueButton(page, ariaLabelButton)) {
+        logger.info("[chrome] Chrome senkron popup — aria-label ile devam et tiklandi.");
+        return true;
+      }
 
-    const namedButton = page.getByRole("button", {
-      name: new RegExp(`${escapeRegExp(firstName)}.*olarak devam et`, "i"),
-    });
-    if (await clickSyncContinueButton(page, namedButton)) {
-      logger.info("[chrome] Chrome senkron popup — profil adi ile devam et tiklandi.");
-      return true;
-    }
+      const namedButton = page.getByRole("button", {
+        name: new RegExp(`${escapeRegExp(candidate)}.*olarak devam et`, "i"),
+      });
+      if (await clickSyncContinueButton(page, namedButton)) {
+        logger.info("[chrome] Chrome senkron popup — profil adi ile devam et tiklandi.");
+        return true;
+      }
 
-    const namedTextButton = page.locator(`button:has-text("${firstName} olarak devam et")`);
-    if (await clickSyncContinueButton(page, namedTextButton)) {
-      logger.info("[chrome] Chrome senkron popup — devam et tiklandi.");
-      return true;
+      const namedTextButton = page.locator(`button:has-text("${candidate} olarak devam et")`);
+      if (await clickSyncContinueButton(page, namedTextButton)) {
+        logger.info("[chrome] Chrome senkron popup — devam et tiklandi.");
+        return true;
+      }
     }
   }
 
@@ -347,7 +547,8 @@ export async function waitAndAcceptChromeProfileSyncPrompt(
       }
     }
 
-    const dialogVisible = await isChromeInterceptDialogPresent(page);
+    const dialogVisible =
+      (await isChromeInterceptDialogPresent(page)) || (await isChromePersonalizeBannerVisible(page));
     const bannerVisible =
       dialogVisible ||
       (await page
@@ -360,6 +561,7 @@ export async function waitAndAcceptChromeProfileSyncPrompt(
       if (await tryAcceptChromeProfileSyncPrompt(page, profileName)) {
         const stillOpen =
           (await isChromeInterceptDialogPresent(page)) ||
+          (await isChromePersonalizeBannerVisible(page)) ||
           (await page
             .getByText(/Chrome.*uyarlay|Customize Chrome/i)
             .first()

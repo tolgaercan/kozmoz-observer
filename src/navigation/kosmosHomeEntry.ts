@@ -132,6 +132,10 @@ export async function dismissKosmosHomeOverlays(page: Page): Promise<void> {
 
 /** Duyuru popup — varsa kapat, yoksa sessizce devam */
 export async function dismissKosmosHomePopup(page: Page): Promise<boolean> {
+  if (await dismissDuyuruAnnouncementModal(page)) {
+    return true;
+  }
+
   for (const selector of POPUP_CLOSE_SELECTORS) {
     const locator = page.locator(selector).first();
     try {
@@ -147,6 +151,74 @@ export async function dismissKosmosHomePopup(page: Page): Promise<boolean> {
   }
 
   logger.info("[home] Popup bulunamadi — atlaniyor (normal).");
+  return false;
+}
+
+/** Kosmos ana sayfa DUYURU modal — sag ust X / Atla benzeri kapatma */
+async function dismissDuyuruAnnouncementModal(page: Page): Promise<boolean> {
+  const announcement = page.getByText(/^DUYURU:?$/i).first();
+  const hasAnnouncement = await announcement.isVisible({ timeout: 1200 }).catch(() => false);
+  const hasModalTitle = await page
+    .getByText(/duyuru|announcement/i)
+    .first()
+    .isVisible({ timeout: 800 })
+    .catch(() => false);
+
+  if (!hasAnnouncement && !hasModalTitle) {
+    return false;
+  }
+
+  logger.info("[home] DUYURU popup algilandi — kapatiliyor...");
+
+  const modalRoots = [
+    page.locator(".modal.show").first(),
+    page.locator(".modal.in").first(),
+    page.locator("[role='dialog']").first(),
+    page.locator(".popup-container").first(),
+    page.locator(".modal-dialog").first(),
+  ];
+
+  for (const modal of modalRoots) {
+    if (!(await modal.isVisible({ timeout: 500 }).catch(() => false))) {
+      continue;
+    }
+
+    const closeCandidates = [
+      modal.locator("a.close-popup-btn").first(),
+      modal.locator(".close-popup-btn").first(),
+      modal.locator("button.close").first(),
+      modal.locator(".close").first(),
+      modal.locator('[aria-label="Close"]').first(),
+      modal.locator('[aria-label="Kapat"]').first(),
+      modal.getByRole("button", { name: /^kapat$|^close$|^×$/i }).first(),
+    ];
+
+    for (const closeBtn of closeCandidates) {
+      try {
+        if (await closeBtn.isVisible({ timeout: 500 })) {
+          await closeBtn.click({ timeout: 5000 });
+          await page.waitForTimeout(400);
+          logger.info("[home] DUYURU popup kapatildi.");
+          return true;
+        }
+      } catch {
+        // sonraki aday
+      }
+    }
+  }
+
+  const globalClose = page
+    .locator(
+      '.modal.show .close, .modal.show button.close, .modal.show [aria-label="Close"], .modal.show a.close-popup-btn',
+    )
+    .first();
+  if (await globalClose.isVisible({ timeout: 800 }).catch(() => false)) {
+    await globalClose.click({ timeout: 5000 });
+    await page.waitForTimeout(400);
+    logger.info("[home] DUYURU popup kapatildi (global close).");
+    return true;
+  }
+
   return false;
 }
 

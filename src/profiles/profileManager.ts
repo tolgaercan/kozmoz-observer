@@ -131,6 +131,10 @@ export class ProfileManager {
     return [...this.profiles];
   }
 
+  reload(manifestPath: string): void {
+    this.profiles.splice(0, this.profiles.length, ...this.loadManifest(manifestPath));
+  }
+
   resolveProfile(profileRef?: string, settings?: AppSettings): ResolvedProfile {
     const profile = this.findProfile(profileRef);
 

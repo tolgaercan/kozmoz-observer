@@ -228,6 +228,11 @@ export async function ensureWizardForApiPoll(
     }
   }
 
+  // BAN-SAFE: Adim 3 navigasyon + TC/sekil/bos tik gecici kapali — ban bitince asagiyi acin.
+  logger.info("[wizard-prep] BAN-SAFE: Adim 3 hazirligi atlandi (ek istek yok).");
+  return { ok: true };
+
+  /*
   try {
     await ensureInfoStepViewForApiPoll(
       page,
@@ -256,4 +261,5 @@ export async function ensureWizardForApiPoll(
     ok: false,
     reason: `Basvuru sekli (typeId=${targetTypeId}) adim 3'de hazir degil — panel: ${styleLabel ?? "?"}`,
   };
+  */
 }

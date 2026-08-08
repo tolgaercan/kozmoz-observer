@@ -72,6 +72,11 @@ async function triggerNationalityValidationBlur(
   page: Page,
   settings: AppointmentSettings,
 ): Promise<void> {
+  // Kalici: bos tik TC dogrulama istegi tetikler — ban riski.
+  logger.info("[wizard-fill] TC sonrasi bos tik devre disi (ban-safe).");
+  return;
+
+  /*
   if (!settings.nationalityNumberBlankClickEnabled) {
     return;
   }
@@ -82,6 +87,7 @@ async function triggerNationalityValidationBlur(
 
   logger.info("TC doğrulama için boş alana tıklanıyor...");
   await humanClickBlankArea(page, mouseOptions(settings));
+  */
 }
 
 export async function fillNationalityNumber(

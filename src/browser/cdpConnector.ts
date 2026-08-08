@@ -6,9 +6,14 @@ import { detectIntervention } from "../challenge/interventionDetector.js";
 import { isBasvuruPortalUrl } from "../portal/kosmosOrigin.js";
 import { logger } from "../utils/logger.js";
 
-export async function isCdpEndpointReady(endpoint: string): Promise<boolean> {
-  const bases = [endpoint.replace(/\/$/, ""), "http://127.0.0.1:9222", "http://localhost:9222"];
-  const unique = [...new Set(bases)];
+export async function isCdpEndpointReady(
+  endpoint: string,
+  options?: { exact?: boolean },
+): Promise<boolean> {
+  const bases = options?.exact
+    ? [endpoint.replace(/\/$/, "")]
+    : [endpoint.replace(/\/$/, ""), "http://127.0.0.1:9222", "http://localhost:9222"];
+  const unique = [...new Set(bases.filter(Boolean))];
 
   for (const base of unique) {
     try {

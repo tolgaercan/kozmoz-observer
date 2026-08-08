@@ -25,96 +25,131 @@
       <div class="ban-banner" id="banBanner" hidden></div>
 
       <main class="layout">
-        <section class="card card-profile">
-          <div class="card-head">
-            <h2>Profil</h2>
-            <span class="hint">Chrome oturumu bu profile bağlı kalır</span>
+        <section class="card card-chrome-session span-2">
+          <div class="card-head row-between">
+            <div>
+              <h2>Chrome oturumu</h2>
+              <span class="hint">Kalıcı Chrome profili + ağ ayarı — Chrome Aç öncesi ikisi de seçilmeli</span>
+            </div>
+            <button type="button" class="btn btn-ghost" id="btnManageChromeProfiles">Profil ekle / düzenle</button>
           </div>
-          <label class="field">
-            <span>Aktif profil</span>
-            <select id="profileSelect"></select>
-          </label>
-          <div class="profile-meta" id="profileMeta"></div>
+
+          <div class="wizard-section profile-registry">
+            <div class="card-head row-between" style="margin-bottom: 8px">
+              <p class="wizard-section-title" style="margin: 0">Chrome profili seçin</p>
+              <button type="button" class="btn btn-secondary btn-compact" id="btnAddChromeProfile">
+                + Yeni profil
+              </button>
+            </div>
+            <p class="note profile-select-hint">Karta tıklayın — anında seçilir. Düzenle / sil sağdaki butonlardan.</p>
+            <div id="chromeProfileListInline" class="profile-list profile-list-selectable"></div>
+            <div class="selected-profile-bar" id="selectedProfileBar">
+              <span id="selectedProfileLabel">—</span>
+              <label class="field field-inline">
+                <span>CDP port</span>
+                <input type="number" id="cdpPortInput" min="9222" max="9230" placeholder="Otomatik" />
+              </label>
+            </div>
+            <div class="profile-meta" id="profileMeta"></div>
+            <p class="note profile-storage-note">
+              Depo: <code>data/control-panel/chrome-profiles.json</code> — yeniden başlatınca silinmez.
+            </p>
+          </div>
+
+          <div class="wizard-section">
+            <p class="wizard-section-title">Ağ — Chrome bu ayarlarla açılır</p>
+            <div class="ip-grid">
+              <div class="ip-box">
+                <span class="ip-label" id="currentIpLabel">Çıkış IP</span>
+                <strong id="currentIp">—</strong>
+                <small class="field-hint" id="currentIpHint">Direct: ev IP · Proxy: statik çıkış IP</small>
+              </div>
+              <div class="ip-box ip-box-accent">
+                <span class="ip-label">Kilitli IP (watcher)</span>
+                <strong id="lockedIp">—</strong>
+                <small class="field-hint">Watcher başlatmadan önce kilitleyin</small>
+              </div>
+            </div>
+
+            <label class="field">
+              <span>Bağlantı modu</span>
+              <select id="proxyMode">
+                <option value="direct">Doğrudan (ev interneti)</option>
+                <option value="proxy">Proxy (statik çıkış IP)</option>
+              </select>
+            </label>
+
+            <label class="field" id="proxyUrlField" hidden>
+              <span>Proxy havuzu</span>
+              <select id="proxyUrl">
+                <option value="">— Seç —</option>
+              </select>
+              <small class="field-hint" id="proxyExitHint"></small>
+            </label>
+
+            <div class="inline-actions">
+              <button type="button" class="btn btn-secondary" id="btnLockCurrentIp">Mevcut IP'yi kilitle</button>
+              <button type="button" class="btn btn-secondary" id="btnClearLockedIp">Kilitli IP'yi sıfırla</button>
+              <button type="button" class="btn btn-secondary" id="btnRefreshNetworkIp">Ev IP'yi yeniden ölç</button>
+              <button type="button" class="btn btn-secondary" id="btnSaveNetwork">Ağ taslağını kaydet</button>
+            </div>
+
+            <div class="manual-home-ip" id="manualHomeIpField" hidden>
+              <label class="field">
+                <span>Ev IP (manuel)</span>
+                <input type="text" id="manualHomeIp" placeholder="ör. 85.xxx.xxx.xxx" inputmode="decimal" />
+              </label>
+              <button type="button" class="btn btn-secondary" id="btnSaveManualHomeIp">Kaydet ve kilitle</button>
+            </div>
+            <p class="note network-note" id="networkModeHint"></p>
+          </div>
+
           <div class="chrome-status" id="chromeStatus"></div>
           <div class="inline-actions chrome-actions">
-            <button type="button" class="btn btn-secondary" id="btnStartChrome">
-              Chrome Aç
-            </button>
-            <button type="button" class="btn btn-ghost" id="btnStopChrome">
-              Chrome Kapat
-            </button>
+            <button type="button" class="btn btn-primary" id="btnStartChrome">Chrome Aç</button>
+            <button type="button" class="btn btn-ghost" id="btnStopChrome">Chrome Kapat</button>
           </div>
           <p class="note chrome-hint" id="chromeHint">
-            Önerilen sıra: Chrome Aç → adres çubuğundan elle portala git → API İzlemeyi Başlat.
+            Sıra: profil + ağ seç → Chrome Aç → elle portala git → worker ayarları → API izleme başlat.
           </p>
         </section>
 
-        <section class="card card-network">
-          <div class="card-head">
-            <h2>Ağ / IP</h2>
-            <span class="hint">Ev IP veya statik proxy IP seç → kilitle → watcher başlat</span>
-          </div>
-
-          <div class="ip-grid">
-            <div class="ip-box">
-              <span class="ip-label" id="currentIpLabel">Ev public IP</span>
-              <strong id="currentIp">—</strong>
-              <small class="field-hint" id="currentIpHint">Ev IP tarayıcıdan ölçülür (antivirüs engellemez)</small>
-            </div>
-            <div class="ip-box ip-box-accent">
-              <span class="ip-label">Kilitli IP (worker)</span>
-              <strong id="lockedIp">—</strong>
-              <small class="field-hint">Ev IP kullanmayacaksanız sıfırlayın veya proxy seçin</small>
-            </div>
-          </div>
-
-          <label class="field">
-            <span>Bağlantı modu</span>
-            <select id="proxyMode">
-              <option value="direct">Doğrudan (ev interneti)</option>
-              <option value="proxy">Proxy (paralı IP — hazır olunca)</option>
-            </select>
-          </label>
-
-          <label class="field" id="proxyUrlField" hidden>
-            <span>Proxy havuzu (farklı çıkış IP)</span>
-            <select id="proxyUrl">
-              <option value="">— Seç —</option>
-            </select>
-            <small class="field-hint" id="proxyExitHint"></small>
-          </label>
-
-          <div class="inline-actions">
-            <button type="button" class="btn btn-secondary" id="btnLockCurrentIp">
-              Mevcut IP'yi kilitle
-            </button>
-            <button type="button" class="btn btn-secondary" id="btnClearLockedIp">
-              Kilitli IP'yi sıfırla
-            </button>
-            <button type="button" class="btn btn-secondary" id="btnRefreshNetworkIp">
-              Ev IP'yi yeniden ölç
-            </button>
-            <button type="button" class="btn btn-secondary" id="btnSaveNetwork">
-              Ağ ayarını kaydet
-            </button>
-          </div>
-
-          <div class="manual-home-ip" id="manualHomeIpField" hidden>
+        <dialog id="chromeProfileDialog" class="profile-dialog">
+          <form method="dialog" id="chromeProfileForm">
+            <h3 id="chromeProfileDialogTitle">Chrome profili</h3>
             <label class="field">
-              <span>Ev IP (manuel — ProxyNet açıkken otomatik ölçülemez)</span>
-              <input type="text" id="manualHomeIp" placeholder="ör. 85.xxx.xxx.xxx" inputmode="decimal" />
+              <span>Görünen ad</span>
+              <input type="text" id="chromeProfileName" required />
             </label>
-            <button type="button" class="btn btn-secondary" id="btnSaveManualHomeIp">
-              Kaydet ve kilitle
-            </button>
-          </div>
-          <p class="note network-note" id="networkModeHint"></p>
-        </section>
+            <label class="field">
+              <span>Profil ID (opsiyonel)</span>
+              <input type="text" id="chromeProfileId" placeholder="profile-hasan-kaya" />
+            </label>
+            <label class="field">
+              <span>Chrome giriş email</span>
+              <input type="email" id="chromeProfileEmail" required autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Chrome giriş şifre</span>
+              <input type="password" id="chromeProfilePassword" autocomplete="new-password" required />
+              <small class="field-hint">Düzenlemede yeni şifreyi yazın — boş kaydedilemez. Kalıcı depo: <code>data/control-panel/chrome-profiles.json</code> (manifest otomatik üretilir).</small>
+            </label>
+            <label class="field">
+              <span>Tercih CDP port (opsiyonel)</span>
+              <input type="number" id="chromeProfilePreferredPort" min="9222" max="9230" placeholder="Otomatik" />
+            </label>
+            <div class="inline-actions">
+              <button type="submit" class="btn btn-primary" id="btnSaveChromeProfile">Kaydet</button>
+              <button type="button" class="btn btn-ghost" id="btnCancelChromeProfile">İptal</button>
+            </div>
+            <p class="note">Kayıtlı profiller ana ekrandaki listede görünür. Silme yalnızca kaydı kaldırır; <code>data/chrome/</code> klasörü diskte kalabilir.</p>
+          </form>
+        </dialog>
 
         <section class="card card-api">
           <div class="card-head">
             <h2>Worker ayarları</h2>
-            <span class="hint">Portal wizard alanları + poll — profil bazlı kayıt</span>
+            <span class="hint">Watcher oturumu — durdurulunca taslak silinir (Chrome profili kalır)</span>
           </div>
 
           <div class="wizard-section">
@@ -170,7 +205,7 @@
           <div class="api-preview" id="apiPreview"></div>
           <div class="worker-summary" id="workerSummary"></div>
 
-          <button type="button" class="btn btn-secondary" id="btnSaveApi">Worker ayarlarını kaydet</button>
+          <button type="button" class="btn btn-secondary" id="btnSaveApi">Worker taslağını kaydet</button>
         </section>
 
         <section class="card card-workflow span-2">

@@ -13,5 +13,8 @@ data/config/proxy-pool.local.json
 data/control-panel/
 *.log
 
+# Taşıma rehberi — gerçek token/şifre/TC içerir
+docs/YENI-PC-KURULUM.md
+
 # GitHub Desktop ile yanlışlıkla oluşturulan iç içe boş repo klasörü
 /kozmoz-observer/

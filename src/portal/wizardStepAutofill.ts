@@ -229,6 +229,11 @@ export async function ensureApiPollInfoStepFieldsFilled(
   settings: AppointmentSettings,
   queryParams: ApiQueryParams,
 ): Promise<void> {
+  // BAN-SAFE: TC + sonraki adimlar gecici kapali — ban bitince asagidaki blogu acin.
+  logger.info("[wizard-fill] BAN-SAFE: Adim 3 otomasyon atlandi (TC/sekil/bos tik yok).");
+  return;
+
+  /*
   const applicationSelectors = parseLocatorList(settings.applicationTypeLocator);
   if (await isSelectEmpty(page, applicationSelectors)) {
     logger.info("[wizard-fill] Adim 3 — basvuru tipi dolduruluyor (panel).");
@@ -286,6 +291,7 @@ export async function ensureApiPollInfoStepFieldsFilled(
       );
     }
   }
+  */
 }
 
 /** @deprecated ensureApiPollInfoStepFieldsFilled kullanın */
@@ -366,6 +372,7 @@ export async function ensureVisibleWizardFieldsFilled(
   }
 
   const nationalitySelectors = parseLocatorList(settings.nationalityNumberLocator);
+  /*
   if (await isNationalityInputEmpty(page, nationalitySelectors)) {
     logger.info("[wizard-fill] TC Kimlik boş — dolduruluyor.");
     try {
@@ -374,8 +381,10 @@ export async function ensureVisibleWizardFieldsFilled(
       logger.warn(`[wizard-fill] TC: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  */
 
   const styleSelectors = parseLocatorList(settings.appointmentStyleLocator);
+  /*
   if (await isSelectEmpty(page, styleSelectors)) {
     logger.info("[wizard-fill] Başvuru şekli boş — dolduruluyor.");
     try {
@@ -397,6 +406,10 @@ export async function ensureVisibleWizardFieldsFilled(
       }
     }
   }
+  */
+  void nationalitySelectors;
+  void styleSelectors;
+  void appointmentStyleOverride;
 }
 
 /** Boş alanları doldur → captcha gate dışarıda → Sonraki (insani). */

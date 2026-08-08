@@ -100,7 +100,7 @@ export async function launchChromeForProfile(
   const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
 
   const existing = registry.findByProfile(profile.id, "chrome");
-  if (existing.length > 0 && (await isCdpEndpointReady(cdpEndpoint))) {
+  if (existing.length > 0 && (await isCdpEndpointReady(cdpEndpoint, { exact: true }))) {
     return {
       ok: true,
       message: "Chrome zaten çalışıyor (CDP hazır).",
@@ -111,7 +111,7 @@ export async function launchChromeForProfile(
     };
   }
 
-  if (await isCdpEndpointReady(cdpEndpoint)) {
+  if (await isCdpEndpointReady(cdpEndpoint, { exact: true })) {
     const attached = registry.register({
       kind: "chrome",
       profileId: profile.id,
@@ -160,6 +160,10 @@ export async function launchChromeForProfile(
     registry.markRunning(record.id, { pid: child.pid });
   }
 
+  child.on("exit", () => {
+    registry.markExited(record.id, "Chrome kapandı");
+  });
+
   const ready = await waitForCdp(cdpEndpoint);
   if (!ready) {
     registry.markFailed(record.id, `CDP port ${cdpPort} açılmadı`);
@@ -186,7 +190,7 @@ export async function launchChromeForProfile(
 
 export async function getChromeStatus(cdpPort: number): Promise<{ ready: boolean; endpoint: string }> {
   const endpoint = `http://127.0.0.1:${cdpPort}`;
-  return { ready: await isCdpEndpointReady(endpoint), endpoint };
+  return { ready: await isCdpEndpointReady(endpoint, { exact: true }), endpoint };
 }
 
 export function readProfileProxyUrl(profile: ResolvedProfile): string | undefined {
