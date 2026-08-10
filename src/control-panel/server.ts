@@ -120,6 +120,17 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
     return;
   }
 
+  if (method === "GET" && pathname === "/api/chrome/exit-ip") {
+    const profileId = new URL(req.url ?? "", "http://local").searchParams.get("profileId") ?? "profile-1";
+    try {
+      const data = await service.measureChromeExitIp(profileId);
+      sendJson(res, 200, data);
+    } catch (error) {
+      sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    }
+    return;
+  }
+
   if (method === "GET" && pathname === "/api/network/ip") {
     const url = new URL(req.url ?? "", "http://local");
     const profileId = url.searchParams.get("profileId") ?? "profile-1";
@@ -248,6 +259,64 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
     const body = await readJsonBody<{ profileId: string }>(req);
     service.deleteChromeProfile(body.profileId);
     sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (method === "GET" && pathname === "/api/proxy-pool") {
+    sendJson(res, 200, { proxies: service.listPanelProxies() });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/proxy-pool/create") {
+    const body = await readJsonBody<{
+      label: string;
+      host: string;
+      port: number;
+      id?: string;
+      username?: string;
+      password?: string;
+      protocol?: "http" | "https";
+      exitIp?: string;
+      ispStatic?: boolean;
+      enabled?: boolean;
+      profiles?: string[];
+    }>(req);
+    const proxy = service.createPanelProxy(body);
+    sendJson(res, 200, { proxy });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/proxy-pool/update") {
+    const body = await readJsonBody<{
+      id: string;
+      label?: string;
+      host?: string;
+      port?: number;
+      username?: string;
+      password?: string;
+      protocol?: "http" | "https";
+      exitIp?: string;
+      ispStatic?: boolean;
+      enabled?: boolean;
+      profiles?: string[];
+    }>(req);
+    const { id, ...patch } = body;
+    const proxy = service.updatePanelProxy(id, patch);
+    sendJson(res, 200, { proxy });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/proxy-pool/delete") {
+    const body = await readJsonBody<{ id: string }>(req);
+    service.deletePanelProxy(body.id);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (method === "POST" && pathname === "/api/proxy-pool/test-ip") {
+    const body = await readJsonBody<{ id: string }>(req);
+    const result = await service.testPanelProxyExitIp(body.id);
+    sendJson(res, 200, result);
     return;
   }
 

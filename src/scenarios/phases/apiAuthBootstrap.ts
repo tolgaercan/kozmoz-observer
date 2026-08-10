@@ -608,12 +608,21 @@ export async function tryRefreshTokenFromActivePage(
       return record.authorization;
     }
 
+    const manualAuth = await detectManualAuthStep(page);
+    const quickWaitMs = 8_000;
+    const authWaitMs = manualAuth.required
+      ? Math.max(
+          runtime.settings.apiWatcher.tokenCaptureWaitMs,
+          runtime.settings.intervention.loginMaxWaitMs,
+        )
+      : quickWaitMs;
+
     const captured = await waitForPortalJwtSession(
       runtime,
       page,
       session.context,
       runtime.settings.apiWatcher,
-      8_000,
+      authWaitMs,
     );
     if (captured) {
       const profile = runtime.profileManager.resolveProfile(runtime.profileId, runtime.settings);

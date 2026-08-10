@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 
+import type { ManualAuthState } from "../auth/authStepDetector.js";
 import type { ApiQueryParams } from "../api/client/resolveApiQueryParams.js";
 import type { ApiWatcherSettings, AppointmentSettings } from "../config/settings.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
@@ -29,6 +30,50 @@ const INFO_STEP = 3 as WizardStepId;
 export interface EnsureWizardForApiPollResult {
   ok: boolean;
   reason?: string;
+}
+
+export interface EnsureWizardForApiPollOptions {
+  /** OTP/giris gelirse bekleme suresi (ms) */
+  manualAuthMaxWaitMs?: number;
+  onManualAuthRequired?: (auth: ManualAuthState, url: string) => Promise<void>;
+}
+
+async function buildWizardGateOptions(
+  page: Page,
+  profile: ResolvedProfile,
+  appointmentSettings: AppointmentSettings,
+  options?: EnsureWizardForApiPollOptions,
+) {
+  return {
+    waitForManualAuth: true,
+    manualAuthMaxWaitMs: options?.manualAuthMaxWaitMs ?? 1_800_000,
+    profileId: profile.id,
+    onAuthRequired: options?.onManualAuthRequired
+      ? async (auth: ManualAuthState) => {
+          await options.onManualAuthRequired!(auth, page.url());
+        }
+      : undefined,
+  };
+}
+
+async function waitWizardGate(
+  page: Page,
+  appointmentSettings: AppointmentSettings,
+  profile: ResolvedProfile,
+  options?: EnsureWizardForApiPollOptions,
+): Promise<EnsureWizardForApiPollResult | null> {
+  const gate = await waitForWizardStepGate(
+    page,
+    appointmentSettings,
+    await buildWizardGateOptions(page, profile, appointmentSettings, options),
+  );
+  if (!gate.ok) {
+    logger.warn(`[wizard-prep] Adim kapisi: ${gate.message ?? gate.blockedBy}`);
+    if (gate.blockedBy === "otp" || gate.blockedBy === "login" || gate.blockedBy === "captcha") {
+      return { ok: false, reason: gate.message };
+    }
+  }
+  return null;
 }
 
 export async function isPortalAppointmentTypeReady(
@@ -114,6 +159,7 @@ async function ensureInfoStepViewForApiPoll(
   appointmentSettings: AppointmentSettings,
   apiSettings: ApiWatcherSettings,
   queryParams: ApiQueryParams,
+  wizardOptions?: EnsureWizardForApiPollOptions,
 ): Promise<void> {
   let contentStep = await detectViewStepFromContent(page);
 
@@ -132,36 +178,29 @@ async function ensureInfoStepViewForApiPoll(
   }
 
   if ((contentStep ?? 0) < 2) {
-    const gateBeforeNext = await waitForWizardStepGate(page, appointmentSettings);
-    if (!gateBeforeNext.ok) {
-      if (
-        gateBeforeNext.blockedBy === "otp" ||
-        gateBeforeNext.blockedBy === "login" ||
-        gateBeforeNext.blockedBy === "captcha"
-      ) {
-        throw new Error(gateBeforeNext.message ?? "Adim 1 Sonraki oncesi captcha/giris bekleniyor");
-      }
+    const gateBefore = await waitWizardGate(page, appointmentSettings, profile, wizardOptions);
+    if (gateBefore) {
+      throw new Error(gateBefore.reason ?? "Adim 1 oncesi OTP/giris bekleniyor");
     }
 
     logger.info("[wizard-prep] Adim 1 tamam (il+merkez) — tek Sonraki ile adim 2'ye.");
     await advanceWizardStep1ToStep2Only(page, profile, appointmentSettings, queryParams);
 
-    const gateAfterNext = await waitForWizardStepGate(page, appointmentSettings);
-    if (!gateAfterNext.ok) {
-      if (
-        gateAfterNext.blockedBy === "otp" ||
-        gateAfterNext.blockedBy === "login" ||
-        gateAfterNext.blockedBy === "captcha"
-      ) {
-        throw new Error(gateAfterNext.message ?? "Adim 1→2 Sonraki sonrasi captcha/giris bekleniyor");
-      }
+    const gateAfter = await waitWizardGate(page, appointmentSettings, profile, wizardOptions);
+    if (gateAfter) {
+      throw new Error(gateAfter.reason ?? "Adim 1→2 Sonraki sonrasi OTP/giris bekleniyor");
     }
 
     contentStep = await detectViewStepFromContent(page);
   }
 
   if ((contentStep ?? 0) < INFO_STEP) {
-    logger.info("[wizard-prep] Adim 2 → 3 tek Sonraki (bilgi formu — TC/sekil sayfasi).");
+    const gateBeforeStep3 = await waitWizardGate(page, appointmentSettings, profile, wizardOptions);
+    if (gateBeforeStep3) {
+      throw new Error(gateBeforeStep3.reason ?? "Adim 3 oncesi OTP/giris bekleniyor");
+    }
+
+    logger.info("[wizard-prep] Adim 2 → 3 tek Sonraki (bilgi formu — TC/sekil BAN-SAFE atlanir).");
     await clickWizardNextButton(page, appointmentSettings);
     await page.waitForTimeout(appointmentSettings.waitAfterWizardNextMs || 400);
   }
@@ -180,8 +219,8 @@ export async function ensureWizardForApiPoll(
   appointmentSettings: AppointmentSettings,
   apiSettings: ApiWatcherSettings,
   queryParams: ApiQueryParams,
+  wizardOptions?: EnsureWizardForApiPollOptions,
 ): Promise<EnsureWizardForApiPollResult> {
-  const selector = apiSettings.appointmentTypeSelectLocator;
   const targetTypeId = queryParams.appointmentTypeId.trim();
   const styleLabel = queryParams.appointmentStyleLabel?.trim();
 
@@ -220,19 +259,11 @@ export async function ensureWizardForApiPoll(
     }
   }
 
-  const gate = await waitForWizardStepGate(page, appointmentSettings);
-  if (!gate.ok) {
-    logger.warn(`[wizard-prep] Adim kapisi: ${gate.message ?? gate.blockedBy}`);
-    if (gate.blockedBy === "otp" || gate.blockedBy === "login" || gate.blockedBy === "captcha") {
-      return { ok: false, reason: gate.message };
-    }
+  const gateBlock = await waitWizardGate(page, appointmentSettings, profile, wizardOptions);
+  if (gateBlock) {
+    return gateBlock;
   }
 
-  // BAN-SAFE: Adim 3 navigasyon + TC/sekil/bos tik gecici kapali — ban bitince asagiyi acin.
-  logger.info("[wizard-prep] BAN-SAFE: Adim 3 hazirligi atlandi (ek istek yok).");
-  return { ok: true };
-
-  /*
   try {
     await ensureInfoStepViewForApiPoll(
       page,
@@ -240,6 +271,7 @@ export async function ensureWizardForApiPoll(
       appointmentSettings,
       apiSettings,
       queryParams,
+      wizardOptions,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -247,9 +279,15 @@ export async function ensureWizardForApiPoll(
     return { ok: false, reason: message };
   }
 
+  // BAN-SAFE: TC / bos tik / basvuru sekli doldurma kapali — sadece adim 3 gorunumune gelindi.
+  logger.info("[wizard-prep] Adim 3 gorunumu hazir — TC/sekil otomasyonu BAN-SAFE kapali.");
+  return { ok: true };
+
+  /*
   await ensureApiPollInfoStepFieldsFilled(page, profile, appointmentSettings, queryParams);
   logger.info("[wizard-prep] Adim 3 — tip/TC/sekil dolduruldu, Sonraki YOK.");
 
+  const selector = apiSettings.appointmentTypeSelectLocator;
   if (await isAppointmentTypeSelectReady(page, selector, targetTypeId)) {
     logger.info(
       `[wizard-prep] Basvuru sekli hazir — typeId=${targetTypeId} (${styleLabel ?? "?"})`,

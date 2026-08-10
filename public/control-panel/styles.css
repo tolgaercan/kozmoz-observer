@@ -814,3 +814,23 @@ th {
   margin-top: 8px;
   font-size: 0.85rem;
 }
+
+.proxy-pool-list {
+  margin-top: 10px;
+}
+
+.field-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+.field-checkbox input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.field-checkbox span {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}

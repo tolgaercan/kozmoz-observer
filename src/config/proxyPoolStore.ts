@@ -1,6 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { PanelProxyStore } from "../control-panel/panelProxyStore.js";
+
 export interface ProxyDefinition {
   id: string;
   label: string;
@@ -54,22 +56,33 @@ function readPoolFile(path: string): ProxyPoolFile {
 
 export class ProxyPoolStore {
   private readonly projectRoot: string;
+  private readonly panelStore: PanelProxyStore;
 
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
+    this.panelStore = new PanelProxyStore(projectRoot);
+  }
+
+  /** Panel CRUD kaynağı — tek doğruluk kaynağı */
+  getPanelStore(): PanelProxyStore {
+    return this.panelStore;
   }
 
   loadAll(): ProxyDefinition[] {
+    const panelEntries = this.panelStore.listAll();
+    if (panelEntries.length > 0) {
+      return panelEntries;
+    }
+
+    const legacy = readPoolFile(resolve(configDir(this.projectRoot), "proxy-pool.local.json"));
+    if (legacy.proxies.length > 0) {
+      return legacy.proxies;
+    }
+
     const example = readPoolFile(resolve(configDir(this.projectRoot), "proxy-pool.example.json"));
-    const local = readPoolFile(resolve(configDir(this.projectRoot), "proxy-pool.local.json"));
-    const byId = new Map<string, ProxyDefinition>();
-    for (const proxy of example.proxies) {
-      byId.set(proxy.id, proxy);
-    }
-    for (const proxy of local.proxies) {
-      byId.set(proxy.id, proxy);
-    }
-    return [...byId.values()];
+    return example.proxies.filter(
+      (proxy) => !proxy.id.includes("example") && proxy.username !== "YOUR_USERNAME",
+    );
   }
 
   getById(id: string): ProxyDefinition | undefined {
@@ -77,28 +90,20 @@ export class ProxyPoolStore {
   }
 
   listForPanel(): ProxyPanelOption[] {
-    const localPath = resolve(configDir(this.projectRoot), "proxy-pool.local.json");
-    const local = readPoolFile(localPath).proxies;
-    // Panelde yalnızca gerçek proxy'ler (local). example.json şablon — dropdown'a karışmasın.
-    const source =
-      local.length > 0
-        ? local
-        : readPoolFile(resolve(configDir(this.projectRoot), "proxy-pool.example.json")).proxies.filter(
-            (proxy) => !proxy.id.includes("example") && proxy.username !== "YOUR_USERNAME",
-          );
-
-    return source.map((proxy) => ({
-      id: proxy.id,
-      label: proxy.label,
-      host: proxy.host,
-      port: proxy.port,
-      protocol: proxy.protocol ?? "http",
-      exitIp: proxy.exitIp,
-      ispStatic: proxy.ispStatic === true,
-      enabled: proxy.enabled !== false,
-      profiles: proxy.profiles ?? [],
-      hasAuth: Boolean(proxy.username),
-    }));
+    return this.loadAll()
+      .filter((proxy) => proxy.enabled !== false)
+      .map((proxy) => ({
+        id: proxy.id,
+        label: proxy.label,
+        host: proxy.host,
+        port: proxy.port,
+        protocol: proxy.protocol ?? "http",
+        exitIp: proxy.exitIp,
+        ispStatic: proxy.ispStatic === true,
+        enabled: proxy.enabled !== false,
+        profiles: proxy.profiles ?? [],
+        hasAuth: Boolean(proxy.username),
+      }));
   }
 
   resolveForProfile(profileId: string, proxyId?: string): ProxyDefinition | undefined {

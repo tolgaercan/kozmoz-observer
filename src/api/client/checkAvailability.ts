@@ -29,6 +29,7 @@ import { WorkerConfigStore } from "../../control-panel/workerConfigStore.js";
 import { ensureWizardForApiPoll, isPortalSessionReadyForPoll } from "../../portal/ensureWizardForApiPoll.js";
 import { isBasvuruPortalUrl, isKosmosMarketingHome } from "../../portal/kosmosOrigin.js";
 import { ProfileManager } from "../../profiles/profileManager.js";
+import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
 import { logger } from "../../utils/logger.js";
 
 function pageIsOnPortal(page: Page): boolean {
@@ -253,6 +254,7 @@ export async function checkAvailability(
         const appSettings = loadSettings(ctx.projectRoot);
         const pollPrepRounds = 2;
         const pollSessionSettleMs = 1_500;
+        const telegram = new TelegramNotifier(appSettings.telegram);
 
         for (let round = 1; round <= pollPrepRounds; round++) {
           if (ctx.settings.apiWizardAutoNavigate) {
@@ -266,10 +268,7 @@ export async function checkAvailability(
             if (!entry.ok) {
               logger.warn(`[checkAvailability] Portal girisi: ${entry.reason ?? entry.step ?? "?"}`);
             }
-          }
 
-          if (ctx.settings.syncPortalAppointmentType) {
-            /*
             const workerStore = new WorkerConfigStore(ctx.projectRoot);
             const worker = workerStore.getWorker(ctx.profileId, "", {
               pollIntervalMs: ctx.settings.pollIntervalMs,
@@ -281,39 +280,48 @@ export async function checkAvailability(
             );
             const profile = mergeWorkerApiIntoProfile(baseProfile, worker.api);
 
-            if (ctx.settings.apiWizardAutoNavigate) {
-              const prep = await ensureWizardForApiPoll(
-                pollPage,
-                profile,
-                appSettings.appointment,
-                ctx.settings,
-                effectiveParams,
-              );
-              if (!prep.ok) {
-                logger.warn(`[checkAvailability] Wizard hazirlik: ${prep.reason}`);
-              }
+            const prep = await ensureWizardForApiPoll(
+              pollPage,
+              profile,
+              appSettings.appointment,
+              ctx.settings,
+              effectiveParams,
+              {
+                manualAuthMaxWaitMs: Math.max(
+                  ctx.settings.tokenCaptureWaitMs,
+                  appSettings.intervention.loginMaxWaitMs,
+                ),
+                onManualAuthRequired: async (auth, url) => {
+                  if (!telegram.isConfigured()) {
+                    return;
+                  }
+                  const reason =
+                    auth.kind === "otp"
+                      ? "Portal OTP kodu girin — wizard devam edecek"
+                      : auth.kind === "login_and_otp"
+                        ? "Sifre + OTP ile giris yapin — wizard devam edecek"
+                        : auth.kind === "login"
+                          ? "Portal sifresi ile giris yapin — wizard devam edecek"
+                          : "Portal dogrulama tamamlayin — wizard devam edecek";
+                  await telegram.notifyManualHelpRequired({
+                    profileId: ctx.profileId,
+                    url,
+                    reason,
+                  });
+                },
+              },
+            );
+            if (!prep.ok) {
+              logger.warn(`[checkAvailability] Wizard hazirlik: ${prep.reason}`);
             }
+          }
 
+          if (ctx.settings.syncPortalAppointmentType) {
+            /*
             const syncResult = await syncPortalAppointmentType(pollPage, effectiveParams, ctx.settings);
-            if (syncResult.synced) {
-              logger.info(
-                `[checkAvailability] Portal typeId=${syncResult.targetValue} senkron OK — GetClosedDate poll`,
-              );
-            } else if (
-              syncResult.skipped &&
-              syncResult.reason &&
-              syncResult.reason !== "zaten eslesiyor"
-            ) {
-              logger.warn(
-                `[checkAvailability] Portal basvuru sekli senkron atlandi: ${syncResult.reason}`,
-              );
-            } else if (!syncResult.skipped && !syncResult.synced && syncResult.reason) {
-              logger.warn(
-                `[checkAvailability] Portal basvuru sekli senkron basarisiz: ${syncResult.reason}`,
-              );
-            }
+            ...
             */
-            logger.info("[checkAvailability] BAN-SAFE: wizard/typeId senkron atlandi (ek istek yok).");
+            logger.info("[checkAvailability] BAN-SAFE: typeId senkron atlandi (ek istek yok).");
           }
 
           const session = await isPortalSessionReadyForPoll(pollPage, ctx.settings, effectiveParams, {

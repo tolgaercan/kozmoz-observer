@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 
 import { ApiHealthStore, type ApiHealthRecord } from "./apiHealthStore.js";
 import { loadSettings } from "../config/settings.js";
@@ -11,8 +12,10 @@ import {
 } from "../api/client/portalApiCatalog.js";
 import {
   detectPublicIpForWorker,
+  detectPublicIpThroughProxy,
   resolveChromeProxyServer,
   resolveProxyPublicIp,
+  resolveWorkerProxyDefinition,
 } from "../config/proxyResolver.js";
 import { measureHomeIpViaChrome } from "../config/chromeIpDetect.js";
 import {
@@ -27,11 +30,13 @@ import {
 } from "./chromeLauncher.js";
 import { ensureChromeGoogleLoginAfterLaunch, type ChromeGoogleLoginResult } from "./chromeGoogleLoginService.js";
 import { allocateCdpPort } from "./cdpPortAllocator.js";
+import { killProcessesOnPort } from "./cdpPortKill.js";
 import {
   ChromeProfileStore,
   type PanelChromeProfile,
 } from "./chromeProfileStore.js";
 import { ChromeSessionStore } from "./chromeSessionStore.js";
+import { PanelProxyStore, type PanelProxyEntry } from "./panelProxyStore.js";
 import { WatcherSessionStore } from "./watcherSessionStore.js";
 import {
   buildChromeCredentialEnv,
@@ -69,6 +74,9 @@ export interface NetworkIpInfo {
   proxyPool: ProxyPanelOption[];
   selectedProxyId?: string;
   lockedIp: string;
+  /** Proxy modunda Chrome CDP ile ölçüldüyse hangi profil/port */
+  measuredProfileId?: string;
+  measuredCdpPort?: number;
 }
 
 export interface ProfileOption {
@@ -92,6 +100,21 @@ export interface ChromeProfilePanelView {
   preferredCdpPort?: number | null;
   assignedCdpPort?: number;
   enabled: boolean;
+}
+
+export interface ProxyPoolPanelView {
+  id: string;
+  label: string;
+  host: string;
+  port: number;
+  protocol: string;
+  username?: string;
+  exitIp?: string;
+  ispStatic: boolean;
+  enabled: boolean;
+  profiles: string[];
+  hasAuth: boolean;
+  hasPassword: boolean;
 }
 
 export interface ControlPanelBootstrap {
@@ -128,6 +151,7 @@ export class ControlPanelService {
   private readonly workerStore: WorkerConfigStore;
   private readonly runtimeStore: WorkerRuntimeStore;
   private readonly chromeProfileStore: ChromeProfileStore;
+  private readonly panelProxyStore: PanelProxyStore;
   private readonly chromeSessionStore: ChromeSessionStore;
   private readonly watcherSessionStore: WatcherSessionStore;
   private readonly registry: ProcessRegistry;
@@ -140,6 +164,7 @@ export class ControlPanelService {
     this.workerStore = new WorkerConfigStore(projectRoot);
     this.runtimeStore = new WorkerRuntimeStore(projectRoot);
     this.chromeProfileStore = new ChromeProfileStore(projectRoot);
+    this.panelProxyStore = new PanelProxyStore(projectRoot);
     this.chromeSessionStore = new ChromeSessionStore(projectRoot);
     this.watcherSessionStore = new WatcherSessionStore(projectRoot);
     this.registry = registry;
@@ -155,6 +180,63 @@ export class ControlPanelService {
     }
     this.importManifestCredentialsIfNeeded();
     this.syncManifestFromPanelProfiles();
+    this.importLegacyProxiesIfNeeded();
+    this.reconcileStaleWatcherSessions();
+  }
+
+  private importLegacyProxiesIfNeeded(): void {
+    if (this.panelProxyStore.listAll().length > 0) {
+      return;
+    }
+
+    const legacyPath = resolve(this.projectRoot, "data/config/proxy-pool.local.json");
+    if (!existsSync(legacyPath)) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(readFileSync(legacyPath, "utf-8")) as {
+        proxies?: Array<Omit<PanelProxyEntry, "createdAt" | "updatedAt">>;
+      };
+      const legacy = parsed.proxies ?? [];
+      if (legacy.length === 0) {
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const migrated: PanelProxyEntry[] = legacy.map((proxy) => ({
+        ...proxy,
+        protocol: proxy.protocol ?? "http",
+        enabled: proxy.enabled !== false,
+        profiles: proxy.profiles ?? [],
+        createdAt: now,
+        updatedAt: now,
+      }));
+
+      this.panelProxyStore.replaceAll(migrated);
+      logger.info(`[panel] ${migrated.length} proxy kaydı proxy-pool.local.json → panel store aktarıldı.`);
+    } catch (error) {
+      logger.warn(
+        `[panel] Legacy proxy import: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private toProxyPoolPanelView(entry: PanelProxyEntry): ProxyPoolPanelView {
+    return {
+      id: entry.id,
+      label: entry.label,
+      host: entry.host,
+      port: entry.port,
+      protocol: entry.protocol ?? "http",
+      username: entry.username,
+      exitIp: entry.exitIp,
+      ispStatic: entry.ispStatic === true,
+      enabled: entry.enabled !== false,
+      profiles: entry.profiles ?? [],
+      hasAuth: Boolean(entry.username),
+      hasPassword: Boolean(entry.password),
+    };
   }
 
   private importManifestCredentialsIfNeeded(): void {
@@ -195,10 +277,27 @@ export class ControlPanelService {
     };
   }
 
+  private reconcileStaleWatcherSessions(): void {
+    for (const session of this.watcherSessionStore.list()) {
+      const running = this.registry
+        .findByProfile(session.profileId, "api-watcher")
+        .some((job) => job.status === "running" || job.status === "starting");
+      if (!running) {
+        this.watcherSessionStore.clear(session.profileId);
+      }
+    }
+  }
+
+  private isWatcherRunning(profileId: string): boolean {
+    return this.registry
+      .findByProfile(profileId, "api-watcher")
+      .some((job) => job.status === "running" || job.status === "starting");
+  }
+
   private resolveEffectiveWorker(profileId: string, fallbackIp = ""): WorkerConfig {
     const timingDefaults = this.runtimeDefaults();
     const activeWatcher = this.watcherSessionStore.get(profileId);
-    if (activeWatcher) {
+    if (activeWatcher && this.isWatcherRunning(profileId)) {
       return {
         profileId,
         proxyMode: activeWatcher.network.proxyMode,
@@ -272,6 +371,98 @@ export class ControlPanelService {
     this.syncManifestFromPanelProfiles();
   }
 
+  listPanelProxies(): ProxyPoolPanelView[] {
+    return this.panelProxyStore.listAll().map((entry) => this.toProxyPoolPanelView(entry));
+  }
+
+  createPanelProxy(input: {
+    label: string;
+    host: string;
+    port: number;
+    id?: string;
+    username?: string;
+    password?: string;
+    protocol?: "http" | "https";
+    exitIp?: string;
+    ispStatic?: boolean;
+    enabled?: boolean;
+    profiles?: string[];
+  }): ProxyPoolPanelView {
+    if (input.username?.trim() && !input.password?.trim()) {
+      throw new Error("Kullanıcı adı varsa parola zorunlu.");
+    }
+    if (!input.username?.trim() && input.password?.trim()) {
+      throw new Error("Parola için kullanıcı adı da gerekli.");
+    }
+    const created = this.panelProxyStore.create(input);
+    return this.toProxyPoolPanelView(created);
+  }
+
+  updatePanelProxy(
+    id: string,
+    patch: Partial<
+      Pick<
+        PanelProxyEntry,
+        | "label"
+        | "host"
+        | "port"
+        | "username"
+        | "password"
+        | "protocol"
+        | "exitIp"
+        | "ispStatic"
+        | "enabled"
+        | "profiles"
+      >
+    >,
+  ): ProxyPoolPanelView & { passwordUpdated: boolean } {
+    const { entry, passwordUpdated } = this.panelProxyStore.update(id, patch);
+    return { ...this.toProxyPoolPanelView(entry), passwordUpdated };
+  }
+
+  deletePanelProxy(id: string): void {
+    this.panelProxyStore.delete(id);
+  }
+
+  async testPanelProxyExitIp(id: string): Promise<{
+    exitIp: string;
+    updated: boolean;
+    previousExitIp?: string;
+    ipRotated?: boolean;
+    warning?: string;
+  }> {
+    const entry = this.panelProxyStore.getOrThrow(id);
+    const previousExitIp = entry.exitIp?.trim();
+
+    if (entry.ispStatic && previousExitIp) {
+      return { exitIp: previousExitIp, updated: false };
+    }
+
+    const measured = await detectPublicIpThroughProxy(entry);
+    if (measured === "unknown") {
+      throw new Error(
+        "Çıkış IP ölçülemedi — host/port/kullanıcı/parola kontrol edin (kullanıcı adı kayıtlı mı?).",
+      );
+    }
+
+    const ipRotated = Boolean(previousExitIp && previousExitIp !== measured);
+    let warning: string | undefined;
+    if (ipRotated) {
+      warning =
+        `IP değişti (${previousExitIp} → ${measured}). ProxyNet havuzu dönüyor olabilir — statik ISP için panel desteğine danışın.`;
+      logger.warn(`[panel] ${warning}`);
+    }
+
+    this.panelProxyStore.updateExitIp(id, measured);
+    return {
+      exitIp: measured,
+      updated: true,
+      previousExitIp,
+      ipRotated,
+      warning,
+    };
+  }
+
   savePanelDraft(
     profileId: string,
     patch: {
@@ -288,21 +479,48 @@ export class ControlPanelService {
     const timingDefaults = this.runtimeDefaults();
     const legacy = this.workerStore.getWorker(profileId, "", timingDefaults);
 
+    const nextProxyMode = patch.proxyMode ?? existing?.proxyMode ?? legacy.proxyMode ?? "direct";
+    const nextProxyId =
+      patch.proxyId !== undefined ? patch.proxyId : (existing?.proxyId ?? legacy.proxyId ?? "");
+    const nextProxyUrl =
+      patch.proxyUrl !== undefined ? patch.proxyUrl : (existing?.proxyUrl ?? legacy.proxyUrl ?? "");
+    const nextLockedIp =
+      patch.lockedIp !== undefined ? patch.lockedIp : existing?.lockedIp ?? legacy.lockedIp;
+    const nextHomeIp =
+      patch.lastKnownHomeIp !== undefined
+        ? patch.lastKnownHomeIp
+        : existing?.lastKnownHomeIp ?? legacy.lastKnownHomeIp;
+    const nextApi = patch.api ?? existing?.draftApi ?? legacy.api;
+    const nextTiming = patch.timing ?? existing?.draftTiming ?? legacy.timing;
+
     this.chromeSessionStore.patch(profileId, {
       profileId,
       assignedCdpPort:
         existing?.assignedCdpPort ??
         this.chromeProfileStore.get(profileId)?.preferredCdpPort ??
         9222,
-      proxyMode: patch.proxyMode ?? existing?.proxyMode ?? legacy.proxyMode ?? "direct",
-      proxyId: patch.proxyId !== undefined ? patch.proxyId : existing?.proxyId,
-      proxyUrl: patch.proxyUrl !== undefined ? patch.proxyUrl : existing?.proxyUrl,
-      lockedIp: patch.lockedIp !== undefined ? patch.lockedIp : existing?.lockedIp,
-      lastKnownHomeIp:
-        patch.lastKnownHomeIp !== undefined ? patch.lastKnownHomeIp : existing?.lastKnownHomeIp,
-      draftApi: patch.api ?? existing?.draftApi ?? legacy.api,
-      draftTiming: patch.timing ?? existing?.draftTiming ?? legacy.timing,
+      proxyMode: nextProxyMode,
+      proxyId: nextProxyId,
+      proxyUrl: nextProxyUrl,
+      lockedIp: nextLockedIp,
+      lastKnownHomeIp: nextHomeIp,
+      draftApi: nextApi,
+      draftTiming: nextTiming,
     });
+
+    this.workerStore.updateWorker(
+      profileId,
+      {
+        proxyMode: nextProxyMode,
+        proxyId: nextProxyMode === "proxy" ? nextProxyId : "",
+        proxyUrl: nextProxyMode === "proxy" ? nextProxyUrl : "",
+        lockedIp: nextLockedIp,
+        lastKnownHomeIp: nextHomeIp,
+        api: nextApi,
+        timing: nextTiming,
+      },
+      timingDefaults,
+    );
 
     return this.resolveEffectiveWorker(profileId);
   }
@@ -341,8 +559,15 @@ export class ControlPanelService {
     return this.profileManager.resolveProfile(profileId, settings);
   }
 
+  private resolveProfileCdpPort(profileId: string, profile: ReturnType<ControlPanelService["resolveProfile"]>): number {
+    const session = this.chromeSessionStore.get(profileId);
+    return session?.assignedCdpPort ?? profile.browser?.cdpPort ?? 9222;
+  }
+
   async getBootstrap(profileId: string, options?: { light?: boolean }): Promise<ControlPanelBootstrap> {
     this.importManifestCredentialsIfNeeded();
+    this.importLegacyProxiesIfNeeded();
+    this.reconcileStaleWatcherSessions();
     this.chromeProfileStore.getOrThrow(profileId);
     const worker = this.resolveEffectiveWorker(profileId);
     let homePublicIp = process.env.HOME_PUBLIC_IP?.trim() || "unknown";
@@ -381,7 +606,7 @@ export class ControlPanelService {
       measuredWanIp,
       homeIpWarning,
       connectionMode: worker.proxyMode ?? "direct",
-      proxyPool: proxyStore.listForPanel(),
+      proxyPool: this.listPanelProxies(),
       worker,
       activeWatcherSession: Boolean(this.watcherSessionStore.get(profileId)),
       runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
@@ -424,10 +649,48 @@ export class ControlPanelService {
     let warning: string | undefined;
     let ipSource: NetworkIpInfo["ipSource"];
     let measuredWanIp: string | undefined;
+    let measuredProfileId: string | undefined;
+    let measuredCdpPort: number | undefined;
+
+    const cdpPort = this.resolveProfileCdpPort(profileId, profile);
 
     if (mode === "proxy") {
-      displayIp = await resolveProxyPublicIp(this.projectRoot, profile, draftWorker);
-      ipSource = "proxy";
+      const poolId = draftWorker.proxyId?.trim();
+      const def = poolId ? new ProxyPoolStore(this.projectRoot).getById(poolId) : undefined;
+      let chromeIp: string | undefined;
+
+      if (!skipServer && options?.measureViaChrome !== false) {
+        const chromeReady = (await getChromeStatus(cdpPort)).ready;
+        if (chromeReady) {
+          chromeIp = await measureHomeIpViaChrome(cdpPort);
+        }
+      }
+
+      if (chromeIp) {
+        displayIp = chromeIp;
+        ipSource = "chrome";
+        measuredProfileId = profileId;
+        measuredCdpPort = cdpPort;
+      } else if (def?.exitIp?.trim() && skipServer) {
+        displayIp = def.exitIp.trim();
+        ipSource = "cached";
+        warning = "Proxy kaydındaki çıkış IP (ölçüm atlandı)";
+      } else if (!skipServer) {
+        displayIp = await resolveProxyPublicIp(this.projectRoot, profile, draftWorker);
+        ipSource = "proxy";
+        const chromeReady = (await getChromeStatus(cdpPort)).ready;
+        if (!chromeReady) {
+          warning =
+            `Chrome CDP hazır değil (port ${cdpPort}) — sunucu curl ölçümü (havuz IP'si dönebilir). Önce «Chrome Aç».`;
+        } else {
+          warning =
+            "Chrome IP alınamadı — sunucu curl ölçümü (havuz IP'si her seferinde değişebilir).";
+        }
+      } else {
+        displayIp = def?.exitIp?.trim() || "unknown";
+        ipSource = displayIp !== "unknown" ? "cached" : undefined;
+        warning = "Chrome kapalı — kayıtlı proxy IP gösteriliyor.";
+      }
     } else if (skipServer) {
       const pickHome = (ip?: string): string => normalizeLockedIp(ip);
       displayIp =
@@ -453,14 +716,16 @@ export class ControlPanelService {
         home.source === "env" ? "env" : home.source === "measured" ? "measured" : undefined;
 
       if (displayIp === "unknown") {
-        const cdpPort = profile.browser?.cdpPort ?? 9222;
+        const directCdpPort = profile.browser?.cdpPort ?? 9222;
         const chromeReady =
-          options?.measureViaChrome !== false && (await getChromeStatus(cdpPort)).ready;
+          options?.measureViaChrome !== false && (await getChromeStatus(directCdpPort)).ready;
         if (chromeReady) {
-          const chromeIp = await measureHomeIpViaChrome(cdpPort);
+          const chromeIp = await measureHomeIpViaChrome(directCdpPort);
           if (chromeIp) {
             displayIp = chromeIp;
             ipSource = "chrome";
+            measuredProfileId = profileId;
+            measuredCdpPort = directCdpPort;
           }
         }
 
@@ -500,9 +765,11 @@ export class ControlPanelService {
       warning,
       ipSource,
       autoLocked,
-      proxyPool: proxyStore.listForPanel(),
+      proxyPool: this.listPanelProxies(),
       selectedProxyId: proxyId || undefined,
       lockedIp,
+      measuredProfileId,
+      measuredCdpPort,
     };
   }
 
@@ -689,12 +956,40 @@ export class ControlPanelService {
     this.syncManifestFromPanelProfiles();
     const profile = this.resolveProfile(profileId);
     const worker = this.resolveEffectiveWorker(profileId);
+    const workerForLaunch: WorkerConfig = {
+      ...worker,
+      proxyMode,
+      proxyId: proxyMode === "proxy" ? proxyId : "",
+      proxyUrl: proxyMode === "proxy" ? proxyUrl : "",
+    };
     const directMode = proxyMode !== "proxy";
     const proxyServer =
       proxyMode === "proxy"
-        ? await resolveChromeProxyServer(this.projectRoot, profile, worker)
+        ? await resolveChromeProxyServer(this.projectRoot, profile, workerForLaunch)
         : undefined;
-    const launchResult = await launchChromeForProfile(profile, this.registry, proxyServer, directMode);
+
+    if (proxyMode === "proxy" && !proxyServer) {
+      const def = resolveWorkerProxyDefinition(this.projectRoot, profile, workerForLaunch);
+      if (!def) {
+        throw new Error(
+          `Proxy kaydı bulunamadı (${proxyId || proxyUrl || "boş"}). «Ağ taslağını kaydet» deyin.`,
+        );
+      }
+      if (def.ispStatic) {
+        throw new Error(
+          `"${def.label}" WAN statik kayıt — Chrome HTTP gate kullanamaz. «test» gibi gate kaydı seçin.`,
+        );
+      }
+      throw new Error(`Proxy "${def.label}" Chrome için çözülemedi.`);
+    }
+
+    const launchResult = await launchChromeForProfile(
+      profile,
+      this.registry,
+      proxyServer,
+      directMode,
+      { forceFresh: true },
+    );
 
     let googleLogin: ChromeGoogleLoginResult | undefined;
     if (launchResult.ok && !launchResult.reusedExisting) {
@@ -710,7 +1005,12 @@ export class ControlPanelService {
     return { launch: launchResult, assignedCdpPort, googleLogin };
   }
 
-  stopChrome(profileId: string): { stopped: number; processIds: string[] } {
+  stopChrome(profileId: string): { stopped: number; processIds: string[]; killedPortPids: number[] } {
+    const chromeProfile = this.chromeProfileStore.get(profileId);
+    const session = this.chromeSessionStore.get(profileId);
+    const cdpPort =
+      session?.assignedCdpPort ?? chromeProfile?.preferredCdpPort ?? 9222;
+
     const jobs = this.registry
       .findByProfile(profileId, "chrome")
       .filter((job) => job.status === "running" || job.status === "starting");
@@ -723,7 +1023,27 @@ export class ControlPanelService {
         processIds.push(job.id);
       }
     }
-    return { stopped, processIds };
+
+    const killedPortPids = cdpPort ? killProcessesOnPort(cdpPort) : [];
+    if (killedPortPids.length > 0) {
+      stopped += killedPortPids.length;
+    }
+
+    return { stopped, processIds, killedPortPids };
+  }
+
+  async measureChromeExitIp(profileId: string): Promise<{ ip: string; cdpPort: number }> {
+    const session = this.chromeSessionStore.get(profileId);
+    const chromeProfile = this.chromeProfileStore.get(profileId);
+    const cdpPort =
+      session?.assignedCdpPort ?? chromeProfile?.preferredCdpPort ?? 9222;
+    const ip = await measureHomeIpViaChrome(cdpPort);
+    if (!ip) {
+      throw new Error(
+        `Chrome çıkış IP ölçülemedi (port ${cdpPort}). Önce «Chrome Aç» deyin; debug penceresinde internet erişimi olduğundan emin olun.`,
+      );
+    }
+    return { ip, cdpPort };
   }
 
   private enrichHealthRecord(
@@ -919,15 +1239,20 @@ export class ControlPanelService {
     const defaults = this.runtimeDefaults();
     return this.registry
       .listActive()
-      .map((proc) => ({
-        ...proc,
-        runtime:
-          proc.kind === "api-watcher" &&
-          (proc.status === "running" || proc.status === "starting")
-            ? this.runtimeStore.get(proc.profileId, defaults)
-            : undefined,
-        runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
-      }));
+      .map((proc) => {
+        const sessionPort = this.chromeSessionStore.get(proc.profileId)?.assignedCdpPort;
+        const cdpPort = proc.cdpPort ?? sessionPort;
+        return {
+          ...proc,
+          cdpPort,
+          runtime:
+            proc.kind === "api-watcher" &&
+            (proc.status === "running" || proc.status === "starting")
+              ? this.runtimeStore.get(proc.profileId, defaults)
+              : undefined,
+          runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
+        };
+      });
   }
 
   async updateProcessRuntimeConfig(

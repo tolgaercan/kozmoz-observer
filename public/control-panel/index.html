@@ -57,7 +57,10 @@
           </div>
 
           <div class="wizard-section">
-            <p class="wizard-section-title">Ağ — Chrome bu ayarlarla açılır</p>
+            <div class="card-head row-between" style="margin-bottom: 8px">
+              <p class="wizard-section-title" style="margin: 0">Ağ — Chrome bu ayarlarla açılır</p>
+              <button type="button" class="btn btn-secondary btn-compact" id="btnAddProxy">+ Proxy ekle</button>
+            </div>
             <div class="ip-grid">
               <div class="ip-box">
                 <span class="ip-label" id="currentIpLabel">Çıkış IP</span>
@@ -86,6 +89,11 @@
               </select>
               <small class="field-hint" id="proxyExitHint"></small>
             </label>
+
+            <div id="proxyPoolList" class="profile-list proxy-pool-list"></div>
+            <p class="note profile-storage-note">
+              Proxy kayıtları: <code>data/control-panel/proxy-pool.json</code> — «Doğrudan (ev interneti)» her zaman kullanılabilir.
+            </p>
 
             <div class="inline-actions">
               <button type="button" class="btn btn-secondary" id="btnLockCurrentIp">Mevcut IP'yi kilitle</button>
@@ -143,6 +151,72 @@
               <button type="button" class="btn btn-ghost" id="btnCancelChromeProfile">İptal</button>
             </div>
             <p class="note">Kayıtlı profiller ana ekrandaki listede görünür. Silme yalnızca kaydı kaldırır; <code>data/chrome/</code> klasörü diskte kalabilir.</p>
+          </form>
+        </dialog>
+
+        <dialog id="proxyDialog" class="profile-dialog">
+          <form method="dialog" id="proxyForm">
+            <h3 id="proxyDialogTitle">Proxy kaydı</h3>
+            <input type="hidden" id="proxyEditId" value="" />
+            <label class="field">
+              <span>Etiket</span>
+              <input type="text" id="proxyLabel" required placeholder="ProxyNet ISP TR #1" />
+            </label>
+            <label class="field">
+              <span>Kayıt ID (opsiyonel)</span>
+              <input type="text" id="proxyRecordId" placeholder="proxynet-tr-1" />
+            </label>
+            <div class="field-grid-2">
+              <label class="field">
+                <span>Host</span>
+                <input type="text" id="proxyHost" required placeholder="gate-isp.proxynet.io" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Port</span>
+                <input type="number" id="proxyPort" required min="1" max="65535" placeholder="8036" />
+              </label>
+            </div>
+            <div class="field-grid-2">
+              <label class="field">
+                <span>Kullanıcı adı</span>
+                <input type="text" id="proxyUsername" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Parola</span>
+                <input type="password" id="proxyPassword" autocomplete="new-password" />
+              </label>
+            </div>
+            <div class="field-grid-2">
+              <label class="field">
+                <span>Protokol</span>
+                <select id="proxyProtocol">
+                  <option value="http">HTTP</option>
+                  <option value="https">HTTPS</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Çıkış IP (opsiyonel)</span>
+                <input type="text" id="proxyExitIp" placeholder="Ölç veya elle girin" inputmode="decimal" />
+              </label>
+            </div>
+            <label class="field field-checkbox">
+              <input type="checkbox" id="proxyIspStatic" />
+              <span>WAN statik (Chrome proxy kullanmaz — yalnızca IP kilitleme)</span>
+            </label>
+            <label class="field field-checkbox">
+              <input type="checkbox" id="proxyEnabled" checked />
+              <span>Etkin (dropdown'da göster)</span>
+            </label>
+            <label class="field">
+              <span>Önerilen profiller (virgülle)</span>
+              <input type="text" id="proxyProfiles" placeholder="profile-1, profile-tolga-2" />
+            </label>
+            <div class="inline-actions">
+              <button type="submit" class="btn btn-primary" id="btnSaveProxy">Kaydet</button>
+              <button type="button" class="btn btn-secondary" id="btnTestProxyIp">Çıkış IP ölç</button>
+              <button type="button" class="btn btn-ghost" id="btnCancelProxy">İptal</button>
+            </div>
+            <p class="note">ProxyNet HTTP gate: ispStatic kapalı, host/port/kullanıcı/parola doldurun. Ev interneti için bağlantı modunu «Doğrudan» seçin.</p>
           </form>
         </dialog>
 
@@ -300,6 +374,7 @@
                   <th>Tür</th>
                   <th>Profil</th>
                   <th>Etiket</th>
+                  <th>CDP</th>
                   <th>Durum</th>
                   <th>Poll</th>
                   <th>Telegram</th>
@@ -310,7 +385,7 @@
               </thead>
               <tbody id="processTableBody">
                 <tr class="empty-row">
-                  <td colspan="9">Henüz süreç yok</td>
+                  <td colspan="10">Henüz süreç yok</td>
                 </tr>
               </tbody>
             </table>

@@ -6,7 +6,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { isCdpEndpointReady } from "../browser/cdpConnector.js";
 import { detectHomePublicIp } from "../config/publicIpDetect.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
+import { killProcessesOnPort, waitForCdpPortFree } from "./cdpPortKill.js";
 import type { ProcessRegistry } from "./processRegistry.js";
+import { logger } from "../utils/logger.js";
 
 const DEFAULT_CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 
@@ -17,6 +19,7 @@ export interface ChromeLaunchResult {
   cdpPort: number;
   reusedExisting: boolean;
   processId?: string;
+  proxyApplied?: string;
 }
 
 function resolveChromeExecutable(): string {
@@ -90,17 +93,41 @@ async function waitForCdp(cdpEndpoint: string, attempts = 20): Promise<boolean> 
   return false;
 }
 
+async function clearCdpPortForRelaunch(
+  profileId: string,
+  cdpPort: number,
+  registry: ProcessRegistry,
+): Promise<void> {
+  for (const job of registry.findByProfile(profileId, "chrome")) {
+    registry.kill(job.id);
+  }
+  const killed = killProcessesOnPort(cdpPort);
+  if (killed.length > 0) {
+    logger.info(`[chrome] CDP port ${cdpPort} temizlendi (${killed.length} süreç)`);
+  }
+  await waitForCdpPortFree(cdpPort);
+}
+
 export async function launchChromeForProfile(
   profile: ResolvedProfile,
   registry: ProcessRegistry,
   proxyUrl?: string,
   directMode = false,
+  options?: { forceFresh?: boolean },
 ): Promise<ChromeLaunchResult> {
   const { userDataDir, profileDirectory, cdpPort } = resolveProfilePaths(profile);
   const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
+  const proxyApplied = proxyUrl?.trim()
+    ? proxyUrl.trim()
+    : directMode
+      ? "direct://"
+      : undefined;
 
-  const existing = registry.findByProfile(profile.id, "chrome");
-  if (existing.length > 0 && (await isCdpEndpointReady(cdpEndpoint, { exact: true }))) {
+  const forceFresh = options?.forceFresh ?? true;
+  const cdpReady = await isCdpEndpointReady(cdpEndpoint, { exact: true });
+
+  if (cdpReady && !forceFresh) {
+    const existing = registry.findByProfile(profile.id, "chrome");
     return {
       ok: true,
       message: "Chrome zaten çalışıyor (CDP hazır).",
@@ -108,26 +135,15 @@ export async function launchChromeForProfile(
       cdpPort,
       reusedExisting: true,
       processId: existing[0]?.id,
+      proxyApplied: undefined,
     };
   }
 
-  if (await isCdpEndpointReady(cdpEndpoint, { exact: true })) {
-    const attached = registry.register({
-      kind: "chrome",
-      profileId: profile.id,
-      label: `Chrome CDP :${cdpPort}`,
-      cdpPort,
-      status: "running",
-      pid: undefined,
-    });
-    return {
-      ok: true,
-      message: "Mevcut CDP oturumu bulundu — yeni Chrome açılmadı.",
-      cdpEndpoint,
-      cdpPort,
-      reusedExisting: true,
-      processId: attached.id,
-    };
+  if (cdpReady && forceFresh) {
+    logger.info(
+      `[chrome] Port ${cdpPort} meşgul — proxy/ayar uygulamak için mevcut Chrome kapatılıyor…`,
+    );
+    await clearCdpPortForRelaunch(profile.id, cdpPort, registry);
   }
 
   const chromeExe = resolveChromeExecutable();
@@ -142,6 +158,9 @@ export async function launchChromeForProfile(
   }
 
   const args = buildChromeArgs(userDataDir, profileDirectory, cdpPort, proxyUrl, directMode);
+  logger.info(
+    `[chrome] Yeni oturum: port=${cdpPort}, proxy=${proxyApplied ?? "sistem varsayılanı (ev IP riski)"}`,
+  );
   const record = registry.register({
     kind: "chrome",
     profileId: profile.id,
@@ -180,11 +199,14 @@ export async function launchChromeForProfile(
   registry.markRunning(record.id, { pid: child.pid ?? undefined });
   return {
     ok: true,
-    message: "Chrome debug modunda başlatıldı.",
+    message: proxyApplied
+      ? `Chrome debug modunda başlatıldı (proxy: ${proxyApplied}).`
+      : "Chrome debug modunda başlatıldı.",
     cdpEndpoint,
     cdpPort,
     reusedExisting: false,
     processId: record.id,
+    proxyApplied,
   };
 }
 

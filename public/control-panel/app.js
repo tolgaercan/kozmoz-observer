@@ -50,6 +50,8 @@ const state = {
   profileId: "profile-1",
   bootstrap: null,
   worker: null,
+  profileStatus: null,
+  chromeLaunchInProgress: false,
   editingChromeProfileId: null,
   profileSwitchToken: 0,
   bootstrapAbort: null,
@@ -76,6 +78,43 @@ function readNetworkDraft() {
   };
 }
 
+function selectedProxyFromForm() {
+  const proxyId = $("proxyUrl").value;
+  if (!proxyId) {
+    return null;
+  }
+  return state.bootstrap?.proxyPool?.find((p) => p.id === proxyId) ?? null;
+}
+
+function buildNetworkPreviewSnapshot(mode) {
+  const worker = state.worker ?? {};
+  const locked = worker.lockedIp || $("lockedIp").textContent.trim().replace("—", "") || "";
+  if (mode === "proxy") {
+    const selected = selectedProxyFromForm();
+    return {
+      mode: "proxy",
+      displayIp: selected?.exitIp || "—",
+      lockedIp: locked,
+      homePublicIp: state.bootstrap?.homePublicIp ?? "unknown",
+      proxyPool: state.bootstrap?.proxyPool ?? [],
+      ipSource: selected?.exitIp ? "cached" : undefined,
+      warning: selected?.exitIp
+        ? "Kayıtlı proxy çıkış IP — değişiklikten sonra «Ağ taslağını kaydet»"
+        : "Proxy seçildi — «Çıkış IP ölç» veya kaydedin",
+    };
+  }
+  const homeIp = state.bootstrap?.homePublicIp ?? "unknown";
+  return {
+    mode: "direct",
+    displayIp: homeIp,
+    lockedIp: locked,
+    homePublicIp: homeIp,
+    measuredWanIp: state.bootstrap?.measuredWanIp,
+    warning: state.bootstrap?.homeIpWarning,
+    ipSource: homeIp !== "unknown" ? "env" : undefined,
+  };
+}
+
 function validateChromeLaunchReady() {
   if (!state.profileId) {
     return "Chrome profili seçin.";
@@ -95,11 +134,36 @@ function validateChromeLaunchReady() {
 }
 
 function updateChromeLaunchButtonState() {
-  const btn = $("btnStartChrome");
-  if (!btn) return;
-  const error = validateChromeLaunchReady();
-  btn.disabled = Boolean(error);
-  btn.title = error ?? "Seçili profil ve ağ ayarı ile Chrome aç";
+  const btnStart = $("btnStartChrome");
+  const btnStop = $("btnStopChrome");
+  const hint = $("chromeHint");
+  if (!btnStart) return;
+
+  if (state.chromeLaunchInProgress) {
+    btnStart.disabled = true;
+    btnStart.textContent = "Chrome açılıyor…";
+    if (btnStop) btnStop.disabled = true;
+    return;
+  }
+
+  const ready = Boolean(state.profileStatus?.chrome?.ready);
+  const launchError = validateChromeLaunchReady();
+
+  btnStart.disabled = ready || Boolean(launchError);
+  btnStart.textContent = ready ? "Chrome açık" : "Chrome Aç";
+  btnStart.title = ready
+    ? "Chrome zaten açık — yeniden başlatmak için «Chrome Kapat»"
+    : launchError ?? "Seçili profil ve ağ ayarı ile Chrome aç";
+
+  if (btnStop) {
+    btnStop.disabled = !ready;
+    btnStop.title = ready ? "Panel Chrome'unu kapat" : "Chrome zaten kapalı";
+  }
+  if (hint) {
+    hint.textContent = ready
+      ? "Chrome açık — adres çubuğundan elle appointmentForm açın, giriş yapın, sonra watcher başlatın."
+      : "Önerilen sıra: Chrome Aç → elle portala git → API İzlemeyi Başlat.";
+  }
 }
 
 function toast(message, type = "success") {
@@ -434,33 +498,18 @@ function renderChromeStatus(status) {
   if (!status) {
     el.textContent = "Chrome durumu yükleniyor…";
     el.className = "chrome-status";
-    renderChromeActions(null);
+    updateChromeLaunchButtonState();
     return;
   }
   el.className = `chrome-status ${status.chrome.ready ? "ready" : "down"}`;
   el.innerHTML = status.chrome.ready
     ? `Chrome CDP hazır — <code>${status.chrome.endpoint}</code>`
     : `Chrome CDP kapalı — port <code>${status.cdpPort}</code>`;
-  renderChromeActions(status);
+  updateChromeLaunchButtonState();
 }
 
-function renderChromeActions(status) {
-  const btnStart = $("btnStartChrome");
-  const btnStop = $("btnStopChrome");
-  const hint = $("chromeHint");
-  if (!btnStart || !btnStop) {
-    return;
-  }
-  const ready = Boolean(status?.chrome?.ready);
-  btnStart.disabled = ready;
-  btnStop.disabled = !ready;
-  btnStart.title = ready ? "Chrome zaten acik" : "Watcher baslatmadan once Chrome debug ac";
-  btnStop.title = ready ? "Panel Chrome'unu kapat" : "Chrome zaten kapali";
-  if (hint) {
-    hint.textContent = ready
-      ? "Chrome acik — adres cubugundan elle appointmentForm acin, giris yapin, sonra watcher baslatin."
-      : "Onerilen sira: Chrome Ac → elle portala git → API Izlemeyi Baslat.";
-  }
+function renderChromeActions(_status) {
+  updateChromeLaunchButtonState();
 }
 
 function readWorkerApiFromForm() {
@@ -587,13 +636,28 @@ async function applyBrowserHomeIp(profileId) {
   });
 }
 
+function updateRefreshNetworkIpButton() {
+  const btn = $("btnRefreshNetworkIp");
+  if (!btn) return;
+  btn.textContent =
+    $("proxyMode").value === "proxy" ? "Chrome'dan IP ölç" : "Ev IP'yi yeniden ölç";
+}
+
 async function refreshNetworkIp() {
   const proxyMode = $("proxyMode").value;
   const proxyId = $("proxyUrl").value;
+
+  if (proxyMode === "proxy" && proxyId) {
+    renderNetworkFromSnapshot(buildNetworkPreviewSnapshot("proxy"));
+  } else if (proxyMode === "direct") {
+    renderNetworkFromSnapshot(buildNetworkPreviewSnapshot("direct"));
+  }
+
   const params = new URLSearchParams({
     profileId: state.profileId,
     proxyMode,
-    skipServerMeasure: "true",
+    skipServerMeasure: proxyMode === "proxy" ? "false" : "true",
+    measureViaChrome: proxyMode === "proxy" ? "true" : "false",
   });
   if (proxyMode === "proxy" && proxyId) {
     params.set("proxyId", proxyId);
@@ -647,7 +711,19 @@ function renderNetworkFromSnapshot(network) {
   if (mode === "proxy") {
     label.textContent = "Proxy çıkış IP";
     $("currentIp").textContent = network.displayIp ?? "—";
-    hint.textContent = network.warning ?? "Seçili proxy statik çıkış IP";
+    const profileNote =
+      network.measuredProfileId && network.measuredCdpPort
+        ? ` (${network.measuredProfileId}, CDP :${network.measuredCdpPort})`
+        : "";
+    hint.textContent =
+      network.warning ??
+      (network.ipSource === "chrome"
+        ? `Seçili profilin Chrome oturumundan ölçüldü${profileNote}`
+        : network.ipSource === "proxy"
+          ? "Sunucu curl ölçümü — havuz IP'si Chrome'dan farklı olabilir"
+          : network.ipSource === "cached"
+            ? "Proxy kaydındaki çıkış IP"
+            : "Seçili proxy — Chrome bu IP üzerinden çıkar");
   } else {
     label.textContent = "Ev public IP";
     $("currentIp").textContent = network.displayIp ?? "—";
@@ -687,46 +763,12 @@ function fillSelect(select, options, getValue, getLabel, selected) {
 }
 
 function renderCurrentIpDisplay() {
-  if (state.network) {
+  const formMode = $("proxyMode").value;
+  if (state.network && (state.network.mode ?? formMode) === formMode) {
     renderNetworkFromSnapshot(state.network);
     return;
   }
-  const savedMode = state.bootstrap?.connectionMode ?? state.worker?.proxyMode ?? "direct";
-  const formMode = $("proxyMode").value;
-  const homeIp = state.bootstrap?.homePublicIp ?? "unknown";
-  const proxyIp = state.bootstrap?.publicIp ?? "unknown";
-  const homeWarning = state.bootstrap?.homeIpWarning;
-  const measuredWan = state.bootstrap?.measuredWanIp;
-  const label = $("currentIpLabel");
-  const hint = $("currentIpHint");
-  const selectedId = $("proxyUrl").value;
-  const selected = state.bootstrap?.proxyPool?.find((p) => p.id === selectedId);
-
-  if (formMode === "proxy") {
-    label.textContent = "Proxy çıkış IP";
-    if (savedMode === "proxy" && formMode === "proxy") {
-      $("currentIp").textContent = proxyIp;
-      hint.textContent =
-        selected?.ispStatic ? "ProxyNet ISP statik IP (WAN)" : "Proxy modu — ölçülen çıkış IP";
-    } else if (selected?.exitIp) {
-      $("currentIp").textContent = selected.exitIp;
-      hint.textContent = "Kaydet — proxy IP doğrulanır";
-    } else {
-      $("currentIp").textContent = "—";
-      hint.textContent = "Proxy seçin, kaydedin ve yenileyin";
-    }
-  } else {
-    label.textContent = "Ev public IP";
-    if (homeIp === "unknown" && measuredWan) {
-      $("currentIp").textContent = "—";
-      hint.textContent = homeWarning ?? `WAN ${measuredWan} — ProxyNet IP, ev interneti değil`;
-    } else {
-      $("currentIp").textContent = homeIp;
-      hint.textContent = homeWarning ?? "Doğrudan mod — proxy bypass (direct://)";
-    }
-  }
-
-  renderNetworkHints();
+  renderNetworkFromSnapshot(buildNetworkPreviewSnapshot(formMode));
 }
 
 function renderNetworkHints() {
@@ -746,7 +788,7 @@ function renderNetworkHints() {
     proxyHint.textContent = "";
   } else {
     hint.textContent =
-      "Proxy modu: trafik seçilen statik çıkış IP'sinden gider. Kaydettikten sonra IP'yi kilitleyin.";
+      "Proxy modu: trafik seçilen HTTP gate proxy üzerinden gider. WAN statik kayıtlar Chrome listesinde gösterilmez.";
     proxyHint.textContent = selected?.exitIp
       ? `Statik çıkış IP: ${selected.exitIp}`
       : selected
@@ -784,6 +826,7 @@ function applyWorkerToForm(worker, options = {}) {
   fillIntervalSelect($("workerTelegramInterval"), telegramMs, intervalOptions);
   renderApiPreview();
   renderCurrentIpDisplay();
+  updateRefreshNetworkIpButton();
   if (!skipNetwork) {
     void refreshNetworkIp().catch(() => {});
   } else if (state.worker?.lockedIp) {
@@ -873,7 +916,7 @@ function renderProcesses(processes) {
       (p.status === "running" || p.status === "starting"),
   );
   if (active.length === 0) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">Aktif süreç yok</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">Aktif süreç yok</td></tr>`;
     return;
   }
 
@@ -882,11 +925,13 @@ function renderProcesses(processes) {
     const isWatcher = proc.kind === "api-watcher";
     const pollMs = proc.runtime?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
     const telegramMs = proc.runtime?.telegramReportIntervalMs ?? INTERVAL_OPTIONS[2].ms;
+    const cdpCell = proc.cdpPort ? `<code>:${proc.cdpPort}</code>` : "—";
 
     tr.innerHTML = `
       <td>${proc.kind}</td>
       <td><code>${proc.profileId}</code></td>
       <td>${proc.label}</td>
+      <td>${cdpCell}</td>
       <td><span class="status-pill ${statusClass(proc.status)}">${proc.status}</span></td>
       <td>${
         isWatcher
@@ -975,6 +1020,9 @@ async function loadBootstrap(options = {}) {
 
   state.bootstrap = data;
   state.worker = data.worker;
+  await loadPanelProxiesFull().catch(() => {
+    state.panelProxies = [];
+  });
 
   if (!light) {
     $("panelStatus").textContent = "Panel bağlı";
@@ -1005,7 +1053,7 @@ async function loadBootstrap(options = {}) {
     data.worker?.api?.applicationType ?? "Bireysel",
   );
 
-  const proxyPool = data.proxyPool ?? [];
+  const proxyPool = (data.proxyPool ?? []).filter((p) => !p.ispStatic);
   fillSelect(
     $("proxyUrl"),
     [{ id: "", label: "— Seç —", host: "", port: 0, enabled: true }, ...proxyPool],
@@ -1025,11 +1073,13 @@ async function loadBootstrap(options = {}) {
 
   $("lastUpdated").textContent = `Son güncelleme: ${new Date().toLocaleString("tr-TR")}`;
   renderChromeProfileCards();
+  renderProxyPoolCards();
   return data;
 }
 
 async function refreshStatus() {
   const status = await api(`/api/status?profileId=${encodeURIComponent(state.profileId)}`);
+  state.profileStatus = status;
   renderChromeStatus(status);
   renderBanOverview(status);
   renderBanBanner(status);
@@ -1100,12 +1150,25 @@ wireChromeProfileList();
 
 $("proxyMode").addEventListener("change", (event) => {
   $("proxyUrlField").hidden = event.target.value !== "proxy";
+  updateRefreshNetworkIpButton();
+  if (event.target.value === "direct" && $("proxyUrl").value) {
+    toast("Doğrudan mod — proxy seçimi uygulanmaz (Chrome: ev interneti).", "info");
+  }
+  state.network = null;
   refreshNetworkIp().catch((e) => toast(e.message, "error"));
   updateChromeLaunchButtonState();
 });
 
 $("proxyUrl").addEventListener("change", () => {
+  const proxyId = $("proxyUrl").value;
+  if (proxyId && $("proxyMode").value !== "proxy") {
+    $("proxyMode").value = "proxy";
+    $("proxyUrlField").hidden = false;
+    toast("Proxy seçildi — bağlantı modu «Proxy» olarak ayarlandı.");
+  }
+  state.network = null;
   refreshNetworkIp().catch((e) => toast(e.message, "error"));
+  renderProxyPoolCards();
   updateChromeLaunchButtonState();
 });
 
@@ -1144,6 +1207,17 @@ $("btnLockCurrentIp").addEventListener("click", async () => {
 $("btnRefreshNetworkIp").addEventListener("click", async () => {
   $("btnRefreshNetworkIp").disabled = true;
   try {
+    if ($("proxyMode").value === "proxy") {
+      toast("Seçili profilin Chrome oturumundan IP ölçülüyor…");
+      const network = await refreshNetworkIp();
+      if (network.ipSource === "chrome") {
+        toast(`Chrome çıkış IP: ${network.displayIp}`, "success");
+      } else {
+        toast(network.warning ?? "Chrome ölçemedi — curl yedek sonuç gösteriliyor", "error");
+      }
+      return;
+    }
+
     toast("Tarayıcıdan ev IP ölçülüyor…");
     const fromBrowser = await applyBrowserHomeIp(state.profileId);
     if (fromBrowser) {
@@ -1220,8 +1294,17 @@ $("btnStartChrome").addEventListener("click", async () => {
     toast(launchError, "error");
     return;
   }
-  btn.disabled = true;
-  const previousLabel = btn.textContent;
+  if (state.profileStatus?.chrome?.ready) {
+    toast("Chrome zaten açık — «Chrome Kapat» ile kapatın.", "info");
+    updateChromeLaunchButtonState();
+    return;
+  }
+  if (state.chromeLaunchInProgress) {
+    return;
+  }
+
+  state.chromeLaunchInProgress = true;
+  updateChromeLaunchButtonState();
   try {
     const network = readNetworkDraft();
     const cdpPort = readCdpPortInput();
@@ -1231,7 +1314,6 @@ $("btnStartChrome").addEventListener("click", async () => {
       proxyUrl: network.proxyUrl,
     });
     const lockedIp = $("lockedIp").textContent.trim().replace("—", "");
-    btn.textContent = "Chrome açılıyor…";
     const result = await api("/api/chrome/start", {
       method: "POST",
       body: JSON.stringify({
@@ -1246,15 +1328,21 @@ $("btnStartChrome").addEventListener("click", async () => {
     const launch = result.launch ?? result;
     const portNote = result.assignedCdpPort ? ` (port ${result.assignedCdpPort})` : "";
     if (launch.reusedExisting) {
-      toast((launch.message ?? "Chrome zaten açık") + portNote);
+      toast(
+        "Chrome yeniden kullanıldı — proxy uygulanmadı. Tekrar «Chrome Aç» deneyin.",
+        "error",
+      );
     } else {
-      toast((launch.message ?? "Chrome başlatıldı") + portNote, launch.ok ? "success" : "error");
+      const proxyNote = launch.proxyApplied ? ` Proxy: ${launch.proxyApplied}.` : "";
+      toast((launch.message ?? "Chrome başlatıldı") + portNote + proxyNote, launch.ok ? "success" : "error");
     }
     if (result.googleLogin && !result.googleLogin.skipped) {
       toast(
         result.googleLogin.detail,
         result.googleLogin.ready ? "success" : "error",
       );
+    } else if (result.googleLogin?.detail?.includes("zaten hazırdı")) {
+      toast("Google zaten giriş yapmış — bu normal, proxy ile ilgili değil.", "info");
     }
     if (result.assignedCdpPort && $("cdpPortInput")) {
       $("cdpPortInput").value = String(result.assignedCdpPort);
@@ -1262,9 +1350,8 @@ $("btnStartChrome").addEventListener("click", async () => {
   } catch (error) {
     toast(error.message, "error");
   } finally {
-    btn.textContent = previousLabel ?? "Chrome Aç";
+    state.chromeLaunchInProgress = false;
     await refreshWorkflowUi();
-    updateChromeLaunchButtonState();
   }
 });
 
@@ -1279,7 +1366,9 @@ $("btnStopChrome").addEventListener("click", async () => {
     toast(
       result.stopped > 0
         ? `Chrome kapatildi (${result.stopped} surec)`
-        : "Panel Chrome sureci bulunamadi — Aktif sureclerden Kill deneyin",
+        : result.killedPortPids?.length
+          ? `Port dinleyici kapatildi (PID: ${result.killedPortPids.join(", ")})`
+          : "Panel Chrome sureci bulunamadi — debug penceresini elle kapatip tekrar deneyin",
     );
   } catch (error) {
     toast(error.message, "error");
@@ -1488,6 +1577,193 @@ async function deleteChromeProfile(profileId) {
     toast(error.message, "error");
   }
 }
+
+function parseProxyProfilesField(raw) {
+  return raw
+    .split(/[,;\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function renderProxyPoolCards() {
+  const container = $("proxyPoolList");
+  if (!container) {
+    return;
+  }
+
+  const proxies = (state.bootstrap?.proxyPool ?? []).filter((p) => p.id);
+  if (proxies.length === 0) {
+    container.innerHTML =
+      `<p class="note">Kayıtlı proxy yok — «+ Proxy ekle» veya bağlantı modunda «Doğrudan (ev interneti)» kullanın.</p>`;
+    return;
+  }
+
+  container.innerHTML = proxies
+    .map(
+      (proxy) => `
+      <div class="profile-list-row ${$("proxyUrl").value === proxy.id ? "profile-list-row-active" : ""}">
+        <div>
+          <strong>${proxy.label}</strong>
+          <small>${proxy.host}:${proxy.port}${proxy.ispStatic ? " · WAN statik" : ""}${proxy.exitIp ? ` · IP ${proxy.exitIp}` : ""}</small>
+        </div>
+        <div class="inline-actions">
+          <button type="button" class="btn btn-ghost btn-compact" data-proxy-edit="${proxy.id}">Düzenle</button>
+          <button type="button" class="btn btn-ghost btn-compact" data-proxy-delete="${proxy.id}">Sil</button>
+        </div>
+      </div>`,
+    )
+    .join("");
+
+  container.querySelectorAll("[data-proxy-edit]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      await loadPanelProxiesFull().catch(() => {});
+      openProxyEditor(btn.getAttribute("data-proxy-edit"));
+    });
+  });
+  container.querySelectorAll("[data-proxy-delete]").forEach((btn) => {
+    btn.addEventListener("click", () => deleteProxyRecord(btn.getAttribute("data-proxy-delete")));
+  });
+}
+
+function openProxyEditor(proxyId) {
+  const dialog = $("proxyDialog");
+  const pool = state.bootstrap?.proxyPool ?? [];
+  const proxy = proxyId ? pool.find((p) => p.id === proxyId) : null;
+  const full = proxyId ? state.panelProxies?.find((p) => p.id === proxyId) ?? proxy : null;
+
+  $("proxyDialogTitle").textContent = proxy ? "Proxy düzenle" : "Yeni proxy";
+  $("proxyEditId").value = proxy?.id ?? "";
+  $("proxyRecordId").value = proxy?.id ?? "";
+  $("proxyRecordId").disabled = Boolean(proxy);
+  $("proxyLabel").value = proxy?.label ?? "";
+  $("proxyHost").value = proxy?.host ?? "gate-isp.proxynet.io";
+  $("proxyPort").value = proxy?.port ? String(proxy.port) : "8036";
+  $("proxyUsername").value = full?.username ?? "";
+  $("proxyUsername").placeholder = "ProxyNet kullanıcı adı";
+  $("proxyPassword").value = "";
+  $("proxyPassword").placeholder = full?.hasPassword
+    ? "Kayıtlı — değiştirmek için yeni parola"
+    : "Parola";
+  $("proxyProtocol").value = proxy?.protocol ?? "http";
+  $("proxyExitIp").value = proxy?.exitIp ?? "";
+  $("proxyIspStatic").checked = proxy?.ispStatic === true;
+  $("proxyEnabled").checked = proxy?.enabled !== false;
+  $("proxyProfiles").value = (proxy?.profiles ?? []).join(", ");
+
+  dialog?.showModal();
+}
+
+async function loadPanelProxiesFull() {
+  const data = await api("/api/proxy-pool");
+  state.panelProxies = data.proxies ?? [];
+  return state.panelProxies;
+}
+
+async function saveProxyFromDialog(event) {
+  event.preventDefault();
+  const editId = $("proxyEditId").value.trim();
+  const username = $("proxyUsername").value.trim();
+  const password = $("proxyPassword").value;
+  const payload = {
+    label: $("proxyLabel").value.trim(),
+    host: $("proxyHost").value.trim(),
+    port: Number.parseInt($("proxyPort").value, 10),
+    protocol: $("proxyProtocol").value,
+    exitIp: $("proxyExitIp").value.trim() || undefined,
+    ispStatic: $("proxyIspStatic").checked,
+    enabled: $("proxyEnabled").checked,
+    profiles: parseProxyProfilesField($("proxyProfiles").value),
+  };
+  if (username) {
+    payload.username = username;
+  }
+  if (password.trim()) {
+    payload.password = password.trim();
+  }
+
+  try {
+    if (editId) {
+      await api("/api/proxy-pool/update", {
+        method: "POST",
+        body: JSON.stringify({ id: editId, ...payload }),
+      });
+      toast("Proxy güncellendi");
+    } else {
+      if (!payload.label || !payload.host || !payload.port) {
+        throw new Error("Etiket, host ve port zorunlu.");
+      }
+      if (
+        (payload.username && !payload.password) ||
+        (!payload.username && payload.password)
+      ) {
+        throw new Error("Kullanıcı adı ve parola birlikte girilmeli.");
+      }
+      const id = $("proxyRecordId").value.trim();
+      await api("/api/proxy-pool/create", {
+        method: "POST",
+        body: JSON.stringify({ ...payload, id: id || undefined }),
+      });
+      toast("Proxy eklendi");
+    }
+    $("proxyDialog")?.close();
+    await refreshAll();
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function deleteProxyRecord(proxyId) {
+  const proxy = state.bootstrap?.proxyPool?.find((p) => p.id === proxyId);
+  if (!proxy) {
+    return;
+  }
+  if (!window.confirm(`«${proxy.label}» proxy kaydı silinsin mi?`)) {
+    return;
+  }
+  try {
+    await api("/api/proxy-pool/delete", { method: "POST", body: JSON.stringify({ id: proxyId }) });
+    if ($("proxyUrl").value === proxyId) {
+      $("proxyUrl").value = "";
+    }
+    toast("Proxy silindi");
+    await refreshAll();
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+async function testProxyIpFromDialog() {
+  const editId = $("proxyEditId").value.trim();
+  try {
+    if (!editId) {
+      toast("Önce kaydedin, sonra IP ölçün.", "error");
+      return;
+    }
+    const result = await api("/api/proxy-pool/test-ip", {
+      method: "POST",
+      body: JSON.stringify({ id: editId }),
+    });
+    $("proxyExitIp").value = result.exitIp ?? "";
+    if (result.warning) {
+      toast(result.warning, "error");
+    } else {
+      toast(result.updated ? `Çıkış IP kaydedildi: ${result.exitIp}` : `Çıkış IP: ${result.exitIp}`);
+    }
+    await refreshAll();
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+$("btnAddProxy")?.addEventListener("click", async () => {
+  await loadPanelProxiesFull().catch(() => {});
+  openProxyEditor(null);
+});
+$("proxyForm")?.addEventListener("submit", saveProxyFromDialog);
+$("btnCancelProxy")?.addEventListener("click", () => $("proxyDialog")?.close());
+$("btnTestProxyIp")?.addEventListener("click", () => {
+  void testProxyIpFromDialog();
+});
 
 $("btnManageChromeProfiles")?.addEventListener("click", () => openChromeProfileEditor(null));
 $("btnAddChromeProfile")?.addEventListener("click", () => openChromeProfileEditor(null));
