@@ -258,17 +258,6 @@ export async function checkAvailability(
 
         for (let round = 1; round <= pollPrepRounds; round++) {
           if (ctx.settings.apiWizardAutoNavigate) {
-            const entry = await ensurePortalAppointmentEntry(
-              pollPage,
-              pollPage.context(),
-              appSettings,
-              { allowGotoFallback: process.env.API_AUTO_OPEN_PORTAL_TAB === "true" || process.env.PANEL_MANAGED_PORTAL_FLOW === "true" },
-            );
-            pollPage = entry.page;
-            if (!entry.ok) {
-              logger.warn(`[checkAvailability] Portal girisi: ${entry.reason ?? entry.step ?? "?"}`);
-            }
-
             const workerStore = new WorkerConfigStore(ctx.projectRoot);
             const worker = workerStore.getWorker(ctx.profileId, "", {
               pollIntervalMs: ctx.settings.pollIntervalMs,
@@ -279,6 +268,22 @@ export async function checkAvailability(
               appSettings,
             );
             const profile = mergeWorkerApiIntoProfile(baseProfile, worker.api);
+
+            const entry = await ensurePortalAppointmentEntry(
+              pollPage,
+              pollPage.context(),
+              appSettings,
+              {
+                allowGotoFallback:
+                  process.env.API_AUTO_OPEN_PORTAL_TAB === "true" ||
+                  process.env.PANEL_MANAGED_PORTAL_FLOW === "true",
+                profile,
+              },
+            );
+            pollPage = entry.page;
+            if (!entry.ok) {
+              logger.warn(`[checkAvailability] Portal girisi: ${entry.reason ?? entry.step ?? "?"}`);
+            }
 
             const prep = await ensureWizardForApiPoll(
               pollPage,

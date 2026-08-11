@@ -2,6 +2,8 @@ import type { BrowserContext, Page } from "playwright";
 
 import type { AppSettings } from "../config/settings.js";
 import { logger } from "../utils/logger.js";
+import type { ResolvedProfile } from "../profiles/profileManager.js";
+import { drainPortalInterventions } from "../portal/interventions/portalCheckpoint.js";
 import { bootstrapFromKosmosHome, dismissKosmosHomeOverlays } from "./kosmosHomeEntry.js";
 import {
   ensureRandevuAl,
@@ -20,6 +22,8 @@ export interface EnsurePortalAppointmentEntryOptions {
   /** banSafe: goto yedegi kapali — yalnizca insani tiklama */
   allowGotoFallback?: boolean;
   maxRounds?: number;
+  /** Kimlik/Telefon popup checkpoint */
+  profile?: ResolvedProfile;
 }
 
 export interface EnsurePortalAppointmentEntryResult {
@@ -137,6 +141,13 @@ export async function ensurePortalAppointmentEntry(
     const after = await resolvePortalEntrySnapshot(activePage, context);
     activePage = after.page;
     lastStep = after.step;
+
+    if (options.profile) {
+      await drainPortalInterventions(activePage, { profile: options.profile }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn(`[nav-entry] Portal checkpoint: ${message}`);
+      });
+    }
 
     if (after.step === "done" && (await isAppointmentWizardReady(activePage))) {
       logger.info(`[nav-entry] Il secimi wizard hazir: ${activePage.url()}`);

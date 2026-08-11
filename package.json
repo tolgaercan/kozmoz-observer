@@ -15,7 +15,9 @@
     "chrome:debug:profile-2": "powershell -ExecutionPolicy Bypass -File scripts/start-chrome-debug.ps1 -Profile profile-2",
     "validate:api-dates": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/validate-api-date-logic.ts",
     "compare:appointment-types": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/compare-appointment-types.ts",
-    "telegram:discover-chats": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/telegramDiscoverChats.ts"
+    "telegram:discover-chats": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/telegramDiscoverChats.ts",
+    "supabase:otp-test": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/test-supabase-otp.ts",
+    "portal:checkpoint-test": "node --use-system-ca ./node_modules/tsx/dist/cli.mjs scripts/test-portal-checkpoint.ts"
   },
   "keywords": [
     "playwright",

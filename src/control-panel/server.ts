@@ -8,7 +8,7 @@ import { loadSettings } from "../config/settings.js";
 import { logger } from "../utils/logger.js";
 import { ControlPanelService } from "./controlPanelService.js";
 import { ProcessRegistry } from "./processRegistry.js";
-import type { WorkerConfig } from "./workerConfigStore.js";
+import type { WorkerConfig, WorkerApiParams } from "./workerConfigStore.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const PROJECT_ROOT = resolve(__dirname, "../..");
@@ -167,12 +167,7 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
   if (method === "POST" && pathname === "/api/run/api-watcher-workflow") {
     const body = await readJsonBody<{
       profileId: string;
-      api: {
-        dealerOffice: string;
-        appointmentStyle: string;
-        applicationType: string;
-        nationalityNumber: string;
-      };
+      api: WorkerApiParams;
       timing?: { pollIntervalMs?: number; telegramReportIntervalMs?: number };
     }>(req);
     const result = await service.startApiWatcherWorkflow(body.profileId, body.api, body.timing);

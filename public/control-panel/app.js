@@ -78,6 +78,20 @@ function readNetworkDraft() {
   };
 }
 
+async function persistNetworkDraftFromForm(options = {}) {
+  const network = readNetworkDraft();
+  const lockedIp = $("lockedIp").textContent.trim().replace("—", "");
+  await saveWorkerConfig(
+    {
+      proxyMode: network.proxyMode,
+      proxyId: network.proxyId,
+      proxyUrl: network.proxyUrl,
+      ...(lockedIp ? { lockedIp } : {}),
+    },
+    { silent: options.silent === true, skipNetwork: true },
+  );
+}
+
 function selectedProxyFromForm() {
   const proxyId = $("proxyUrl").value;
   if (!proxyId) {
@@ -103,7 +117,11 @@ function buildNetworkPreviewSnapshot(mode) {
         : "Proxy seçildi — «Çıkış IP ölç» veya kaydedin",
     };
   }
-  const homeIp = state.bootstrap?.homePublicIp ?? "unknown";
+  const homeIp =
+    worker.lastKnownHomeIp ||
+    worker.lockedIp ||
+    state.network?.displayIp ||
+    "unknown";
   return {
     mode: "direct",
     displayIp: homeIp,
@@ -111,7 +129,7 @@ function buildNetworkPreviewSnapshot(mode) {
     homePublicIp: homeIp,
     measuredWanIp: state.bootstrap?.measuredWanIp,
     warning: state.bootstrap?.homeIpWarning,
-    ipSource: homeIp !== "unknown" ? "env" : undefined,
+    ipSource: homeIp !== "unknown" ? "cached" : undefined,
   };
 }
 
@@ -136,7 +154,6 @@ function validateChromeLaunchReady() {
 function updateChromeLaunchButtonState() {
   const btnStart = $("btnStartChrome");
   const btnStop = $("btnStopChrome");
-  const hint = $("chromeHint");
   if (!btnStart) return;
 
   if (state.chromeLaunchInProgress) {
@@ -158,11 +175,6 @@ function updateChromeLaunchButtonState() {
   if (btnStop) {
     btnStop.disabled = !ready;
     btnStop.title = ready ? "Panel Chrome'unu kapat" : "Chrome zaten kapalı";
-  }
-  if (hint) {
-    hint.textContent = ready
-      ? "Chrome açık — adres çubuğundan elle appointmentForm açın, giriş yapın, sonra watcher başlatın."
-      : "Önerilen sıra: Chrome Aç → elle portala git → API İzlemeyi Başlat.";
   }
 }
 
@@ -215,9 +227,8 @@ function renderProfileMeta(profile) {
   const chromeProfile = state.bootstrap?.chromeProfiles?.find((p) => p.id === profile.id);
   $("selectedProfileLabel").innerHTML = `<strong>${profile.name}</strong> · <code>${profile.id}</code>`;
   $("profileMeta").innerHTML = `
-    Chrome email: <code>${chromeProfile?.chromeEmail ?? "—"}</code>
-    · Klasör: <code>${chromeProfile?.userDataDir ?? `data/chrome/${profile.id}`}</code>
-    · CDP: <code>${profile.assignedCdpPort ?? profile.cdpPort ?? "otomatik"}</code>
+    <code>${chromeProfile?.chromeEmail ?? "—"}</code>
+    · CDP <code>${profile.assignedCdpPort ?? profile.cdpPort ?? "auto"}</code>
   `;
   updateChromeLaunchButtonState();
 }
@@ -408,12 +419,9 @@ function renderBanBanner(status) {
 
   banner.hidden = false;
   banner.innerHTML = `
-    <strong>Portal banı — ${profileLabel(health)}</strong>
-    <span>Ban IP: <code>${displayBanIp(health, status?.allApiHealth?.publicIp ?? state.bootstrap?.publicIp)}</code></span>
-    <span>Kilitli IP: <code>${health?.lockedIp ?? "—"}</code></span>
-    <span>CDP: <code>${health?.cdpPort ?? status?.cdpPort ?? "—"}</code></span>
-    <span class="ban-banner-countdown">Kalan: ${formatCountdown(banUntil)}</span>
-    <span class="ban-banner-until">${formatTime(banUntil)} kadar watcher başlatmayın</span>
+    <strong>Ban — ${profileLabel(health)}</strong>
+    <span><code>${displayBanIp(health, status?.allApiHealth?.publicIp ?? state.bootstrap?.publicIp)}</code></span>
+    <span class="ban-banner-countdown">${formatCountdown(banUntil)}</span>
   `;
 }
 
@@ -426,7 +434,7 @@ function renderApiHealth(status) {
   if (!health && !blocked?.blocked) {
     badge.textContent = "Beklemede";
     badge.className = "status-pill";
-    panel.innerHTML = `<p class="note">Watcher başlatıldığında son poll sonuçları burada görünür.</p>`;
+    panel.innerHTML = `<p class="note note-compact">Watcher çalışınca son poll burada görünür.</p>`;
     return;
   }
 
@@ -483,11 +491,9 @@ function renderApiHealth(status) {
           </div>`
         : ""
     }
-    <p class="note api-health-tip">
-      2 dk poll tek başına ban yaratmaz. Ban genelde panelden sık watcher restart, aynı anda birden fazla watcher
-      veya 401 sonrası aynı döngüde ekstra istekten kaynaklanır. Tek watcher çalıştırın; ban bitene kadar yeniden başlatmayın.
-    </p>
   `;
+
+  renderWorkerDraftSummary();
 }
 
 function renderChromeStatus(status) {
@@ -518,7 +524,47 @@ function readWorkerApiFromForm() {
     appointmentStyle: $("appointmentStyle").value,
     applicationType: $("applicationType").value,
     nationalityNumber: $("nationalityNumber").value.replace(/\D/g, ""),
+    otpPhone: ($("otpPhone")?.value ?? "").replace(/\D/g, ""),
+    portalEmail: ($("portalEmail")?.value ?? "").trim(),
+    passportNumber: ($("passportNumber")?.value ?? "").trim(),
   };
+}
+
+function maskPhone(value) {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (digits.length <= 4) return digits ? "***" : "—";
+  return `${"*".repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
+}
+
+function maskEmail(value) {
+  const email = (value ?? "").trim();
+  const at = email.indexOf("@");
+  if (at <= 1) return email ? "***" : "—";
+  return `${email.slice(0, 2)}***${email.slice(at)}`;
+}
+
+function validateWorkerApiForm(api) {
+  const errors = [];
+  if (!api.dealerOffice?.trim()) errors.push("Başvuru noktası seçilmeli");
+  if (!api.appointmentStyle?.trim()) errors.push("Başvuru şekli seçilmeli");
+  if (!api.applicationType?.trim()) errors.push("Başvuru tipi seçilmeli");
+  if (!api.nationalityNumber || api.nationalityNumber.length !== 11) {
+    errors.push("TC Kimlik 11 hane olmalı");
+  }
+  if (!api.otpPhone || api.otpPhone.length !== 10 || !/^5\d{9}$/.test(api.otpPhone)) {
+    errors.push("OTP telefonu 10 hane olmalı (5 ile başlar, başında 0 yok)");
+  }
+  if (!api.portalEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(api.portalEmail)) {
+    errors.push("Geçerli e-posta girilmeli");
+  }
+  if (!api.passportNumber || api.passportNumber.length < 3) {
+    errors.push("Pasaport numarası girilmeli");
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+function isWorkerApiReady(api) {
+  return validateWorkerApiForm(api).ok;
 }
 
 function maskTc(value) {
@@ -527,54 +573,59 @@ function maskTc(value) {
   return `${digits.slice(0, 3)}${"*".repeat(digits.length - 3)}`;
 }
 
-function renderApiPreview() {
+function renderWorkerDraftSummary() {
+  const el = $("workerDraftSummary");
+  if (!el) return;
+
   const api = readWorkerApiFromForm();
+  const validation = validateWorkerApiForm(api);
   const office = state.bootstrap?.dealerOffices?.find((o) => o.name === api.dealerOffice);
   const styleOpt = state.bootstrap?.appointmentStyles?.find((s) => s.label === api.appointmentStyle);
   const typeOpt = state.bootstrap?.applicationTypes?.find((t) => t.label === api.applicationType);
-
-  $("apiPreview").innerHTML = office
-    ? `
-      <strong>GetClosedDate + wizard</strong><br>
-      Adım 1 şube: <code>${office.name}</code> → dealerId <code>${office.dealerId}</code><br>
-      Adım 2 tip: <code>${api.applicationType}</code> → applicationTypeId <code>${typeOpt?.applicationTypeId ?? "?"}</code><br>
-      Adım 2 şekil: <code>${api.appointmentStyle}</code> → appointmentTypeId <code>${styleOpt?.appointmentTypeId ?? "?"}</code><br>
-      TC: <code>${maskTc(api.nationalityNumber)}</code>
-    `
-    : "Ofis seçin";
-  renderWorkerSummary();
-  renderWorkflowTimingNote();
-}
-
-function renderWorkerSummary() {
-  const el = $("workerSummary");
-  if (!el) return;
-
-  const worker = state.worker;
   const timing = readWorkerTimingFromForm();
-  const lockedIp = worker?.lockedIp || $("lockedIp").textContent.trim().replace("—", "") || "—";
-  const envDefaults = state.bootstrap?.envTimingDefaults;
+  const lockedIp =
+    state.worker?.lockedIp || $("lockedIp")?.textContent.trim().replace("—", "") || "—";
+
+  const passportMask = api.passportNumber
+    ? `${api.passportNumber.slice(0, 2)}***`
+    : "—";
 
   el.innerHTML = `
-    <strong>Kayıtlı worker özeti</strong><br>
-    Profil: <code>${state.profileId}</code> · Kilitli IP: <code>${lockedIp}</code><br>
-    Poll: <strong>${formatIntervalLabel(timing.pollIntervalMs)}</strong> ·
-    Telegram: <strong>${formatIntervalLabel(timing.telegramReportIntervalMs)}</strong>
+    <div class="draft-summary-head">
+      <span class="draft-summary-title">Kayıtlı taslak özeti</span>
+      <span class="draft-badge ${validation.ok ? "ok" : "warn"}">${
+        validation.ok ? "Başlatmaya hazır" : "Eksik alan var"
+      }</span>
+    </div>
+    <dl class="draft-summary-grid">
+      <dt>Profil</dt><dd><code>${state.profileId || "—"}</code></dd>
+      <dt>Şube</dt><dd>${api.dealerOffice || "—"}</dd>
+      <dt>Başvuru</dt><dd>${api.applicationType || "—"} · ${api.appointmentStyle || "—"}</dd>
+      <dt>Kimlik</dt><dd>TC ${maskTc(api.nationalityNumber)} · Pasaport ${passportMask}</dd>
+      <dt>OTP</dt><dd>Tel ${maskPhone(api.otpPhone)} · ${maskEmail(api.portalEmail)}</dd>
+      <dt>Ağ</dt><dd>Kilitli IP <code>${lockedIp}</code></dd>
+      <dt>Aralık</dt><dd>Poll ${formatIntervalLabel(timing.pollIntervalMs)} · Telegram ${formatIntervalLabel(timing.telegramReportIntervalMs)}</dd>
+    </dl>
     ${
-      envDefaults
-        ? `<br><small>.env varsayılan: poll ${formatIntervalLabel(envDefaults.pollIntervalMs)}, Telegram ${formatIntervalLabel(envDefaults.telegramReportIntervalMs)}</small>`
+      office
+        ? `<details class="draft-summary-tech">
+      <summary>API teknik ID'ler (geliştirici)</summary>
+      dealerId <code>${office.dealerId}</code> ·
+      applicationTypeId <code>${typeOpt?.applicationTypeId ?? "?"}</code> ·
+      appointmentTypeId <code>${styleOpt?.appointmentTypeId ?? "?"}</code>
+    </details>`
         : ""
     }
   `;
 }
 
-function renderWorkflowTimingNote() {
-  const el = $("workflowTimingNote");
-  if (!el) return;
-  const timing = readWorkerTimingFromForm();
-  el.textContent =
-    `Once Chrome Ac (Profil karti), elle portala gidin, sonra watcher baslatin. ` +
-    `Bu profil: poll ${formatIntervalLabel(timing.pollIntervalMs)}, Telegram ${formatIntervalLabel(timing.telegramReportIntervalMs)}.`;
+/** @deprecated — tek özet kutusu */
+function renderApiPreview() {
+  renderWorkerDraftSummary();
+}
+
+function renderWorkerSummary() {
+  renderWorkerDraftSummary();
 }
 
 function formatProxyOption(option) {
@@ -685,7 +736,6 @@ async function refreshNetworkIp() {
   $("lockedIp").textContent = locked;
 
   renderNetworkFromSnapshot(network);
-  renderNetworkHints();
 
   const manualField = $("manualHomeIpField");
   if (manualField) {
@@ -705,48 +755,14 @@ async function refreshNetworkIp() {
 
 function renderNetworkFromSnapshot(network) {
   const label = $("currentIpLabel");
-  const hint = $("currentIpHint");
   const mode = network.mode ?? $("proxyMode").value;
 
   if (mode === "proxy") {
     label.textContent = "Proxy çıkış IP";
-    $("currentIp").textContent = network.displayIp ?? "—";
-    const profileNote =
-      network.measuredProfileId && network.measuredCdpPort
-        ? ` (${network.measuredProfileId}, CDP :${network.measuredCdpPort})`
-        : "";
-    hint.textContent =
-      network.warning ??
-      (network.ipSource === "chrome"
-        ? `Seçili profilin Chrome oturumundan ölçüldü${profileNote}`
-        : network.ipSource === "proxy"
-          ? "Sunucu curl ölçümü — havuz IP'si Chrome'dan farklı olabilir"
-          : network.ipSource === "cached"
-            ? "Proxy kaydındaki çıkış IP"
-            : "Seçili proxy — Chrome bu IP üzerinden çıkar");
   } else {
     label.textContent = "Ev public IP";
-    $("currentIp").textContent = network.displayIp ?? "—";
-    if (network.displayIp === "unknown" || network.displayIp === "unavailable") {
-      hint.textContent =
-        network.warning ??
-        (network.measuredWanIp
-          ? `WAN ${network.measuredWanIp} — ProxyNet aktif; kapatıp "Ev IP'yi yeniden ölç" deyin`
-          : "Ev IP alınamadı — ProxyNet kapatın veya manuel girin");
-    } else {
-      const sourceHint =
-        network.ipSource === "browser"
-          ? "Tarayıcı ile ölçüldü (antivirüs dostu)"
-          : network.ipSource === "chrome"
-            ? "Chrome (direct://) ile ölçüldü"
-            : network.ipSource === "cached"
-              ? "Kayıtlı ev IP"
-              : network.ipSource === "env"
-                ? ".env HOME_PUBLIC_IP"
-                : "Doğrudan mod — proxy bypass (direct://)";
-      hint.textContent = network.warning ?? sourceHint;
-    }
   }
+  $("currentIp").textContent = network.displayIp ?? "—";
 }
 
 function fillSelect(select, options, getValue, getLabel, selected) {
@@ -771,41 +787,24 @@ function renderCurrentIpDisplay() {
   renderNetworkFromSnapshot(buildNetworkPreviewSnapshot(formMode));
 }
 
-function renderNetworkHints() {
-  const mode = $("proxyMode").value;
-  const hint = $("networkModeHint");
-  const proxyHint = $("proxyExitHint");
-  const selectedId = $("proxyUrl").value;
-  const selected = state.bootstrap?.proxyPool?.find((p) => p.id === selectedId);
-
-  if (mode === "direct") {
-    hint.textContent =
-      "Doğrudan mod: trafik ev interneti IP'sinden gider (Chrome: direct://). " +
-      (state.network?.warning ?? state.bootstrap?.homeIpWarning
-        ? `${state.network?.warning ?? state.bootstrap.homeIpWarning} `
-        : "") +
-      "Statik ProxyNet IP için → Bağlantı modu: Proxy.";
-    proxyHint.textContent = "";
-  } else {
-    hint.textContent =
-      "Proxy modu: trafik seçilen HTTP gate proxy üzerinden gider. WAN statik kayıtlar Chrome listesinde gösterilmez.";
-    proxyHint.textContent = selected?.exitIp
-      ? `Statik çıkış IP: ${selected.exitIp}`
-      : selected
-        ? "Proxy seçildi — kaydet ve kilitle"
-        : "Listeden statik IP proxy seçin";
-  }
-}
-
 function applyWorkerToForm(worker, options = {}) {
   const skipNetwork = options.skipNetwork === true;
-  $("proxyMode").value = worker.proxyMode ?? "direct";
+  const prevProxyMode = $("proxyMode").value;
+  const prevProxyUrl = $("proxyUrl").value;
+  const effectiveMode = skipNetwork ? prevProxyMode : (worker.proxyMode ?? "direct");
+  $("proxyMode").value = effectiveMode;
   $("lockedIp").textContent = worker.lockedIp || "—";
-  $("proxyUrlField").hidden = worker.proxyMode !== "proxy";
-  if (worker.proxyId) {
-    $("proxyUrl").value = worker.proxyId;
-  } else if (worker.proxyUrl) {
-    $("proxyUrl").value = worker.proxyUrl;
+  $("proxyUrlField").hidden = effectiveMode !== "proxy";
+  if (effectiveMode === "proxy") {
+    if (worker.proxyId) {
+      $("proxyUrl").value = worker.proxyId;
+    } else if (worker.proxyUrl) {
+      $("proxyUrl").value = worker.proxyUrl;
+    } else if (skipNetwork) {
+      $("proxyUrl").value = prevProxyUrl;
+    }
+  } else {
+    $("proxyUrl").value = "";
   }
   if (worker.api?.dealerOffice) {
     $("dealerOffice").value = worker.api.dealerOffice;
@@ -819,17 +818,26 @@ function applyWorkerToForm(worker, options = {}) {
   if ($("nationalityNumber")) {
     $("nationalityNumber").value = worker.api?.nationalityNumber ?? "";
   }
+  if ($("otpPhone")) {
+    $("otpPhone").value = worker.api?.otpPhone ?? "";
+  }
+  if ($("portalEmail")) {
+    $("portalEmail").value = worker.api?.portalEmail ?? "";
+  }
+  if ($("passportNumber")) {
+    $("passportNumber").value = worker.api?.passportNumber ?? "";
+  }
   const intervalOptions = state.bootstrap?.runtimeOptionsMs;
   const pollMs = worker.timing?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
   const telegramMs = worker.timing?.telegramReportIntervalMs ?? INTERVAL_OPTIONS[2].ms;
   fillIntervalSelect($("workerPollInterval"), pollMs, intervalOptions);
   fillIntervalSelect($("workerTelegramInterval"), telegramMs, intervalOptions);
   renderApiPreview();
-  renderCurrentIpDisplay();
   updateRefreshNetworkIpButton();
   if (!skipNetwork) {
+    renderCurrentIpDisplay();
     void refreshNetworkIp().catch(() => {});
-  } else if (state.worker?.lockedIp) {
+  } else if (worker.lockedIp) {
     $("lockedIp").textContent = worker.lockedIp || "—";
   }
   updateChromeLaunchButtonState();
@@ -853,11 +861,7 @@ function renderWorkflowSteps(status, processes) {
 
   stepProfile.className = state.profileId ? "done" : "";
   const apiForm = readWorkerApiFromForm();
-  const apiReady =
-    apiForm.dealerOffice &&
-    apiForm.appointmentStyle &&
-    apiForm.applicationType &&
-    (!apiForm.nationalityNumber || apiForm.nationalityNumber.length === 11);
+  const apiReady = isWorkerApiReady(apiForm);
   stepApi.className = apiReady ? "done" : "";
   stepChrome.className = status?.chrome?.ready ? "done" : "";
   if (stepPortal) {
@@ -872,8 +876,10 @@ function renderWorkflowSteps(status, processes) {
     btnStop.hidden = !apiWatcherRunning;
   }
   if (btnStart) {
-    btnStart.disabled = apiWatcherRunning || status?.rateLimit?.blocked || !status?.chrome?.ready;
-    btnStart.title = !status?.chrome?.ready
+    btnStart.disabled = apiWatcherRunning || status?.rateLimit?.blocked || !status?.chrome?.ready || !apiReady;
+    btnStart.title = !apiReady
+      ? "Worker ayarlarını tamamlayın (TC, OTP telefon, e-posta, pasaport zorunlu)"
+      : !status?.chrome?.ready
       ? "Once Chrome oturumu kartindan Chrome Ac"
       : status?.rateLimit?.blocked
         ? "Ban / rate limit aktif — bekleyin"
@@ -973,9 +979,7 @@ function renderProcesses(processes) {
             telegramReportIntervalMs: Number.parseInt(telegramSelect?.value ?? "0", 10),
           }),
         });
-        toast(
-          `Canlı ayar uygulandı — poll: ${formatIntervalLabel(result.runtime.pollIntervalMs)}, Telegram: ${formatIntervalLabel(result.runtime.telegramReportIntervalMs)} (worker-config'e kaydedildi)`,
-        );
+        toast(`Canlı ayar uygulandı`);
         await refreshAll();
       } catch (error) {
         toast(error.message, "error");
@@ -1098,14 +1102,17 @@ async function refreshWorkflowUi() {
   renderWorkflowSteps(status, processes);
 }
 
-async function saveWorkerConfig(patch) {
+async function saveWorkerConfig(patch, options = {}) {
   const body = await api("/api/worker-config", {
     method: "POST",
     body: JSON.stringify({ profileId: state.profileId, config: patch }),
   });
   state.worker = body.worker;
-  applyWorkerToForm(body.worker);
-  toast("Taslak kaydedildi");
+  const networkOnly = !patch.api && !patch.timing;
+  applyWorkerToForm(body.worker, { skipNetwork: options.skipNetwork ?? networkOnly });
+  if (!options.silent) {
+    toast("Taslak kaydedildi");
+  }
 }
 
 async function refreshAll() {
@@ -1149,13 +1156,19 @@ function wireChromeProfileList() {
 wireChromeProfileList();
 
 $("proxyMode").addEventListener("change", (event) => {
-  $("proxyUrlField").hidden = event.target.value !== "proxy";
+  const mode = event.target.value;
+  $("proxyUrlField").hidden = mode !== "proxy";
+  if (mode === "direct") {
+    $("proxyUrl").value = "";
+  }
   updateRefreshNetworkIpButton();
-  if (event.target.value === "direct" && $("proxyUrl").value) {
-    toast("Doğrudan mod — proxy seçimi uygulanmaz (Chrome: ev interneti).", "info");
+  if (mode === "direct") {
+    toast("Doğrudan mod kaydediliyor — Chrome açıksa kapatıp yeniden açın.", "info");
   }
   state.network = null;
-  refreshNetworkIp().catch((e) => toast(e.message, "error"));
+  void persistNetworkDraftFromForm({ silent: true })
+    .then(() => refreshNetworkIp())
+    .catch((e) => toast(e.message, "error"));
   updateChromeLaunchButtonState();
 });
 
@@ -1164,7 +1177,7 @@ $("proxyUrl").addEventListener("change", () => {
   if (proxyId && $("proxyMode").value !== "proxy") {
     $("proxyMode").value = "proxy";
     $("proxyUrlField").hidden = false;
-    toast("Proxy seçildi — bağlantı modu «Proxy» olarak ayarlandı.");
+    toast("Proxy seçildi.");
   }
   state.network = null;
   refreshNetworkIp().catch((e) => toast(e.message, "error"));
@@ -1178,17 +1191,14 @@ $("dealerOffice").addEventListener("change", renderApiPreview);
 $("appointmentStyle").addEventListener("change", renderApiPreview);
 $("applicationType").addEventListener("change", renderApiPreview);
 $("nationalityNumber").addEventListener("input", renderApiPreview);
-$("workerPollInterval").addEventListener("change", () => {
-  renderWorkerSummary();
-  renderWorkflowTimingNote();
-});
-$("workerTelegramInterval").addEventListener("change", () => {
-  renderWorkerSummary();
-  renderWorkflowTimingNote();
-});
+$("otpPhone")?.addEventListener("input", renderApiPreview);
+$("portalEmail")?.addEventListener("input", renderApiPreview);
+$("passportNumber")?.addEventListener("input", renderApiPreview);
+$("workerPollInterval").addEventListener("change", renderWorkerSummary);
+$("workerTelegramInterval").addEventListener("change", renderWorkerSummary);
 
 $("btnClearLockedIp").addEventListener("click", async () => {
-  await saveWorkerConfig({ lockedIp: "" });
+  await saveWorkerConfig({ lockedIp: "" }, { silent: true });
   $("lockedIp").textContent = "—";
   toast("Kilitli IP sıfırlandı");
 });
@@ -1199,9 +1209,30 @@ $("btnLockCurrentIp").addEventListener("click", async () => {
     toast("Geçerli IP yok — bağlantı modunu kontrol edin", "error");
     return;
   }
-  await saveWorkerConfig({ lockedIp: ip });
+  const network = readNetworkDraft();
+  const mode = network.proxyMode;
+  const patch = {
+    proxyMode: mode,
+    proxyId: network.proxyId,
+    proxyUrl: network.proxyUrl,
+    lockedIp: ip,
+  };
+  if (mode === "direct") {
+    patch.lastKnownHomeIp = ip;
+    patch.proxyId = "";
+    patch.proxyUrl = "";
+  }
+  state.network = {
+    ...(state.network ?? {}),
+    mode,
+    displayIp: ip,
+    lockedIp: ip,
+    homePublicIp: mode === "direct" ? ip : state.network?.homePublicIp,
+  };
+  renderNetworkFromSnapshot(state.network);
+  await saveWorkerConfig(patch, { silent: true, skipNetwork: true });
   $("lockedIp").textContent = ip;
-  toast(`IP kilitlendi: ${ip}`);
+  toast(mode === "direct" ? `Ev IP kilitlendi: ${ip}` : `Proxy çıkış IP kilitlendi: ${ip}`);
 });
 
 $("btnRefreshNetworkIp").addEventListener("click", async () => {
@@ -1228,7 +1259,7 @@ $("btnRefreshNetworkIp").addEventListener("click", async () => {
       toast(`Ev IP ölçüldü ve kilitlendi: ${fromBrowser.displayIp}`);
     } else {
       await refreshNetworkIp();
-      toast("Tarayıcı ölçemedi — manuel IP girin veya .env HOME_PUBLIC_IP", "error");
+      toast("Tarayıcı ölçemedi — manuel IP girin", "error");
     }
   } catch (error) {
     toast(error.message, "error");
@@ -1262,23 +1293,24 @@ $("btnSaveNetwork").addEventListener("click", async () => {
   const proxyMode = $("proxyMode").value;
   const proxySelection = $("proxyUrl").value;
   const isPoolId = state.bootstrap?.proxyPool?.some((p) => p.id === proxySelection);
+  const lockedIp = $("lockedIp").textContent.trim().replace("—", "");
   await saveWorkerConfig({
     proxyMode,
     proxyId: proxyMode === "proxy" && isPoolId ? proxySelection : "",
     proxyUrl: proxyMode === "proxy" && !isPoolId && proxySelection ? proxySelection : "",
-    lockedIp: "",
+    ...(lockedIp ? { lockedIp } : {}),
   });
-  $("lockedIp").textContent = "—";
   await loadBootstrap();
   await refreshNetworkIp();
-  toast("Ağ taslağı kaydedildi — IP'yi kilitleyin");
+  toast("Ağ kaydedildi");
   updateChromeLaunchButtonState();
 });
 
 $("btnSaveApi").addEventListener("click", async () => {
   const api = readWorkerApiFromForm();
-  if (api.nationalityNumber && api.nationalityNumber.length !== 11) {
-    toast("TC Kimlik 11 hane olmalı veya boş bırakın", "error");
+  const validation = validateWorkerApiForm(api);
+  if (!validation.ok) {
+    toast(validation.errors[0], "error");
     return;
   }
   await saveWorkerConfig({
@@ -1328,10 +1360,7 @@ $("btnStartChrome").addEventListener("click", async () => {
     const launch = result.launch ?? result;
     const portNote = result.assignedCdpPort ? ` (port ${result.assignedCdpPort})` : "";
     if (launch.reusedExisting) {
-      toast(
-        "Chrome yeniden kullanıldı — proxy uygulanmadı. Tekrar «Chrome Aç» deneyin.",
-        "error",
-      );
+      toast("Chrome yeniden kullanıldı — önce kapatın.", "error");
     } else {
       const proxyNote = launch.proxyApplied ? ` Proxy: ${launch.proxyApplied}.` : "";
       toast((launch.message ?? "Chrome başlatıldı") + portNote + proxyNote, launch.ok ? "success" : "error");
@@ -1342,7 +1371,7 @@ $("btnStartChrome").addEventListener("click", async () => {
         result.googleLogin.ready ? "success" : "error",
       );
     } else if (result.googleLogin?.detail?.includes("zaten hazırdı")) {
-      toast("Google zaten giriş yapmış — bu normal, proxy ile ilgili değil.", "info");
+      toast("Google oturumu hazır.", "info");
     }
     if (result.assignedCdpPort && $("cdpPortInput")) {
       $("cdpPortInput").value = String(result.assignedCdpPort);
@@ -1381,6 +1410,7 @@ $("btnStartWorkflow").addEventListener("click", async () => {
   const btn = $("btnStartWorkflow");
   btn.disabled = true;
   try {
+    await persistNetworkDraftFromForm();
     if ($("proxyMode").value === "direct" && !$("lockedIp").textContent.trim().replace("—", "")) {
       await refreshNetworkIp();
     }
@@ -1391,8 +1421,9 @@ $("btnStartWorkflow").addEventListener("click", async () => {
       );
     }
     const apiParams = readWorkerApiFromForm();
-    if (apiParams.nationalityNumber && apiParams.nationalityNumber.length !== 11) {
-      throw new Error("TC Kimlik 11 hane olmalı — Worker ayarlarını kontrol edin");
+    const validation = validateWorkerApiForm(apiParams);
+    if (!validation.ok) {
+      throw new Error(`Worker ayarları eksik: ${validation.errors.join("; ")}`);
     }
     const timing = readWorkerTimingFromForm();
     const result = await api("/api/run/api-watcher-workflow", {

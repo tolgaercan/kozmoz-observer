@@ -21,6 +21,12 @@ export interface ProfileFormData {
   applicationType: string;
   appointmentStyle: string;
   nationalityNumber: string;
+  /** Pasaport no — Kimlik ve Telefon Doğrulama popup */
+  passportNumber?: string;
+  /** SMS OTP — başında 0 olmadan */
+  phone?: string;
+  /** Başvuru formu e-posta — OTP popup */
+  registerEmail?: string;
 }
 
 export interface ProfileCredentialsRef {

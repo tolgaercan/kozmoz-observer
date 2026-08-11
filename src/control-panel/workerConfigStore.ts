@@ -15,6 +15,12 @@ export interface WorkerApiParams {
   applicationType: string;
   /** Wizard adım 2 — TC Kimlik No (11 hane) */
   nationalityNumber: string;
+  /** OTP / SMS — 10 hane, başında 0 yok (5XXXXXXXXX) */
+  otpPhone: string;
+  /** Başvuru / OTP popup e-posta */
+  portalEmail: string;
+  /** Kimlik ve Telefon Doğrulama popup — pasaport no */
+  passportNumber: string;
 }
 
 export interface WorkerTimingParams {
@@ -76,6 +82,9 @@ function defaultWorkerConfig(
       appointmentStyle: "Standart",
       applicationType: "Bireysel",
       nationalityNumber: "",
+      otpPhone: "",
+      portalEmail: "",
+      passportNumber: "",
     },
     timing: resolveWorkerTiming(undefined, timingDefaults),
     updatedAt: new Date().toISOString(),
@@ -134,6 +143,9 @@ export class WorkerConfigStore {
         appointmentStyle: existing.api?.appointmentStyle ?? "Standart",
         applicationType: existing.api?.applicationType ?? "Bireysel",
         nationalityNumber: existing.api?.nationalityNumber ?? "",
+        otpPhone: existing.api?.otpPhone ?? "",
+        portalEmail: existing.api?.portalEmail ?? "",
+        passportNumber: existing.api?.passportNumber ?? "",
       },
       timing: resolveWorkerTiming(existing.timing, timingDefaults),
       updatedAt: existing.updatedAt,

@@ -2,7 +2,9 @@ import type { Page } from "playwright";
 
 import { detectManualAuthStep, type ManualAuthState } from "../auth/authStepDetector.js";
 import type { AppointmentSettings } from "../config/settings.js";
+import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { logger } from "../utils/logger.js";
+import { drainPortalInterventions } from "./interventions/portalCheckpoint.js";
 import { detectRecaptchaState, waitForRecaptchaSolution } from "./recaptchaGate.js";
 
 export interface WizardStepGateResult {
@@ -15,6 +17,7 @@ export interface WaitForPortalManualAuthOptions {
   maxWaitMs: number;
   pollIntervalMs?: number;
   profileId?: string;
+  profile?: ResolvedProfile;
   onAuthRequired?: (auth: ManualAuthState) => Promise<void>;
 }
 
@@ -62,6 +65,14 @@ export async function waitForPortalManualAuthClear(
   let notified = false;
 
   while (Date.now() - started < options.maxWaitMs) {
+    if (options.profile) {
+      const checkpoint = await drainPortalInterventions(page, { profile: options.profile });
+      if (checkpoint.handled && checkpoint.resolved) {
+        logger.info("[wizard-gate] Portal checkpoint — OTP popup otomasyonla tamamlandi.");
+        continue;
+      }
+    }
+
     const auth = await detectManualAuthStep(page);
     const wizardOtp = await detectWizardOtpPrompt(page);
     const blocked = auth.required || wizardOtp;
@@ -103,6 +114,7 @@ export interface WaitForWizardStepGateOptions {
   waitForManualAuth?: boolean;
   manualAuthMaxWaitMs?: number;
   profileId?: string;
+  profile?: ResolvedProfile;
   onAuthRequired?: (auth: ManualAuthState) => Promise<void>;
 }
 
@@ -112,6 +124,10 @@ export async function waitForWizardStepGate(
   settings: AppointmentSettings,
   options?: WaitForWizardStepGateOptions,
 ): Promise<WizardStepGateResult> {
+  if (options?.profile) {
+    await drainPortalInterventions(page, { profile: options.profile });
+  }
+
   const state = await detectRecaptchaState(page);
   if (state.present && !state.solved) {
     logger.info("[wizard-gate] reCAPTCHA algılandı — çözüm bekleniyor (insan).");
@@ -136,6 +152,7 @@ export async function waitForWizardStepGate(
     const authWait = await waitForPortalManualAuthClear(page, {
       maxWaitMs,
       profileId: options.profileId,
+      profile: options.profile,
       onAuthRequired: options.onAuthRequired,
     });
     if (!authWait.cleared) {

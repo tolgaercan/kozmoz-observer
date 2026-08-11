@@ -11,20 +11,6 @@ function resolveEnvPlaceholder(value: string): string {
   return process.env[match[1]!] ?? "";
 }
 
-function resolvePerProfileEnv(
-  profileId: string,
-  fieldBase: string,
-  settings: AppSettings,
-): string | undefined {
-  const suffix = profileId.replace(/-/g, "_").toUpperCase();
-  const key = `${fieldBase}_${suffix}`;
-  const fromEnv = process.env[key]?.trim();
-  if (fromEnv) {
-    return fromEnv;
-  }
-  return undefined;
-}
-
 function pickString(...candidates: (string | undefined)[]): string | undefined {
   for (const value of candidates) {
     const trimmed = value?.trim();
@@ -51,7 +37,7 @@ export function extractRawForm(profile: ProfileDefinition): Partial<ProfileFormD
   };
 }
 
-/** Profil + .env → akışta kullanılacak form değişkenleri */
+/** Profil + panel/manifest → akışta kullanılacak form değişkenleri */
 export function resolveProfileForm(
   profile: ResolvedProfile,
   settings: AppSettings,
@@ -70,12 +56,9 @@ export function resolveProfileForm(
 
   const nationalityNumber = pickString(
     raw.nationalityNumber,
-    resolvePerProfileEnv(profile.id, "NATIONALITY_NUMBER", settings),
-    process.env.NATIONALITY_NUMBER,
   );
 
   const appointmentStyle = pickString(
-    resolvePerProfileEnv(profile.id, "APPOINTMENT_STYLE", settings),
     raw.appointmentStyle,
     settings.appointment.defaultAppointmentStyle,
   );

@@ -18,6 +18,7 @@ import {
   ensureApiPollInfoStepFieldsFilled,
 } from "./wizardStepAutofill.js";
 import { clickWizardNextButton } from "./wizardNavigation.js";
+import { drainPortalInterventions, withPortalCheckpoint } from "./interventions/portalCheckpoint.js";
 import { waitForWizardStepGate } from "./wizardStepGate.js";
 
 /** API poll güvenli üst sınır — bilgi formu (TC + başvuru şekli). Portal adım 3. */
@@ -48,6 +49,7 @@ async function buildWizardGateOptions(
     waitForManualAuth: true,
     manualAuthMaxWaitMs: options?.manualAuthMaxWaitMs ?? 1_800_000,
     profileId: profile.id,
+    profile,
     onAuthRequired: options?.onManualAuthRequired
       ? async (auth: ManualAuthState) => {
           await options.onManualAuthRequired!(auth, page.url());
@@ -201,8 +203,10 @@ async function ensureInfoStepViewForApiPoll(
     }
 
     logger.info("[wizard-prep] Adim 2 → 3 tek Sonraki (bilgi formu — TC/sekil BAN-SAFE atlanir).");
-    await clickWizardNextButton(page, appointmentSettings);
-    await page.waitForTimeout(appointmentSettings.waitAfterWizardNextMs || 400);
+    await withPortalCheckpoint(page, { profile }, async () => {
+      await clickWizardNextButton(page, appointmentSettings);
+      await page.waitForTimeout(appointmentSettings.waitAfterWizardNextMs || 400);
+    });
   }
 }
 
@@ -263,6 +267,12 @@ export async function ensureWizardForApiPoll(
   if (gateBlock) {
     return gateBlock;
   }
+
+  await drainPortalInterventions(page, { profile }).catch((error) => {
+    logger.warn(
+      `[wizard-prep] Portal checkpoint: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  });
 
   try {
     await ensureInfoStepViewForApiPoll(

@@ -17,6 +17,11 @@ import {
   normalizeNationalityNumber,
 } from "./nationalityNumberInput.js";
 import { clickWizardNextButton } from "./wizardNavigation.js";
+import {
+  drainPortalInterventions,
+  withPortalCheckpoint,
+  type PortalCheckpointContext,
+} from "./interventions/portalCheckpoint.js";
 
 function parseLocatorList(raw: string): string[] {
   return raw
@@ -167,10 +172,13 @@ export async function hasWizardValidationError(page: Page): Promise<boolean> {
  */
 export async function ensureApiPollStep1FieldsFilled(
   page: Page,
-  _profile: ResolvedProfile,
+  profile: ResolvedProfile,
   settings: AppointmentSettings,
   queryParams: ApiQueryParams,
 ): Promise<void> {
+  const checkpoint: PortalCheckpointContext = { profile };
+
+  await withPortalCheckpoint(page, checkpoint, async () => {
   const citySelectors = parseLocatorList(settings.citySelectLocator);
   const officeLabel = resolveOfficeLabelForStep1(queryParams);
   const targetProvince = officeLabel
@@ -218,6 +226,7 @@ export async function ensureApiPollStep1FieldsFilled(
       `[wizard-fill] Merkez/sube: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
+  }); // withPortalCheckpoint
 }
 
 /**
@@ -317,9 +326,12 @@ export async function advanceWizardStep1ToStep2Only(
     await ensureApiPollStep1FieldsFilled(page, profile, settings, queryParams);
   }
 
-  logger.info("[wizard-fill] Adim 1 → 2 tek Sonraki (captcha gate disarida — adim 2'den Sonraki yasak)");
-  await clickWizardNextButton(page, settings);
-  await page.waitForTimeout(settings.waitAfterWizardNextMs || 400);
+  const checkpoint: PortalCheckpointContext = { profile };
+  await withPortalCheckpoint(page, checkpoint, async () => {
+    logger.info("[wizard-fill] Adim 1 → 2 tek Sonraki (captcha gate disarida — adim 2'den Sonraki yasak)");
+    await clickWizardNextButton(page, settings);
+    await page.waitForTimeout(settings.waitAfterWizardNextMs || 400);
+  });
 }
 
 /** @deprecated ensureApiPollStep1/2FieldsFilled kullanin */

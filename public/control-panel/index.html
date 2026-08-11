@@ -13,7 +13,7 @@
           <div class="brand-mark">K</div>
           <div>
             <h1>Kozmoz API Observer</h1>
-            <p class="subtitle">GetClosedDate izleme — tek giriş: <code>npm start</code></p>
+            <p class="subtitle">GetClosedDate izleme</p>
           </div>
         </div>
         <div class="header-actions">
@@ -29,7 +29,6 @@
           <div class="card-head row-between">
             <div>
               <h2>Chrome oturumu</h2>
-              <span class="hint">Kalıcı Chrome profili + ağ ayarı — Chrome Aç öncesi ikisi de seçilmeli</span>
             </div>
             <button type="button" class="btn btn-ghost" id="btnManageChromeProfiles">Profil ekle / düzenle</button>
           </div>
@@ -41,7 +40,6 @@
                 + Yeni profil
               </button>
             </div>
-            <p class="note profile-select-hint">Karta tıklayın — anında seçilir. Düzenle / sil sağdaki butonlardan.</p>
             <div id="chromeProfileListInline" class="profile-list profile-list-selectable"></div>
             <div class="selected-profile-bar" id="selectedProfileBar">
               <span id="selectedProfileLabel">—</span>
@@ -51,9 +49,6 @@
               </label>
             </div>
             <div class="profile-meta" id="profileMeta"></div>
-            <p class="note profile-storage-note">
-              Depo: <code>data/control-panel/chrome-profiles.json</code> — yeniden başlatınca silinmez.
-            </p>
           </div>
 
           <div class="wizard-section">
@@ -65,12 +60,10 @@
               <div class="ip-box">
                 <span class="ip-label" id="currentIpLabel">Çıkış IP</span>
                 <strong id="currentIp">—</strong>
-                <small class="field-hint" id="currentIpHint">Direct: ev IP · Proxy: statik çıkış IP</small>
               </div>
               <div class="ip-box ip-box-accent">
                 <span class="ip-label">Kilitli IP (watcher)</span>
                 <strong id="lockedIp">—</strong>
-                <small class="field-hint">Watcher başlatmadan önce kilitleyin</small>
               </div>
             </div>
 
@@ -87,13 +80,9 @@
               <select id="proxyUrl">
                 <option value="">— Seç —</option>
               </select>
-              <small class="field-hint" id="proxyExitHint"></small>
             </label>
 
             <div id="proxyPoolList" class="profile-list proxy-pool-list"></div>
-            <p class="note profile-storage-note">
-              Proxy kayıtları: <code>data/control-panel/proxy-pool.json</code> — «Doğrudan (ev interneti)» her zaman kullanılabilir.
-            </p>
 
             <div class="inline-actions">
               <button type="button" class="btn btn-secondary" id="btnLockCurrentIp">Mevcut IP'yi kilitle</button>
@@ -109,7 +98,6 @@
               </label>
               <button type="button" class="btn btn-secondary" id="btnSaveManualHomeIp">Kaydet ve kilitle</button>
             </div>
-            <p class="note network-note" id="networkModeHint"></p>
           </div>
 
           <div class="chrome-status" id="chromeStatus"></div>
@@ -117,9 +105,6 @@
             <button type="button" class="btn btn-primary" id="btnStartChrome">Chrome Aç</button>
             <button type="button" class="btn btn-ghost" id="btnStopChrome">Chrome Kapat</button>
           </div>
-          <p class="note chrome-hint" id="chromeHint">
-            Sıra: profil + ağ seç → Chrome Aç → elle portala git → worker ayarları → API izleme başlat.
-          </p>
         </section>
 
         <dialog id="chromeProfileDialog" class="profile-dialog">
@@ -140,7 +125,6 @@
             <label class="field">
               <span>Chrome giriş şifre</span>
               <input type="password" id="chromeProfilePassword" autocomplete="new-password" required />
-              <small class="field-hint">Düzenlemede yeni şifreyi yazın — boş kaydedilemez. Kalıcı depo: <code>data/control-panel/chrome-profiles.json</code> (manifest otomatik üretilir).</small>
             </label>
             <label class="field">
               <span>Tercih CDP port (opsiyonel)</span>
@@ -150,7 +134,6 @@
               <button type="submit" class="btn btn-primary" id="btnSaveChromeProfile">Kaydet</button>
               <button type="button" class="btn btn-ghost" id="btnCancelChromeProfile">İptal</button>
             </div>
-            <p class="note">Kayıtlı profiller ana ekrandaki listede görünür. Silme yalnızca kaydı kaldırır; <code>data/chrome/</code> klasörü diskte kalabilir.</p>
           </form>
         </dialog>
 
@@ -201,7 +184,7 @@
             </div>
             <label class="field field-checkbox">
               <input type="checkbox" id="proxyIspStatic" />
-              <span>WAN statik (Chrome proxy kullanmaz — yalnızca IP kilitleme)</span>
+              <span>WAN statik</span>
             </label>
             <label class="field field-checkbox">
               <input type="checkbox" id="proxyEnabled" checked />
@@ -216,76 +199,115 @@
               <button type="button" class="btn btn-secondary" id="btnTestProxyIp">Çıkış IP ölç</button>
               <button type="button" class="btn btn-ghost" id="btnCancelProxy">İptal</button>
             </div>
-            <p class="note">ProxyNet HTTP gate: ispStatic kapalı, host/port/kullanıcı/parola doldurun. Ev interneti için bağlantı modunu «Doğrudan» seçin.</p>
           </form>
         </dialog>
 
-        <section class="card card-api">
+        <section class="card card-api span-2">
           <div class="card-head">
             <h2>Worker ayarları</h2>
-            <span class="hint">Watcher oturumu — durdurulunca taslak silinir (Chrome profili kalır)</span>
           </div>
 
-          <div class="wizard-section">
-            <p class="wizard-section-title">Wizard adım 1 — il + merkez/şube</p>
-            <label class="field">
-              <span>Başvuru noktası (şube)</span>
-              <select id="dealerOffice"></select>
-              <small class="field-hint">İl otomatik eşlenir (ör. İstanbul → Istanbul)</small>
-            </label>
-          </div>
+          <div class="worker-settings-grid">
+            <div class="worker-settings-main">
+              <div class="wizard-section">
+                <p class="wizard-section-title">Şube</p>
+                <label class="field">
+                  <span>Başvuru noktası (şube)</span>
+                  <select id="dealerOffice"></select>
+                </label>
+              </div>
 
-          <div class="wizard-section">
-            <p class="wizard-section-title">Portal adım 3 — bilgi formu (Bilgilerinizi Girin)</p>
-            <div class="field-grid-2">
-              <label class="field">
-                <span>Başvuru tipi</span>
-                <select id="applicationType"></select>
-              </label>
-              <label class="field">
-                <span>Başvuru şekli</span>
-                <select id="appointmentStyle"></select>
-              </label>
+              <div class="wizard-section">
+                <p class="wizard-section-title">Başvuru bilgileri</p>
+                <div class="field-grid-2">
+                  <label class="field">
+                    <span>Başvuru tipi</span>
+                    <select id="applicationType"></select>
+                  </label>
+                  <label class="field">
+                    <span>Başvuru şekli</span>
+                    <select id="appointmentStyle"></select>
+                  </label>
+                </div>
+                <label class="field">
+                  <span>TC Kimlik No <span class="required-star">*</span></span>
+                  <input
+                    type="password"
+                    id="nationalityNumber"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    maxlength="11"
+                    placeholder="11 haneli TC"
+                    required
+                  />
+                </label>
+              </div>
+
+              <div class="wizard-section">
+                <p class="wizard-section-title">OTP</p>
+                <div class="field-grid-2">
+                  <label class="field">
+                    <span>Cep telefonu (OTP) <span class="required-star">*</span></span>
+                    <input
+                      type="tel"
+                      id="otpPhone"
+                      inputmode="numeric"
+                      autocomplete="off"
+                      maxlength="10"
+                      placeholder="5321234567"
+                      required
+                    />
+                  </label>
+                  <label class="field">
+                    <span>E-posta <span class="required-star">*</span></span>
+                    <input
+                      type="email"
+                      id="portalEmail"
+                      autocomplete="off"
+                      placeholder="basvuru@email.com"
+                      required
+                    />
+                  </label>
+                </div>
+                <label class="field field-last">
+                  <span>Pasaport numarası <span class="required-star">*</span></span>
+                  <input
+                    type="text"
+                    id="passportNumber"
+                    autocomplete="off"
+                    maxlength="32"
+                    placeholder="U12345678"
+                    required
+                  />
+                </label>
+              </div>
             </div>
-            <label class="field">
-              <span>TC Kimlik No</span>
-              <input
-                type="password"
-                id="nationalityNumber"
-                inputmode="numeric"
-                autocomplete="off"
-                maxlength="11"
-                placeholder="11 haneli TC"
-              />
-              <small class="field-hint">Portal adım 2 — yalnızca worker-config'te saklanır</small>
-            </label>
+
+            <aside class="worker-settings-side">
+              <div class="wizard-section">
+                <p class="wizard-section-title">İzleme aralıkları</p>
+                <label class="field">
+                  <span>Poll aralığı</span>
+                  <select id="workerPollInterval"></select>
+                </label>
+                <label class="field field-last">
+                  <span>Telegram özeti</span>
+                  <select id="workerTelegramInterval"></select>
+                </label>
+              </div>
+
+              <div class="worker-draft-summary" id="workerDraftSummary" aria-live="polite"></div>
+
+              <button type="button" class="btn btn-secondary btn-block" id="btnSaveApi">
+                Worker taslağını kaydet
+              </button>
+            </aside>
           </div>
-
-          <div class="wizard-section">
-            <p class="wizard-section-title">İzleme aralıkları</p>
-            <div class="field-grid-2">
-              <label class="field">
-                <span>Poll aralığı (istekler arası)</span>
-                <select id="workerPollInterval"></select>
-              </label>
-
-              <label class="field">
-                <span>Telegram özet aralığı</span>
-                <select id="workerTelegramInterval"></select>
-              </label>
-            </div>
-          </div>
-
-          <div class="api-preview" id="apiPreview"></div>
-          <div class="worker-summary" id="workerSummary"></div>
-
-          <button type="button" class="btn btn-secondary" id="btnSaveApi">Worker taslağını kaydet</button>
         </section>
 
         <section class="card card-workflow span-2">
           <div class="card-head">
             <h2>API İzleme</h2>
-            <span class="hint">Profil + ofis + şekil seç → tek tıkla başlat</span>
           </div>
 
           <ol class="workflow-steps" id="workflowSteps">
@@ -309,18 +331,12 @@
           </div>
 
           <div class="diagnostics-output" id="diagnosticsOutput" hidden></div>
-
-          <p class="note workflow-note" id="workflowTimingNote">
-            Önce <strong>Chrome Aç</strong> (Profil kartı), elle portala gidin, sonra watcher başlatın.
-            Chrome CDP kapalıysa watcher başlatınca da otomatik açılır.
-          </p>
         </section>
 
         <section class="card card-ban-overview span-2">
           <div class="card-head row-between">
             <div>
               <h2>Ban / rate limit özeti</h2>
-              <span class="hint">Hangi profil hangi IP ile ban yedi — tüm profiller</span>
             </div>
           </div>
           <div class="table-wrap">
@@ -349,12 +365,11 @@
           <div class="card-head row-between">
             <div>
               <h2>API sağlığı</h2>
-              <span class="hint">GetClosedDate poll durumu, rate limit ve ban takibi</span>
             </div>
             <span class="status-pill" id="apiHealthBadge">—</span>
           </div>
           <div class="api-health-grid" id="apiHealthPanel">
-            <p class="note">Watcher başlatıldığında son poll sonuçları burada görünür.</p>
+            <p class="note note-compact">Watcher çalışınca son poll burada görünür.</p>
           </div>
         </section>
 
@@ -362,7 +377,6 @@
           <div class="card-head row-between">
             <div>
               <h2>Aktif süreçler</h2>
-              <span class="hint">Panel üzerinden başlatılan Chrome ve watcher'lar</span>
             </div>
             <button type="button" class="btn btn-ghost" id="btnRefreshProcesses">Süreçleri yenile</button>
           </div>

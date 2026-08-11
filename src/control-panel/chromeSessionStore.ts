@@ -17,6 +17,9 @@ export interface ChromeLaunchSession {
     appointmentStyle: string;
     applicationType: string;
     nationalityNumber: string;
+    otpPhone: string;
+    portalEmail: string;
+    passportNumber: string;
   };
   draftTiming?: {
     pollIntervalMs: number;

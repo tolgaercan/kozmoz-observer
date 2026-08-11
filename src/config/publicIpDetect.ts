@@ -11,7 +11,7 @@ export interface HomePublicIpResult {
   measuredIp: string;
   /** Ölçülen IP, proxy havuzundaki bilinen çıkış IP'lerinden biri mi */
   isProxyIpDetected: boolean;
-  source: "env" | "measured" | "unavailable";
+  source: "measured" | "unavailable";
   warning?: string;
 }
 
@@ -131,20 +131,10 @@ function isKnownProxyIp(ip: string, knownProxyIps: string[]): boolean {
   return knownProxyIps.includes(ip);
 }
 
-/** Ev interneti IP — ham WAN ölçümü esas alınır (proxy havuzu ile aynı olabilir) */
+/** Ev interneti IP — sunucu ölçümü (panel .env HOME_PUBLIC_IP kullanmaz) */
 export async function resolveHomePublicIp(projectRoot: string): Promise<HomePublicIpResult> {
   const knownProxyIps = listKnownProxyExitIps(projectRoot);
   const measuredIp = measureRawPublicIp();
-  const envHome = process.env.HOME_PUBLIC_IP?.trim();
-
-  if (envHome) {
-    return {
-      ip: envHome,
-      measuredIp,
-      isProxyIpDetected: isKnownProxyIp(measuredIp, knownProxyIps),
-      source: "env",
-    };
-  }
 
   if (measuredIp !== "unknown") {
     const sameAsPool = isKnownProxyIp(measuredIp, knownProxyIps);
@@ -164,7 +154,7 @@ export async function resolveHomePublicIp(projectRoot: string): Promise<HomePubl
     measuredIp,
     isProxyIpDetected: false,
     source: "unavailable",
-    warning: "Ev IP ölçülemedi — panelden tarayıcı ölçümü veya HOME_PUBLIC_IP deneyin.",
+    warning: "Ev IP ölçülemedi — panelden tarayıcı ölçümü veya manuel IP girin.",
   };
 }
 
@@ -176,9 +166,5 @@ export async function detectHomePublicIp(projectRoot?: string): Promise<string> 
   }
 
   const measuredIp = measureRawPublicIp();
-  const envHome = process.env.HOME_PUBLIC_IP?.trim();
-  if (envHome) {
-    return envHome;
-  }
   return measuredIp;
 }

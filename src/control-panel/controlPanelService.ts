@@ -55,6 +55,7 @@ import {
   type WorkerTimingParams,
   type ProxyMode,
 } from "./workerConfigStore.js";
+import { sanitizeWorkerApiParams, validateWorkerApiParams } from "./workerApiValidation.js";
 import {
   RUNTIME_INTERVAL_OPTIONS_MS,
   WorkerRuntimeStore,
@@ -69,7 +70,7 @@ export interface NetworkIpInfo {
   homePublicIp: string;
   measuredWanIp?: string;
   warning?: string;
-  ipSource?: "measured" | "chrome" | "env" | "cached" | "proxy" | "browser";
+  ipSource?: "measured" | "chrome" | "cached" | "proxy" | "browser";
   autoLocked?: boolean;
   proxyPool: ProxyPanelOption[];
   selectedProxyId?: string;
@@ -481,15 +482,25 @@ export class ControlPanelService {
 
     const nextProxyMode = patch.proxyMode ?? existing?.proxyMode ?? legacy.proxyMode ?? "direct";
     const nextProxyId =
-      patch.proxyId !== undefined ? patch.proxyId : (existing?.proxyId ?? legacy.proxyId ?? "");
+      nextProxyMode === "direct"
+        ? ""
+        : patch.proxyId !== undefined
+          ? patch.proxyId
+          : (existing?.proxyId ?? legacy.proxyId ?? "");
     const nextProxyUrl =
-      patch.proxyUrl !== undefined ? patch.proxyUrl : (existing?.proxyUrl ?? legacy.proxyUrl ?? "");
+      nextProxyMode === "direct"
+        ? ""
+        : patch.proxyUrl !== undefined
+          ? patch.proxyUrl
+          : (existing?.proxyUrl ?? legacy.proxyUrl ?? "");
     const nextLockedIp =
       patch.lockedIp !== undefined ? patch.lockedIp : existing?.lockedIp ?? legacy.lockedIp;
     const nextHomeIp =
       patch.lastKnownHomeIp !== undefined
         ? patch.lastKnownHomeIp
-        : existing?.lastKnownHomeIp ?? legacy.lastKnownHomeIp;
+        : patch.lockedIp !== undefined && nextProxyMode === "direct"
+          ? patch.lockedIp
+          : (existing?.lastKnownHomeIp ?? legacy.lastKnownHomeIp);
     const nextApi = patch.api ?? existing?.draftApi ?? legacy.api;
     const nextTiming = patch.timing ?? existing?.draftTiming ?? legacy.timing;
 
@@ -570,12 +581,14 @@ export class ControlPanelService {
     this.reconcileStaleWatcherSessions();
     this.chromeProfileStore.getOrThrow(profileId);
     const worker = this.resolveEffectiveWorker(profileId);
-    let homePublicIp = process.env.HOME_PUBLIC_IP?.trim() || "unknown";
+    const workerHome =
+      normalizeLockedIp(worker.lastKnownHomeIp) || normalizeLockedIp(worker.lockedIp);
+    let homePublicIp = workerHome || "unknown";
     let measuredWanIp: string | undefined;
     let homeIpWarning: string | undefined;
     let publicIp = homePublicIp;
 
-    if (!options?.light) {
+    if (!options?.light && homePublicIp === "unknown") {
       const home = await resolveHomePublicIp(this.projectRoot);
       homePublicIp = home.ip === "unavailable" ? "unknown" : home.ip;
       measuredWanIp = home.measuredIp !== "unknown" ? home.measuredIp : undefined;
@@ -615,14 +628,18 @@ export class ControlPanelService {
   }
 
   saveWorkerConfig(profileId: string, patch: Partial<WorkerConfig>): WorkerConfig {
+    const sanitizedPatch = { ...patch };
+    if (patch.api) {
+      sanitizedPatch.api = sanitizeWorkerApiParams({ ...this.resolveEffectiveWorker(profileId).api, ...patch.api });
+    }
     return this.savePanelDraft(profileId, {
-      proxyMode: patch.proxyMode,
-      proxyId: patch.proxyId,
-      proxyUrl: patch.proxyUrl,
-      lockedIp: patch.lockedIp,
-      lastKnownHomeIp: patch.lastKnownHomeIp,
-      api: patch.api,
-      timing: patch.timing,
+      proxyMode: sanitizedPatch.proxyMode,
+      proxyId: sanitizedPatch.proxyId,
+      proxyUrl: sanitizedPatch.proxyUrl,
+      lockedIp: sanitizedPatch.lockedIp,
+      lastKnownHomeIp: sanitizedPatch.lastKnownHomeIp,
+      api: sanitizedPatch.api,
+      timing: sanitizedPatch.timing,
     });
   }
 
@@ -643,7 +660,8 @@ export class ControlPanelService {
     };
 
     const skipServer = options?.skipServerMeasure === true;
-    const envHome = process.env.HOME_PUBLIC_IP?.trim();
+    const workerHome =
+      normalizeLockedIp(worker.lastKnownHomeIp) || normalizeLockedIp(worker.lockedIp);
 
     let displayIp = "unknown";
     let warning: string | undefined;
@@ -692,28 +710,23 @@ export class ControlPanelService {
         warning = "Chrome kapalı — kayıtlı proxy IP gösteriliyor.";
       }
     } else if (skipServer) {
-      const pickHome = (ip?: string): string => normalizeLockedIp(ip);
-      displayIp =
-        pickHome(envHome) ||
-        pickHome(worker.lastKnownHomeIp) ||
-        pickHome(worker.lockedIp) ||
-        "unknown";
-      ipSource = pickHome(envHome)
-        ? "env"
-        : pickHome(worker.lastKnownHomeIp)
-          ? "cached"
-          : undefined;
+      displayIp = workerHome || "unknown";
+      ipSource = workerHome ? "cached" : undefined;
       warning =
         displayIp === "unknown"
-          ? "Ev IP henüz yok — «Ev IP'yi yeniden ölç» veya HOME_PUBLIC_IP tanımlayın."
+          ? "Ev IP henüz yok — panelden «Ev IP'yi yeniden ölç» veya «Mevcut IP'yi kilitle»."
           : undefined;
     } else {
-      const home = await resolveHomePublicIp(this.projectRoot);
-      displayIp = home.ip === "unavailable" ? "unknown" : home.ip;
-      warning = home.warning;
-      measuredWanIp = home.measuredIp !== "unknown" ? home.measuredIp : undefined;
-      ipSource =
-        home.source === "env" ? "env" : home.source === "measured" ? "measured" : undefined;
+      if (workerHome) {
+        displayIp = workerHome;
+        ipSource = "cached";
+      } else {
+        const home = await resolveHomePublicIp(this.projectRoot);
+        displayIp = home.ip === "unavailable" ? "unknown" : home.ip;
+        warning = home.warning;
+        measuredWanIp = home.measuredIp !== "unknown" ? home.measuredIp : undefined;
+        ipSource = home.source === "measured" ? "measured" : undefined;
+      }
 
       if (displayIp === "unknown") {
         const directCdpPort = profile.browser?.cdpPort ?? 9222;
@@ -755,7 +768,7 @@ export class ControlPanelService {
 
     const proxyStore = new ProxyPoolStore(this.projectRoot);
     const homePublicIp =
-      envHome || (displayIp !== "unknown" && displayIp !== "unavailable" ? displayIp : "unknown");
+      displayIp !== "unknown" && displayIp !== "unavailable" ? displayIp : "unknown";
 
     return {
       mode,
@@ -807,33 +820,46 @@ export class ControlPanelService {
     let worker = this.resolveEffectiveWorker(profileId);
     let lockedIp = normalizeLockedIp(worker.lockedIp);
 
-    if (worker.proxyMode === "direct" && !lockedIp) {
-      await this.ensureDirectHomeIp(profileId);
-      worker = this.resolveEffectiveWorker(profileId);
-      lockedIp = normalizeLockedIp(worker.lockedIp);
+    if (worker.proxyMode === "direct") {
+      if (!lockedIp) {
+        await this.ensureDirectHomeIp(profileId);
+        worker = this.resolveEffectiveWorker(profileId);
+        lockedIp = normalizeLockedIp(worker.lockedIp);
+      }
+
+      if (!lockedIp) {
+        throw new Error(
+          "Ev modu: IP kilitlemeden watcher başlatılamaz. «Ev IP'yi yeniden ölç» veya «Mevcut IP'yi kilitle» deyin.",
+        );
+      }
+
+      this.assertIpNotUsedByOtherWatcher(profileId, lockedIp);
+      worker = { ...worker, lockedIp, proxyId: "", proxyUrl: "" };
+      return { worker, effectiveIp: lockedIp };
     }
 
-    const network = await this.getNetworkIp(profileId, undefined, {
-      skipServerMeasure: true,
-      autoLock: false,
-    });
+    const network = await this.getNetworkIp(
+      profileId,
+      { proxyMode: "proxy", proxyId: worker.proxyId },
+      { skipServerMeasure: true, autoLock: false, measureViaChrome: true },
+    );
     lockedIp = normalizeLockedIp(network.lockedIp) || lockedIp;
 
     if (!lockedIp) {
       const hint =
         network.displayIp !== "unknown"
           ? network.displayIp
-          : "ev IP ölçülemedi — ProxyNet kapatın veya panelden IP kilitleyin";
+          : "proxy çıkış IP ölçülemedi";
       throw new Error(
-        `IP kilitlemeden watcher başlatılamaz (${hint}). Ev modu: panelde «Ev IP'yi yeniden ölç» deyin (tarayıcı ölçer, antivirüs engellemez).`,
+        `IP kilitlemeden watcher başlatılamaz (${hint}). Proxy seçin, IP'yi kilitleyin.`,
       );
     }
 
-    if (worker.proxyMode === "proxy" && !worker.proxyId && !worker.proxyUrl?.trim()) {
+    if (!worker.proxyId && !worker.proxyUrl?.trim()) {
       throw new Error("Proxy modu seçili — listeden statik IP proxy seçin, kaydedin ve IP'yi kilitleyin.");
     }
 
-    if (worker.proxyMode === "proxy" && network.displayIp !== "unknown" && lockedIp !== network.displayIp) {
+    if (network.displayIp !== "unknown" && lockedIp !== network.displayIp) {
       throw new Error(
         `Kilitli IP (${lockedIp}) seçili proxy çıkış IP'si (${network.displayIp}) ile uyuşmuyor. IP'yi yeniden kilitleyin.`,
       );
@@ -909,6 +935,21 @@ export class ControlPanelService {
     if (tc) {
       env.NATIONALITY_NUMBER = tc;
       env[`NATIONALITY_NUMBER_${profileKey}`] = tc;
+    }
+    const phone = api.otpPhone?.trim();
+    if (phone) {
+      env.PHONE = phone;
+      env[`PHONE_${profileKey}`] = phone;
+    }
+    const portalEmail = api.portalEmail?.trim();
+    if (portalEmail) {
+      env.PORTAL_EMAIL = portalEmail;
+      env[`REGISTER_EMAIL_${profileKey}`] = portalEmail;
+    }
+    const passport = api.passportNumber?.trim();
+    if (passport) {
+      env.PASSPORT_NO = passport;
+      env[`PASSPORT_NO_${profileKey}`] = passport;
     }
     return env;
   }
@@ -990,6 +1031,17 @@ export class ControlPanelService {
       directMode,
       { forceFresh: true },
     );
+
+    this.savePanelDraft(profileId, {
+      proxyMode,
+      proxyId: proxyMode === "proxy" ? proxyId : "",
+      proxyUrl: proxyMode === "proxy" ? proxyUrl : "",
+      lockedIp: launch?.lockedIp ?? existingSession?.lockedIp ?? worker.lockedIp,
+      lastKnownHomeIp:
+        directMode && (launch?.lockedIp ?? existingSession?.lockedIp ?? worker.lockedIp)
+          ? launch?.lockedIp ?? existingSession?.lockedIp ?? worker.lockedIp
+          : existingSession?.lastKnownHomeIp ?? worker.lastKnownHomeIp,
+    });
 
     let googleLogin: ChromeGoogleLoginResult | undefined;
     if (launchResult.ok && !launchResult.reusedExisting) {
@@ -1115,6 +1167,12 @@ export class ControlPanelService {
     api: WorkerApiParams,
     timing?: Partial<WorkerTimingParams>,
   ) {
+    const sanitizedApi = sanitizeWorkerApiParams(api);
+    const validation = validateWorkerApiParams(sanitizedApi);
+    if (!validation.ok) {
+      throw new Error(`Worker ayarları eksik: ${validation.errors.join("; ")}`);
+    }
+
     const timingDefaults = this.runtimeDefaults();
     const resolvedTiming = {
       pollIntervalMs: timing?.pollIntervalMs ?? timingDefaults.pollIntervalMs,
@@ -1122,7 +1180,7 @@ export class ControlPanelService {
         timing?.telegramReportIntervalMs ?? timingDefaults.telegramReportIntervalMs,
     };
 
-    this.savePanelDraft(profileId, { api, timing: resolvedTiming });
+    this.savePanelDraft(profileId, { api: sanitizedApi, timing: resolvedTiming });
     const { worker, effectiveIp } = await this.validateWatcherStart(profileId);
 
     const profile = this.resolveProfile(profileId);
@@ -1155,7 +1213,7 @@ export class ControlPanelService {
       updatedAt: new Date().toISOString(),
     });
 
-    const process = await this.startApiWatcher(profileId, api);
+    const process = await this.startApiWatcher(profileId, sanitizedApi);
     steps.push("API Watcher başlatıldı");
 
     return { process, steps, chromeReady: true };

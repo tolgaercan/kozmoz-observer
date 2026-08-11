@@ -10,6 +10,9 @@ export function mergeWorkerApiIntoProfile(
   const nationalityNumber = api.nationalityNumber?.trim();
   const appointmentStyle = api.appointmentStyle?.trim();
   const dealerOffice = api.dealerOffice?.trim();
+  const otpPhone = api.otpPhone?.trim();
+  const portalEmail = api.portalEmail?.trim();
+  const passportNumber = api.passportNumber?.trim();
 
   return {
     ...profile,
@@ -23,6 +26,13 @@ export function mergeWorkerApiIntoProfile(
       ...(nationalityNumber ? { nationalityNumber } : {}),
       ...(appointmentStyle ? { appointmentStyle } : {}),
       ...(dealerOffice ? { appointmentOffice: dealerOffice } : {}),
+      ...(otpPhone ? { phone: otpPhone } : {}),
+      ...(portalEmail ? { registerEmail: portalEmail } : {}),
+      ...(passportNumber ? { passportNumber } : {}),
+    },
+    credentials: {
+      ...profile.credentials,
+      ...(portalEmail ? { email: portalEmail } : {}),
     },
   };
 }
