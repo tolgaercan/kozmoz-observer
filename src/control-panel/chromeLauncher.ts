@@ -1,16 +1,16 @@
 import { existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
-import { resolve } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 
 import { isCdpEndpointReady } from "../browser/cdpConnector.js";
+import {
+  resolveChromeExecutable as resolvePlatformChromeExecutable,
+  resolveSystemChromeUserDataDir,
+} from "../browser/chromePlatform.js";
 import { detectHomePublicIp } from "../config/publicIpDetect.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { killProcessesOnPort, waitForCdpPortFree } from "./cdpPortKill.js";
 import type { ProcessRegistry } from "./processRegistry.js";
 import { logger } from "../utils/logger.js";
-
-const DEFAULT_CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 
 export interface ChromeLaunchResult {
   ok: boolean;
@@ -23,7 +23,7 @@ export interface ChromeLaunchResult {
 }
 
 function resolveChromeExecutable(): string {
-  return process.env.CHROME_EXECUTABLE_PATH?.trim() || DEFAULT_CHROME_PATH;
+  return resolvePlatformChromeExecutable() ?? "";
 }
 
 function resolveProfilePaths(profile: ResolvedProfile): {
@@ -36,7 +36,7 @@ function resolveProfilePaths(profile: ResolvedProfile): {
   let profileDirectory = profile.browser?.profileDirectory ?? "Default";
 
   if (useSystemProfile) {
-    userDataDir = resolve(homedir(), "AppData/Local/Google/Chrome/User Data");
+    userDataDir = resolveSystemChromeUserDataDir();
     profileDirectory =
       process.env.CHROME_PROFILE_DIRECTORY?.trim() ||
       profile.browser?.profileDirectory ||
@@ -147,10 +147,11 @@ export async function launchChromeForProfile(
   }
 
   const chromeExe = resolveChromeExecutable();
-  if (!existsSync(chromeExe)) {
+  if (!chromeExe || !existsSync(chromeExe)) {
     return {
       ok: false,
-      message: `Chrome bulunamadı: ${chromeExe}`,
+      message:
+        "Google Chrome bulunamadı. Kurun veya .env içinde CHROME_PATH / CHROME_EXECUTABLE_PATH tanımlayın.",
       cdpEndpoint,
       cdpPort,
       reusedExisting: false,

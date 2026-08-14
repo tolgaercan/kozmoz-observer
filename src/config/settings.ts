@@ -312,10 +312,23 @@ function parseSlotVerifyMode(raw: string | undefined): "always" | "single-only" 
 }
 
 function resolveDefaultChromeUserDataDir(): string {
+  if (process.env.FIXED_BROWSER_USER_DATA_DIR?.trim()) {
+    return resolve(process.env.FIXED_BROWSER_USER_DATA_DIR.trim());
+  }
+
+  if (process.platform === "darwin") {
+    return resolve(homedir(), "Library", "Application Support", "Google", "Chrome");
+  }
+
+  if (process.platform === "linux") {
+    return resolve(homedir(), ".config", "google-chrome");
+  }
+
   if (process.env.LOCALAPPDATA) {
     return resolve(process.env.LOCALAPPDATA, "Google", "Chrome", "User Data");
   }
-  return resolve(process.env.USERPROFILE ?? "", "AppData", "Local", "Google", "Chrome", "User Data");
+
+  return resolve(homedir(), "AppData", "Local", "Google", "Chrome", "User Data");
 }
 
 function resolveChromeFreshProfile(env: NodeJS.ProcessEnv): boolean {

@@ -59,7 +59,7 @@ export class ContextFactory {
     logger.info("Mod: CDP — Playwright Chrome BAŞLATMAZ, açık Chrome'a bağlanır.");
     logger.info(`  CDP endpoint: ${cdpEndpoint}`);
     logger.info(`  Chrome user-data: ${profile.absoluteUserDataDir}`);
-    logger.info("  Chrome'u scripts/start-chrome-debug.ps1 -Profile <id> ile açmış olmalısınız.");
+    logger.info("  Chrome'u panelden veya `npm run chrome:debug -- --profile <id>` ile açmış olmalısınız.");
 
     const { browser, context } = await connectOverCdp(cdpEndpoint, {
       skipStealth: launchOptions.skipStealth,

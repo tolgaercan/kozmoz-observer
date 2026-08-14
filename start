@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# npm PATH'te olmasa da paneli başlatır (proje içi Node: .runtime/node)
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+export PATH="$ROOT/.runtime/node/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "Node yok — kuruluyor..."
+  bash "$ROOT/scripts/setup.sh"
+fi
+
+cd "$ROOT"
+exec npm start "$@"

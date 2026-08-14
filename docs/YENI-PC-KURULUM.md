@@ -68,23 +68,35 @@ Mevcut Chrome profilinde portal ve Google oturumu varsa **fiziksel kopya** hızl
 
 | Yazılım | Not |
 |---------|-----|
-| Node.js 20+ | |
-| Google Chrome | Varsayılan: `C:\Program Files\Google\Chrome\Application\chrome.exe` |
+| Node.js 18+ | Mac: yoksa `bash scripts/setup.sh` proje içine kurar |
+| Google Chrome | Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe` · Mac: `/Applications/Google Chrome.app/...` (otomatik bulunur) |
 | Git | |
 
 ### 2. Repoyu kur
 
+Windows:
+
 ```powershell
 git clone <GITHUB_REPO_URL> kozmoz-observer
 cd kozmoz-observer
-npm install
-npm run build
+npm start
 ```
+
+Mac:
+
+```bash
+git clone <GITHUB_REPO_URL> kozmoz-observer
+cd kozmoz-observer
+bash scripts/setup.sh
+npm start
+```
+
+`npm start` eksik paketleri yükler, paneli açar. Ayrı `npm install` zorunlu değil.
 
 ### 3. `.env` oluştur
 
-```powershell
-Copy-Item .env.example .env
+```bash
+cp .env.example .env
 # .env içinde en az TELEGRAM_BOT_TOKEN ve TELEGRAM_CHAT_ID doldurun
 ```
 

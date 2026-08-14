@@ -1,6 +1,4 @@
-import { spawn } from "node:child_process";
-import { resolve } from "node:path";
-
+import { runChromeDebug } from "../../browser/chromeDebugProcess.js";
 import { isCdpEndpointReady } from "../../browser/cdpConnector.js";
 import { logger } from "../../utils/logger.js";
 import type { ScenarioStepParams } from "../types.js";
@@ -30,7 +28,6 @@ export async function runChromeConnectPhase(
     };
   }
 
-  const script = resolve(projectRoot, "scripts/start-chrome-debug.ps1");
   const useSystemProfile = params?.useSystemProfile === true;
   const profileDirectory =
     typeof params?.chromeProfileDirectory === "string"
@@ -56,7 +53,7 @@ export async function runChromeConnectPhase(
     envExtra.CHROME_PROFILE_DIRECTORY = profileDirectory;
   }
 
-  await runPowerShell(script, ["-Profile", profileId], envExtra);
+  await runChromeDebug(projectRoot, profileId, envExtra);
 
   return {
     ok: true,
@@ -64,31 +61,4 @@ export async function runChromeConnectPhase(
       ? `Sistem Chrome açıldı (${profileDirectory})`
       : `Chrome izole profil ile açıldı (${profileId})`,
   };
-}
-
-function runPowerShell(
-  scriptPath: string,
-  args: string[],
-  envExtra: Record<string, string>,
-): Promise<void> {
-  return new Promise((resolvePromise, reject) => {
-    const child = spawn(
-      "powershell",
-      ["-ExecutionPolicy", "Bypass", "-File", scriptPath, ...args],
-      {
-        env: { ...process.env, ...envExtra },
-        stdio: "inherit",
-        windowsHide: true,
-      },
-    );
-
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolvePromise();
-        return;
-      }
-      reject(new Error(`chrome:debug çıkış kodu ${code}`));
-    });
-  });
 }
