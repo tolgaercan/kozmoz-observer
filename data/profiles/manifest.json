@@ -60,7 +60,7 @@
         "nationalityNumber": ""
       },
       "browser": {
-        "cdpPort": 9222,
+        "cdpPort": 9224,
         "userDataDir": "data/chrome/profile-tolga-profile-2",
         "profileDirectory": "Default",
         "proxy": null

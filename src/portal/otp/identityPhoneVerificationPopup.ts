@@ -1,6 +1,7 @@
 import type { Locator, Page } from "playwright";
 
 import {
+  DEFAULT_SUPABASE_OTP_TIMEOUT_MS,
   isSupabaseOtpConfigured,
   waitSupabaseOtp,
   type WaitSupabaseOtpOptions,
@@ -11,6 +12,7 @@ import {
   resolveProfilePhone,
   type PortalIdentityVerificationData,
 } from "../../profiles/profileCredentials.js";
+import { maskNationalityNumber } from "../nationalityNumberInput.js";
 import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { logger } from "../../utils/logger.js";
 import { PORTAL_INTERVENTION_PROBE_MS } from "../interventions/portalInterventionTiming.js";
@@ -95,21 +97,37 @@ async function waitForInputEnabled(input: Locator, timeoutMs: number): Promise<v
   throw new Error("Kimlik/pasaport alanı etkinleşmedi (başvuru tipi seçimi sonrası).");
 }
 
-async function fillTextIfEmpty(
+async function fillIdentityField(
   page: Page,
   input: Locator,
   value: string,
   label: string,
+  mask: (raw: string) => string = maskNationalityNumber,
 ): Promise<void> {
-  const current = (await input.inputValue().catch(() => "")).trim();
-  if (current === value.trim()) {
-    logger.info(`[identity-phone] ${label} zaten dolu — atlanıyor.`);
+  const target = value.trim();
+  if (!target) {
     return;
   }
-  await humanTypeIntoLocator(page, input, value, {
+
+  const current = (await input.inputValue().catch(() => "")).trim();
+  if (current === target) {
+    logger.info(`[identity-phone] ${label} panel degeri zaten alanda (${mask(target)}).`);
+    return;
+  }
+
+  if (current) {
+    logger.warn(
+      `[identity-phone] ${label} alaninda farkli deger var (${mask(current)}) — panel degeri yaziliyor (${mask(target)}).`,
+    );
+  } else {
+    logger.info(`[identity-phone] ${label} panelden yaziliyor (${mask(target)}).`);
+  }
+
+  await humanTypeIntoLocator(page, input, target, {
     label,
     minCharDelayMs: 55,
     maxCharDelayMs: 130,
+    clearBeforeType: true,
   });
 }
 
@@ -146,8 +164,14 @@ async function fillPersonIdentityFields(
   await waitForInputEnabled(tcknInput, 12_000);
   await waitForInputEnabled(passportInput, 12_000);
 
-  await fillTextIfEmpty(page, tcknInput, data.tckn, "TC kimlik");
-  await fillTextIfEmpty(page, passportInput, data.passportNumber, "Pasaport no");
+  await fillIdentityField(page, tcknInput, data.tckn, "TC kimlik");
+  await fillIdentityField(
+    page,
+    passportInput,
+    data.passportNumber,
+    "Pasaport no",
+    (raw) => (raw.length <= 4 ? "***" : `***${raw.slice(-4)}`),
+  );
 }
 
 async function clickSendCode(scope: Locator): Promise<boolean> {
@@ -161,6 +185,17 @@ async function clickSendCode(scope: Locator): Promise<boolean> {
   }
   await button.click({ timeout: 8000 });
   logger.info("[identity-phone] «Telefonuma kod gönder» tıklandı.");
+  return true;
+}
+
+async function clickResendCode(scope: Locator): Promise<boolean> {
+  const link = scope.locator(IDENTITY_PHONE_VERIFICATION_SELECTORS.resendCodeLink).first();
+  if (!(await link.isVisible({ timeout: 3000 }).catch(() => false))) {
+    logger.warn("[identity-phone] «Yeniden doğrulama kodu gönder» linki bulunamadı.");
+    return false;
+  }
+  await link.click({ timeout: 8000 });
+  logger.info("[identity-phone] «Yeniden doğrulama kodu gönder» tıklandı (1 kez).");
   return true;
 }
 
@@ -239,6 +274,10 @@ export async function handleIdentityPhoneVerificationPopupIfPresent(
     const data = mergeVerificationData(options.profile, options.verificationData);
     validateVerificationData(data);
 
+    logger.info(
+      `[identity-phone] Panel kimlik (profil=${options.profile.id}): TC=${maskNationalityNumber(data.tckn)} pasaport=***${data.passportNumber.slice(-4)} tip=${data.applicationTypeDisplay}`,
+    );
+
     await selectApplicationTypeIfNeeded(scope, data.applicationTypeValue);
     await fillPersonIdentityFields(page, scope, data, 1);
     filledForm = true;
@@ -260,7 +299,9 @@ export async function handleIdentityPhoneVerificationPopupIfPresent(
     since = new Date();
     await sleep(800);
   } else {
-    logger.info("[identity-phone] OTP alanı zaten görünür — form adımı atlanıyor.");
+    logger.warn(
+      "[identity-phone] OTP alani zaten acik — TC/pasaport adimi atlandi (portal oturum degerleri kullanilmis olabilir).",
+    );
     since = options.since ?? new Date();
   }
 
@@ -308,28 +349,65 @@ export async function handleIdentityPhoneVerificationPopupIfPresent(
     };
   }
 
+  const otpTimeoutMs = options.waitOptions?.timeoutMs ?? DEFAULT_SUPABASE_OTP_TIMEOUT_MS;
+
   let otp: string;
   try {
+    logger.info(
+      `[identity-phone] Supabase OTP bekleniyor (panel tel ***${phone.slice(-4)}, timeout ${otpTimeoutMs}ms).`,
+    );
     otp = await waitSupabaseOtp(phone, {
       since: since ?? new Date(),
       ...options.waitOptions,
+      timeoutMs: otpTimeoutMs,
     });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return {
-      visible: true,
-      resolved: false,
-      step: "wait-otp",
-      filledForm,
-      codeRequested,
-      otpFilled: false,
-      submitted: false,
-      detail: message,
-    };
+  } catch (firstError) {
+    const firstMessage = firstError instanceof Error ? firstError.message : String(firstError);
+    logger.warn(`[identity-phone] OTP gelmedi (${otpTimeoutMs}ms) — yeniden gönder deneniyor: ${firstMessage}`);
+
+    const resent = await clickResendCode(scope);
+    if (!resent) {
+      return {
+        visible: true,
+        resolved: false,
+        step: "wait-otp",
+        filledForm,
+        codeRequested,
+        otpFilled: false,
+        submitted: false,
+        detail: firstMessage,
+      };
+    }
+
+    since = new Date();
+    await sleep(800);
+
+    try {
+      logger.info(
+        `[identity-phone] Yeniden gönder sonrası OTP bekleniyor (***${phone.slice(-4)}, timeout ${otpTimeoutMs}ms).`,
+      );
+      otp = await waitSupabaseOtp(phone, {
+        since,
+        ...options.waitOptions,
+        timeoutMs: otpTimeoutMs,
+      });
+    } catch (secondError) {
+      const message = secondError instanceof Error ? secondError.message : String(secondError);
+      return {
+        visible: true,
+        resolved: false,
+        step: "wait-otp",
+        filledForm,
+        codeRequested,
+        otpFilled: false,
+        submitted: false,
+        detail: message,
+      };
+    }
   }
 
   const otpField = scope.locator(IDENTITY_PHONE_VERIFICATION_SELECTORS.otpInput).first();
-  await fillTextIfEmpty(page, otpField, otp, "Doğrulama kodu");
+  await fillIdentityField(page, otpField, otp, "Doğrulama kodu", () => "****");
   otpFilled = true;
 
   const shouldSubmit = options.clickSubmit !== false;

@@ -96,7 +96,20 @@ export async function gotoKosmosMarketingHome(page: import("playwright").Page): 
   }
 
   logger.info(`[home] Kosmos ana sayfaya gidiliyor: ${target}`);
-  await page.goto(target, { waitUntil: "domcontentloaded", timeout: 90_000 });
+  try {
+    await page.goto(target, { waitUntil: "domcontentloaded", timeout: 90_000 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/detached|closed|target/i.test(message)) {
+      throw error;
+    }
+    const context = page.context();
+    const fresh = await context.newPage();
+    logger.warn(`[home] Sekme geçersiz (${message}) — yeni sekmede deneniyor.`);
+    await fresh.goto(target, { waitUntil: "domcontentloaded", timeout: 90_000 });
+    await fresh.bringToFront().catch(() => undefined);
+    return;
+  }
 
   const after = page.url();
   if (/\/tr\/tr/i.test(after)) {

@@ -54,7 +54,7 @@ async function executeChromeBootstrapPhase(
 
     case "google_signin_email":
       if (!googleEmail) {
-        logger.warn("[chrome] GOOGLE_EMAIL_PROFILE_* tanimli degil — email manuel girilmeli.");
+        logger.warn("[chrome] Panel Chrome profilinde email yok — Google girişi manuel.");
         break;
       }
       await fillGoogleEmailIfNeeded(page, googleEmail);

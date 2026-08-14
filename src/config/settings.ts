@@ -482,14 +482,14 @@ export function loadSettings(projectRoot: string): AppSettings {
         "button.wizard-btn:has-text('Sonraki')|.wizard-footer-right button:has-text('Sonraki')|role=button[name='Sonraki']",
       waitBeforeWizardNextMs: parseIntEnv("WIZARD_NEXT_WAIT_MS", 600),
       applicationTypeEnabled: process.env.APPLICATION_TYPE_ENABLED !== "false",
-      defaultApplicationType: process.env.APPLICATION_TYPE?.trim() ?? "Bireysel",
+      defaultApplicationType: "Bireysel",
       applicationTypeLocator:
         process.env.APPLICATION_TYPE_LOCATOR?.trim() ??
         "select[name='applicationTypeId']|select.form-select:has(option:text('Bireysel'))",
       applicationTypeTimeoutMs: parseIntEnv("APPLICATION_TYPE_TIMEOUT_MS", 30_000),
       waitAfterWizardNextMs: parseIntEnv("APPLICATION_TYPE_WAIT_AFTER_NEXT_MS", 800),
       nationalityNumberEnabled: process.env.NATIONALITY_NUMBER_ENABLED !== "false",
-      defaultNationalityNumber: process.env.NATIONALITY_NUMBER?.trim() ?? "",
+      defaultNationalityNumber: "",
       nationalityNumberLocator:
         process.env.NATIONALITY_NUMBER_LOCATOR?.trim() ??
         "input[name='nationalityNumber']|input.form-control[name='nationalityNumber']",
@@ -499,7 +499,7 @@ export function loadSettings(projectRoot: string): AppSettings {
         process.env.NATIONALITY_NUMBER_BLANK_CLICK_ENABLED !== "false",
       waitAfterNationalityNumberMs: parseIntEnv("NATIONALITY_NUMBER_WAIT_AFTER_INPUT_MS", 400),
       appointmentStyleEnabled: process.env.APPOINTMENT_STYLE_ENABLED !== "false",
-      defaultAppointmentStyle: process.env.APPOINTMENT_STYLE?.trim() ?? "Standart",
+      defaultAppointmentStyle: "Standart",
       appointmentStyleLocator:
         process.env.APPOINTMENT_STYLE_LOCATOR?.trim() ??
         "select[name='appointmentTypeId']|select.form-select:has(option:text('Standart'))",
@@ -592,9 +592,9 @@ export function loadSettings(projectRoot: string): AppSettings {
       closedDateRangeDays: parseIntEnv("API_CLOSED_DATE_RANGE_DAYS", 26),
       defaultCityId: process.env.API_CITY_ID?.trim() ?? "1",
       defaultAppointmentTypeId: process.env.API_APPOINTMENT_TYPE_ID?.trim() ?? "16",
-      defaultAppointmentStyle: process.env.APPOINTMENT_STYLE?.trim() ?? "Standart",
+      defaultAppointmentStyle: "Standart",
       defaultApplicationTypeId: process.env.API_APPLICATION_TYPE_ID?.trim() ?? "1",
-      defaultApplicationType: process.env.APPLICATION_TYPE?.trim() ?? "Bireysel",
+      defaultApplicationType: "Bireysel",
       pollIntervalMs: parseIntEnv("API_POLL_INTERVAL_MS", 300_000),
       openNotifyCooldownMs: parseIntEnv("API_OPEN_NOTIFY_COOLDOWN_MS", 300_000),
       tokenCaptureWaitMs: parseIntEnv("API_TOKEN_CAPTURE_WAIT_MS", 45_000),

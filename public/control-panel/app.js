@@ -61,8 +61,8 @@ function readCdpPortInput() {
   const raw = $("cdpPortInput")?.value?.trim();
   if (!raw) return null;
   const port = Number.parseInt(raw, 10);
-  if (!Number.isFinite(port) || port < 9222 || port > 9230) {
-    throw new Error("CDP port 9222–9230 arasında olmalı veya boş bırakın.");
+  if (!Number.isFinite(port) || port < 9222 || port > 9299) {
+    throw new Error("CDP port 9222–9299 arasında olmalı veya boş bırakın.");
   }
   return port;
 }

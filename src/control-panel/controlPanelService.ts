@@ -29,7 +29,7 @@ import {
   detectPublicIp,
 } from "./chromeLauncher.js";
 import { ensureChromeGoogleLoginAfterLaunch, type ChromeGoogleLoginResult } from "./chromeGoogleLoginService.js";
-import { allocateCdpPort } from "./cdpPortAllocator.js";
+import { allocateCdpPort, suggestPreferredCdpPortSync } from "./cdpPortAllocator.js";
 import { killProcessesOnPort } from "./cdpPortKill.js";
 import {
   ChromeProfileStore,
@@ -340,7 +340,17 @@ export class ControlPanelService {
     id?: string;
     preferredCdpPort?: number | null;
   }): ChromeProfilePanelView {
-    const created = this.chromeProfileStore.create(input);
+    const claimedPorts = this.chromeProfileStore.listAll().flatMap((profile) => {
+      const session = this.chromeSessionStore.get(profile.id);
+      return [session?.assignedCdpPort, profile.preferredCdpPort];
+    });
+    const preferredCdpPort =
+      input.preferredCdpPort ?? suggestPreferredCdpPortSync(claimedPorts);
+
+    const created = this.chromeProfileStore.create({
+      ...input,
+      preferredCdpPort,
+    });
     this.syncManifestFromPanelProfiles();
     return this.toChromeProfilePanelView(created);
   }
@@ -786,34 +796,14 @@ export class ControlPanelService {
     };
   }
 
-  private assertIpNotUsedByOtherWatcher(profileId: string, ip: string): void {
-    const healthStore = new ApiHealthStore(this.projectRoot);
-    const running = this.registry.list().filter(
-      (job) =>
-        job.kind === "api-watcher" &&
-        job.profileId !== profileId &&
-        (job.status === "running" || job.status === "starting"),
-    );
-
-    for (const job of running) {
-      const otherWatcher = this.watcherSessionStore.get(job.profileId);
-      const otherWorker = otherWatcher
-        ? {
-            lockedIp: otherWatcher.network.lockedIp,
-          }
-        : this.resolveEffectiveWorker(job.profileId);
-      const otherHealth = healthStore.get(job.profileId);
-      const otherIp =
-        normalizeLockedIp(otherWorker.lockedIp) ||
-        normalizeLockedIp(otherHealth?.lockedIp) ||
-        normalizeLockedIp(otherHealth?.publicIp);
-
-      if (otherIp && otherIp === ip) {
-        throw new Error(
-          `IP ${ip} zaten ${job.profileId} watcher'ında kullanılıyor. Önce o watcher'ı durdurun (Kill).`,
-        );
+  private collectClaimedCdpPorts(excludeProfileId?: string): Array<number | null | undefined> {
+    return this.chromeProfileStore.listAll().flatMap((profile) => {
+      if (excludeProfileId && profile.id === excludeProfileId) {
+        return [];
       }
-    }
+      const session = this.chromeSessionStore.get(profile.id);
+      return [session?.assignedCdpPort, profile.preferredCdpPort];
+    });
   }
 
   private async validateWatcherStart(profileId: string): Promise<{ worker: WorkerConfig; effectiveIp: string }> {
@@ -833,7 +823,6 @@ export class ControlPanelService {
         );
       }
 
-      this.assertIpNotUsedByOtherWatcher(profileId, lockedIp);
       worker = { ...worker, lockedIp, proxyId: "", proxyUrl: "" };
       return { worker, effectiveIp: lockedIp };
     }
@@ -865,7 +854,6 @@ export class ControlPanelService {
       );
     }
 
-    this.assertIpNotUsedByOtherWatcher(profileId, lockedIp);
     worker = { ...worker, lockedIp };
     return { worker, effectiveIp: lockedIp };
   }
@@ -979,6 +967,7 @@ export class ControlPanelService {
     const assignedCdpPort = await allocateCdpPort(
       this.registry,
       launch?.cdpPort ?? existingSession?.assignedCdpPort ?? chromeProfile.preferredCdpPort,
+      this.collectClaimedCdpPorts(profileId),
     );
 
     this.chromeSessionStore.upsert({
@@ -1029,7 +1018,7 @@ export class ControlPanelService {
       this.registry,
       proxyServer,
       directMode,
-      { forceFresh: true },
+      { forceFresh: true, cdpPort: assignedCdpPort },
     );
 
     this.savePanelDraft(profileId, {
@@ -1147,7 +1136,7 @@ export class ControlPanelService {
 
   async getProfileStatus(profileId: string) {
     const profile = this.resolveProfile(profileId);
-    const cdpPort = profile.browser?.cdpPort ?? 9222;
+    const cdpPort = this.resolveProfileCdpPort(profileId, profile);
     const chrome = await getChromeStatus(cdpPort);
     const activeJobs = this.registry.findByProfile(profileId);
     const profiles = this.listProfiles();
@@ -1184,7 +1173,7 @@ export class ControlPanelService {
     const { worker, effectiveIp } = await this.validateWatcherStart(profileId);
 
     const profile = this.resolveProfile(profileId);
-    const cdpPort = profile.browser?.cdpPort ?? 9222;
+    const cdpPort = this.resolveProfileCdpPort(profileId, profile);
     const chrome = await getChromeStatus(cdpPort);
 
     const steps: string[] = [];
@@ -1288,7 +1277,7 @@ export class ControlPanelService {
       `API Watcher — ${api.dealerOffice} / ${api.appointmentStyle}`,
       process.execPath,
       ["--use-system-ca", tsx, script, "--id", "api-watcher-attach", "--profile", profileId, "--no-wait"],
-      { cwd: this.projectRoot, env, cdpPort: profile.browser?.cdpPort },
+      { cwd: this.projectRoot, env, cdpPort: this.resolveProfileCdpPort(profileId, profile) },
     );
   }
 

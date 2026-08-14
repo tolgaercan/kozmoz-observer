@@ -1,37 +1,26 @@
 import { loadSettings } from "../config/settings.js";
+import { ChromeProfileStore } from "../control-panel/chromeProfileStore.js";
 import { WorkerConfigStore } from "../control-panel/workerConfigStore.js";
 import type { ProfileDefinition, ResolvedProfile } from "./profileManager.js";
-
-const ENV_PLACEHOLDER = /^\$\{([A-Z0-9_]+)\}$/;
 
 export interface ProfileCredentials {
   email: string;
   password: string;
 }
 
-function resolveEnvPlaceholder(value: string): string {
-  const match = ENV_PLACEHOLDER.exec(value.trim());
-  if (!match) {
-    return value;
-  }
-  return process.env[match[1]!] ?? "";
-}
-
 function pickString(...candidates: (string | undefined)[]): string | undefined {
   for (const value of candidates) {
     const trimmed = value?.trim();
-    if (!trimmed) {
+    if (!trimmed || trimmed.startsWith("${")) {
       continue;
     }
-    const resolved = resolveEnvPlaceholder(trimmed).trim();
-    if (resolved) {
-      return resolved;
-    }
+    return trimmed;
   }
   return undefined;
 }
 
-function readPanelWorkerApi(profileId: string) {
+/** Panel worker-config.json — .env kullanılmaz */
+export function readPanelWorkerApi(profileId: string) {
   try {
     const { projectRoot } = loadSettings(process.cwd());
     return new WorkerConfigStore(projectRoot).load().workers[profileId]?.api;
@@ -40,13 +29,22 @@ function readPanelWorkerApi(profileId: string) {
   }
 }
 
+/** Panel chrome-profiles.json — Google / portal şifre kaynağı */
+export function readPanelChromeProfile(profileId: string) {
+  try {
+    const { projectRoot } = loadSettings(process.cwd());
+    return new ChromeProfileStore(projectRoot).get(profileId);
+  } catch {
+    return undefined;
+  }
+}
+
 export function resolveProfileCredentials(profile: ResolvedProfile): ProfileCredentials {
-  const raw = profile.credentials ?? {};
   const panelApi = readPanelWorkerApi(profile.id);
+  const chrome = readPanelChromeProfile(profile.id);
 
-  const email = pickString(panelApi?.portalEmail, raw.email);
-
-  const password = pickString(raw.password);
+  const email = pickString(panelApi?.portalEmail, chrome?.chromeEmail, profile.credentials?.email);
+  const password = pickString(chrome?.chromePassword, profile.credentials?.password);
 
   return {
     email: email ?? "",
@@ -54,15 +52,15 @@ export function resolveProfileCredentials(profile: ResolvedProfile): ProfileCred
   };
 }
 
-/** Chrome profil Google girisi — portal email'den ayri tutulabilir */
+/** Chrome profil Google girişi */
 export function resolveChromeGoogleEmail(profile: ResolvedProfile): string {
-  const raw = profile.credentials ?? {};
-  return pickString(raw.email) ?? "";
+  const chrome = readPanelChromeProfile(profile.id);
+  return pickString(chrome?.chromeEmail, profile.credentials?.email) ?? "";
 }
 
 export function resolveChromeGooglePassword(profile: ResolvedProfile): string {
-  const raw = profile.credentials ?? {};
-  return pickString(raw.password) ?? "";
+  const chrome = readPanelChromeProfile(profile.id);
+  return pickString(chrome?.chromePassword, profile.credentials?.password) ?? "";
 }
 
 export interface PortalIdentityVerificationData {
@@ -85,21 +83,21 @@ export function resolvePortalIdentityVerificationData(
 
   const applicationTypeDisplay =
     pickString(
+      panelApi?.applicationType,
       form?.applicationType,
       (profile as ProfileDefinition).applicationType,
-      panelApi?.applicationType,
       "Bireysel",
     ) ?? "Bireysel";
 
   const tckn =
     pickString(
+      panelApi?.nationalityNumber,
       form?.nationalityNumber,
       (profile as ProfileDefinition).nationalityNumber,
-      panelApi?.nationalityNumber,
     ) ?? "";
 
   const passportNumber =
-    pickString(form?.passportNumber, panelApi?.passportNumber) ?? "";
+    pickString(panelApi?.passportNumber, form?.passportNumber) ?? "";
 
   const normalized = applicationTypeDisplay.trim().toLocaleLowerCase("tr-TR");
   const applicationTypeValue = normalized.includes("aile") ? "aile" : "bireysel";
@@ -112,7 +110,7 @@ export function resolvePortalIdentityVerificationData(
   };
 }
 
-/** Portal / SMS OTP — panel worker-config (form.phone veya otpPhone) */
+/** Portal / SMS OTP — panel worker-config otpPhone */
 export function resolveProfilePhone(profile: ResolvedProfile | string): string {
   const profileId = typeof profile === "string" ? profile : profile.id;
   const raw =
@@ -121,7 +119,7 @@ export function resolveProfilePhone(profile: ResolvedProfile | string): string {
       : (profile as ProfileDefinition).form?.phone;
   const panelApi = readPanelWorkerApi(profileId);
 
-  return pickString(raw, panelApi?.otpPhone) ?? "";
+  return pickString(panelApi?.otpPhone, raw) ?? "";
 }
 
 export interface ChromeGoogleCredentials {
@@ -149,10 +147,10 @@ export function validateProfileCredentials(
 
   const errors: string[] = [];
   if (!credentials.email) {
-    errors.push(`Profil "${profileId}" için email eksik (panel Worker veya credentials.email).`);
+    errors.push(`Profil "${profileId}" için email eksik (panel Worker veya Chrome profil email).`);
   }
   if (!credentials.password) {
-    errors.push(`Profil "${profileId}" için şifre eksik (Chrome profil şifresi veya credentials.password).`);
+    errors.push(`Profil "${profileId}" için şifre eksik (panel Chrome profil şifresi).`);
   }
   return errors;
 }

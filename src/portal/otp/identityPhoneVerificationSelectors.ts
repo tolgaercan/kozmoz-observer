@@ -15,7 +15,8 @@ export const IDENTITY_PHONE_VERIFICATION_SELECTORS = {
   sendCodeButton: "button:has-text('Telefonuma kod gönder')",
   otpInput: "input#code",
   verifyButton: "button:has-text('Doğrula')",
-  resendCodeButton: "button:has-text('Yeniden doğrulama kodu gönder')",
+  resendCodeLink:
+    "a:has-text('Yeniden doğrulama kodu gönder'), button:has-text('Yeniden doğrulama kodu gönder')",
   remainingTime: ".remaining-time strong",
 } as const;
 

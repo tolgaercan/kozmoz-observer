@@ -60,6 +60,35 @@ function isUsableTabUrl(url: string): boolean {
   );
 }
 
+/** CDP attach — about:blank üzerinde goto güvenilir değil (frame detached). */
+export function isNavigableTabUrl(url: string): boolean {
+  const trimmed = url.trim();
+  return isUsableTabUrl(trimmed) && trimmed !== "" && trimmed !== "about:blank";
+}
+
+/** Portal navigasyonu için kullanılabilir sekme — gerekirse yeni tab açar. */
+export async function ensureCdpNavigablePage(
+  context: BrowserContext,
+  preferred?: Page,
+): Promise<Page> {
+  if (preferred && !preferred.isClosed() && isNavigableTabUrl(preferred.url())) {
+    await preferred.bringToFront().catch(() => undefined);
+    return preferred;
+  }
+
+  for (const candidate of context.pages()) {
+    if (!candidate.isClosed() && isNavigableTabUrl(candidate.url())) {
+      logger.info(`Navigasyon sekmesi: ${candidate.url()}`);
+      await candidate.bringToFront().catch(() => undefined);
+      return candidate;
+    }
+  }
+
+  const page = await context.newPage();
+  logger.info("[cdp] Navigasyon için yeni sekme açıldı (about:blank veya uygun sekme yok).");
+  return page;
+}
+
 /** Randevu / wizard sekmesini ana siteye tercih et */
 export function scorePortalTabUrl(url: string): number {
   if (!url || !isUsableTabUrl(url)) {
@@ -107,10 +136,10 @@ export async function resolveCdpObserverPage(context: BrowserContext): Promise<P
   }
 
   const pages = context.pages().filter((candidate) => !candidate.isClosed());
-  const reusable = pages.find((candidate) => isUsableTabUrl(candidate.url()));
+  const reusable = pages.find((candidate) => isNavigableTabUrl(candidate.url()));
 
   if (reusable) {
-    logger.info(`Mevcut Chrome sekmesi kullaniliyor: ${reusable.url() || "about:blank"}`);
+    logger.info(`Mevcut Chrome sekmesi kullanılıyor: ${reusable.url()}`);
     return reusable;
   }
 

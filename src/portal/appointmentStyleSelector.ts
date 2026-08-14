@@ -3,26 +3,26 @@ import type { Page } from "playwright";
 import type { AppointmentSettings } from "../config/settings.js";
 import { humanSelectCity } from "../interaction/humanSelect.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
+import { readPanelWorkerApi } from "../profiles/profileCredentials.js";
 import { logger } from "../utils/logger.js";
 
 export function resolveAppointmentStyle(
   profile: ResolvedProfile,
   defaultStyle: string,
 ): string | null {
-  const profileEnvKey = `APPOINTMENT_STYLE_${profile.id.toUpperCase().replace(/-/g, "_")}`;
-  const fromProfileEnv = process.env[profileEnvKey]?.trim();
-  if (fromProfileEnv) {
-    return fromProfileEnv;
-  }
-
-  const fromGlobal = process.env.APPOINTMENT_STYLE?.trim();
-  if (fromGlobal) {
-    return fromGlobal;
-  }
-
   const fromProfile = profile.appointmentStyle?.trim();
-  if (fromProfile) {
+  if (fromProfile && !fromProfile.startsWith("${")) {
     return fromProfile;
+  }
+
+  const fromForm = profile.form?.appointmentStyle?.trim();
+  if (fromForm && !fromForm.startsWith("${")) {
+    return fromForm;
+  }
+
+  const panelStyle = readPanelWorkerApi(profile.id)?.appointmentStyle?.trim();
+  if (panelStyle) {
+    return panelStyle;
   }
 
   const fallback = defaultStyle.trim();
@@ -43,7 +43,7 @@ export async function selectAppointmentStyle(
     styleOverride?.trim() || resolveAppointmentStyle(profile, settings.defaultAppointmentStyle);
   if (!appointmentStyle) {
     throw new Error(
-      `${profile.id} için appointmentStyle tanımlı değil (manifest, panel veya APPOINTMENT_STYLE).`,
+      `${profile.id} için appointmentStyle tanımlı değil (panel Worker veya profil formu).`,
     );
   }
 

@@ -4,6 +4,7 @@ import type { AppointmentSettings } from "../config/settings.js";
 import { humanClickBlankArea } from "../interaction/humanClick.js";
 import { humanTypeIntoLocator } from "../interaction/humanType.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
+import { readPanelWorkerApi } from "../profiles/profileCredentials.js";
 import { logger } from "../utils/logger.js";
 
 const TC_DIGIT_COUNT = 11;
@@ -39,21 +40,24 @@ export function isValidTurkishNationalId(value: string): boolean {
 
 export function resolveNationalityNumber(
   profile: ResolvedProfile,
-  defaultNumber: string,
+  _defaultNumber: string,
 ): string | null {
   const fromProfile = profile.nationalityNumber?.trim();
   if (fromProfile && !fromProfile.startsWith("${")) {
     return normalizeNationalityNumber(fromProfile);
   }
 
-  const profileEnvKey = `NATIONALITY_NUMBER_${profile.id.toUpperCase().replace(/-/g, "_")}`;
-  const fromProfileEnv = process.env[profileEnvKey]?.trim();
-  if (fromProfileEnv) {
-    return normalizeNationalityNumber(fromProfileEnv);
+  const fromForm = profile.form?.nationalityNumber?.trim();
+  if (fromForm && !fromForm.startsWith("${")) {
+    return normalizeNationalityNumber(fromForm);
   }
 
-  const fallback = normalizeNationalityNumber(defaultNumber.trim());
-  return fallback || null;
+  const panelTc = readPanelWorkerApi(profile.id)?.nationalityNumber?.trim();
+  if (panelTc) {
+    return normalizeNationalityNumber(panelTc);
+  }
+
+  return null;
 }
 
 async function readInputValue(page: Page, selector: string): Promise<string> {
@@ -101,7 +105,7 @@ export async function fillNationalityNumber(
 
   const nationalityNumber = resolveNationalityNumber(profile, settings.defaultNationalityNumber);
   if (!nationalityNumber) {
-    throw new Error(`${profile.id} için nationalityNumber tanımlı değil.`);
+    throw new Error(`${profile.id} için nationalityNumber tanımlı değil (panel Worker TC).`);
   }
 
   if (nationalityNumber.length !== TC_DIGIT_COUNT || !isValidTurkishNationalId(nationalityNumber)) {

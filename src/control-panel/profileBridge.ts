@@ -77,7 +77,7 @@ export function syncManifestFromChromeProfiles(
 
 export function migrateManifestToChromeProfiles(
   manifestPath: string,
-  env: NodeJS.ProcessEnv,
+  _env?: NodeJS.ProcessEnv,
 ): PanelChromeProfile[] {
   if (!existsSync(manifestPath)) {
     return [];
@@ -88,20 +88,15 @@ export function migrateManifestToChromeProfiles(
   const now = new Date().toISOString();
 
   return (manifest.profiles ?? []).map((entry) => {
-    const suffix = entry.id.replace(/-/g, "_").toUpperCase();
-    const emailFromEnv = env[`EMAIL_${suffix}`]?.trim();
-    const passwordFromEnv = env[`PASSWORD_${suffix}`]?.trim();
-    const googleEmail = env[`GOOGLE_EMAIL_${suffix}`]?.trim();
-
-    let chromeEmail = emailFromEnv ?? googleEmail ?? "";
-    let chromePassword = passwordFromEnv ?? env[`GOOGLE_PASSWORD_${suffix}`]?.trim() ?? "";
+    let chromeEmail = "";
+    let chromePassword = "";
 
     const credEmail = entry.credentials?.email?.trim();
-    if (credEmail && !credEmail.startsWith("${") && !chromeEmail) {
+    if (credEmail && !credEmail.startsWith("${")) {
       chromeEmail = credEmail;
     }
     const credPass = entry.credentials?.password?.trim();
-    if (credPass && !credPass.startsWith("${") && !chromePassword) {
+    if (credPass && !credPass.startsWith("${")) {
       chromePassword = credPass;
     }
 

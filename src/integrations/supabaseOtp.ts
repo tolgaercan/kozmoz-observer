@@ -17,8 +17,11 @@ export interface SupabaseOtpConfig {
   table?: string;
 }
 
+/** Portal SMS OTP bekleme — popup süresi ~3 dk; marj ile 3.5 dk. */
+export const DEFAULT_SUPABASE_OTP_TIMEOUT_MS = 210_000;
+
 export interface WaitSupabaseOtpOptions {
-  /** Toplam bekleme süresi (ms). Varsayılan 90000. */
+  /** Toplam bekleme süresi (ms). Varsayılan 210000 (3.5 dk). */
   timeoutMs?: number;
   /** Poll aralığı (ms). Varsayılan 2000. */
   intervalMs?: number;
@@ -273,7 +276,7 @@ export async function waitSupabaseOtp(
     table: options.table,
   });
 
-  const timeoutMs = options.timeoutMs ?? 90_000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SUPABASE_OTP_TIMEOUT_MS;
   const intervalMs = options.intervalMs ?? 2_000;
   const consume = options.consume !== false;
   const started = Date.now();

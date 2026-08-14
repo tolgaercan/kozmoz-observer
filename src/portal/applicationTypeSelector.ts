@@ -3,6 +3,7 @@ import type { Page } from "playwright";
 import type { AppointmentSettings } from "../config/settings.js";
 import { humanSelectCity } from "../interaction/humanSelect.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
+import { readPanelWorkerApi } from "../profiles/profileCredentials.js";
 import { logger } from "../utils/logger.js";
 
 export function resolveApplicationType(
@@ -10,9 +11,20 @@ export function resolveApplicationType(
   defaultType: string,
 ): string | null {
   const fromProfile = profile.applicationType?.trim();
-  if (fromProfile) {
+  if (fromProfile && !fromProfile.startsWith("${")) {
     return fromProfile;
   }
+
+  const fromForm = profile.form?.applicationType?.trim();
+  if (fromForm && !fromForm.startsWith("${")) {
+    return fromForm;
+  }
+
+  const panelType = readPanelWorkerApi(profile.id)?.applicationType?.trim();
+  if (panelType) {
+    return panelType;
+  }
+
   return defaultType.trim() || null;
 }
 

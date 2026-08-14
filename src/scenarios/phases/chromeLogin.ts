@@ -3,7 +3,7 @@ import {
   waitAndAcceptChromeProfileSyncPrompt,
 } from "../../auth/chromeGoogleBootstrap.js";
 import { prepareChromeForAutomation } from "../../browser/chromeStartupPrep.js";
-import { isCdpEndpointReady, findPortalTab } from "../../browser/cdpConnector.js";
+import { findPortalTab, ensureCdpNavigablePage, isCdpEndpointReady } from "../../browser/cdpConnector.js";
 import { ContextFactory } from "../../browser/contextFactory.js";
 import { resolveChromeGoogleCredentials } from "../../profiles/profileCredentials.js";
 import { logger } from "../../utils/logger.js";
@@ -36,7 +36,7 @@ export async function runChromeLoginPhase(
 
   if (!liteConnect && !googleCredentials.email) {
     throw new Error(
-      `[scenario] chrome-login — GOOGLE_EMAIL_${runtime.profileId.replace(/-/g, "_").toUpperCase()} .env'de yok.`,
+      `[scenario] chrome-login — Panel Chrome profilinde email tanımlı değil (${runtime.profileId}).`,
     );
   }
 
@@ -66,7 +66,8 @@ export async function runChromeLoginPhase(
 
   if (liteConnect) {
     const portalPage = await findPortalTab(context);
-    const activePage = portalPage ?? page;
+    const activePage =
+      portalPage ?? (await ensureCdpNavigablePage(context, page));
     runtime.session.page = activePage;
 
     if (portalPage) {

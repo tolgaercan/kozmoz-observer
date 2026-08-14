@@ -1,26 +1,14 @@
 import type { AppSettings } from "../config/settings.js";
 import type { ProfileDefinition, ProfileFormData, ResolvedProfile } from "./profileManager.js";
-
-const ENV_PLACEHOLDER = /^\$\{([A-Z0-9_]+)\}$/;
-
-function resolveEnvPlaceholder(value: string): string {
-  const match = ENV_PLACEHOLDER.exec(value.trim());
-  if (!match) {
-    return value;
-  }
-  return process.env[match[1]!] ?? "";
-}
+import { readPanelWorkerApi } from "./profileCredentials.js";
 
 function pickString(...candidates: (string | undefined)[]): string | undefined {
   for (const value of candidates) {
     const trimmed = value?.trim();
-    if (!trimmed) {
+    if (!trimmed || trimmed.startsWith("${")) {
       continue;
     }
-    const resolved = resolveEnvPlaceholder(trimmed).trim();
-    if (resolved) {
-      return resolved;
-    }
+    return trimmed;
   }
   return undefined;
 }
@@ -37,35 +25,33 @@ export function extractRawForm(profile: ProfileDefinition): Partial<ProfileFormD
   };
 }
 
-/** Profil + panel/manifest → akışta kullanılacak form değişkenleri */
+/** Profil + panel → akışta kullanılacak form değişkenleri */
 export function resolveProfileForm(
   profile: ResolvedProfile,
   settings: AppSettings,
 ): ProfileFormData {
   const raw = extractRawForm(profile);
+  const panelApi = readPanelWorkerApi(profile.id);
 
-  const appointmentCity = pickString(
-    raw.appointmentCity,
-    settings.appointment.defaultCity,
-  );
+  const appointmentCity = pickString(raw.appointmentCity, settings.appointment.defaultCity);
 
   const applicationType = pickString(
     raw.applicationType,
+    panelApi?.applicationType,
     settings.appointment.defaultApplicationType,
   );
 
-  const nationalityNumber = pickString(
-    raw.nationalityNumber,
-  );
+  const nationalityNumber = pickString(raw.nationalityNumber, panelApi?.nationalityNumber);
 
   const appointmentStyle = pickString(
     raw.appointmentStyle,
+    panelApi?.appointmentStyle,
     settings.appointment.defaultAppointmentStyle,
   );
 
   return {
     appointmentCity: appointmentCity ?? "",
-    appointmentOffice: raw.appointmentOffice?.trim() || undefined,
+    appointmentOffice: raw.appointmentOffice?.trim() || panelApi?.dealerOffice?.trim() || undefined,
     applicationType: applicationType ?? "",
     nationalityNumber: nationalityNumber ?? "",
     appointmentStyle: appointmentStyle ?? "",

@@ -1,13 +1,12 @@
-import {
-  gotoKosmosMarketingHome,
-} from "../../navigation/kosmosHomeEntry.js";
+import { ensureCdpNavigablePage, waitForManualPortalTab, findBasvuruPortalTab } from "../../browser/cdpConnector.js";
 import { ensurePortalAppointmentEntry } from "../../navigation/ensurePortalAppointmentEntry.js";
+import { gotoKosmosMarketingHome } from "../../navigation/kosmosHomeEntry.js";
+import { drainPortalInterventions } from "../../portal/interventions/portalCheckpoint.js";
 import { resolveAppointmentFormUrl } from "../../navigation/kosmosPortalNav.js";
 import { detectManualAuthStep } from "../../auth/authStepDetector.js";
 import { detectIntervention } from "../../challenge/interventionDetector.js";
 import { isGoogleHomePage } from "../../auth/chromeGoogleBootstrap.js";
 import { isBasvuruPortalUrl, isKosmosMarketingHome, isKosmosPortalUrl } from "../../portal/kosmosOrigin.js";
-import { waitForManualPortalTab, findBasvuruPortalTab } from "../../browser/cdpConnector.js";
 import { readStorageFile } from "../../session/sessionReader.js";
 import { persistPortalStorage, readPortalLocalStorage } from "../../session/sessionPersister.js";
 import { extractJwtFromStorage, stripBearerPrefix } from "../../api/token/jwtExtractor.js";
@@ -80,7 +79,7 @@ async function resolvePortalBootstrapPage(
     return portalPage;
   }
 
-  let activePage = page;
+  let activePage = await ensureCdpNavigablePage(context, page);
   if (isBlankOrOffPortal(activePage.url()) || isGoogleHomePage(activePage.url())) {
     await gotoKosmosMarketingHome(activePage);
   }
@@ -115,6 +114,7 @@ export async function runPortalBootstrapForJwt(
   const entry = await ensurePortalAppointmentEntry(activePage, context, runtime.settings, {
     allowGotoFallback,
     maxRounds: 8,
+    profile,
   });
   activePage = entry.page;
   runtime.session.page = activePage;
@@ -219,6 +219,27 @@ async function waitForPortalJwtSession(
 
   try {
     while (Date.now() - started < maxWaitMs) {
+      const checkpoint = await drainPortalInterventions(page, { profile }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.warn(`[api-auth] Portal checkpoint: ${message}`);
+        return {
+          checked: true as const,
+          identityPopupVisible: false,
+          handled: false,
+          resolved: false,
+          detail: message,
+        };
+      });
+      if (checkpoint.handled) {
+        if (checkpoint.resolved) {
+          logger.info("[api-auth] Kimlik/Telefon popup otomasyonla tamamlandi.");
+        } else {
+          logger.warn(
+            `[api-auth] Kimlik/Telefon popup islenemedi: ${checkpoint.detail ?? "bilinmiyor"}`,
+          );
+        }
+      }
+
       if (networkToken) {
         logger.info("[api-auth] Authorization header yakalandi (network).");
         return { token: networkToken, source: "network" };

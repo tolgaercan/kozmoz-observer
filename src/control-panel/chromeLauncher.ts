@@ -93,11 +93,33 @@ async function waitForCdp(cdpEndpoint: string, attempts = 20): Promise<boolean> 
   return false;
 }
 
+function findActiveOwnerProfileOnPort(
+  registry: ProcessRegistry,
+  cdpPort: number,
+): string | undefined {
+  for (const proc of registry.list()) {
+    if (
+      proc.cdpPort === cdpPort &&
+      (proc.status === "running" || proc.status === "starting")
+    ) {
+      return proc.profileId;
+    }
+  }
+  return undefined;
+}
+
 async function clearCdpPortForRelaunch(
   profileId: string,
   cdpPort: number,
   registry: ProcessRegistry,
 ): Promise<void> {
+  const owner = findActiveOwnerProfileOnPort(registry, cdpPort);
+  if (owner && owner !== profileId) {
+    throw new Error(
+      `CDP port ${cdpPort} «${owner}» profili tarafından kullanılıyor. Port alanını boş bırakın (otomatik atanır) veya farklı port seçin.`,
+    );
+  }
+
   for (const job of registry.findByProfile(profileId, "chrome")) {
     registry.kill(job.id);
   }
@@ -113,9 +135,12 @@ export async function launchChromeForProfile(
   registry: ProcessRegistry,
   proxyUrl?: string,
   directMode = false,
-  options?: { forceFresh?: boolean },
+  options?: { forceFresh?: boolean; cdpPort?: number },
 ): Promise<ChromeLaunchResult> {
-  const { userDataDir, profileDirectory, cdpPort } = resolveProfilePaths(profile);
+  const paths = resolveProfilePaths(profile);
+  const userDataDir = paths.userDataDir;
+  const profileDirectory = paths.profileDirectory;
+  const cdpPort = options?.cdpPort ?? paths.cdpPort;
   const cdpEndpoint = `http://127.0.0.1:${cdpPort}`;
   const proxyApplied = proxyUrl?.trim()
     ? proxyUrl.trim()
