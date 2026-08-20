@@ -980,7 +980,7 @@ function renderProcesses(processes) {
           }),
         });
         toast(`Canlı ayar uygulandı`);
-        await refreshAll();
+        await refreshWorkflowUi();
       } catch (error) {
         toast(error.message, "error");
       }

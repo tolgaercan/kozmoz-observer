@@ -298,6 +298,7 @@ export class ControlPanelService {
 
   private resolveEffectiveWorker(profileId: string, fallbackIp = ""): WorkerConfig {
     const timingDefaults = this.runtimeDefaults();
+    const liveTiming = this.runtimeStore.get(profileId, timingDefaults);
     const activeWatcher = this.watcherSessionStore.get(profileId);
     if (activeWatcher && this.isWatcherRunning(profileId)) {
       return {
@@ -307,8 +308,11 @@ export class ControlPanelService {
         proxyId: activeWatcher.network.proxyId ?? "",
         proxyUrl: activeWatcher.network.proxyUrl ?? "",
         api: activeWatcher.api,
-        timing: activeWatcher.timing,
-        updatedAt: activeWatcher.updatedAt,
+        timing: {
+          pollIntervalMs: liveTiming.pollIntervalMs,
+          telegramReportIntervalMs: liveTiming.telegramReportIntervalMs,
+        },
+        updatedAt: liveTiming.updatedAt,
       };
     }
 
@@ -513,7 +517,7 @@ export class ControlPanelService {
           ? patch.lockedIp
           : (existing?.lastKnownHomeIp ?? legacy.lastKnownHomeIp);
     const nextApi = patch.api ?? existing?.draftApi ?? legacy.api;
-    const nextTiming = patch.timing ?? existing?.draftTiming ?? legacy.timing;
+    const nextTiming = patch.timing ?? legacy.timing ?? existing?.draftTiming;
 
     this.chromeSessionStore.patch(profileId, {
       profileId,
@@ -1377,6 +1381,25 @@ export class ControlPanelService {
     }
 
     const runtime = this.runtimeStore.update(proc.profileId, patch, this.runtimeDefaults());
+    const session = this.watcherSessionStore.get(proc.profileId);
+    if (session) {
+      this.watcherSessionStore.upsert({
+        ...session,
+        timing: {
+          pollIntervalMs: runtime.pollIntervalMs,
+          telegramReportIntervalMs: runtime.telegramReportIntervalMs,
+        },
+      });
+    }
+    const chromeSession = this.chromeSessionStore.get(proc.profileId);
+    if (chromeSession) {
+      this.chromeSessionStore.patch(proc.profileId, {
+        draftTiming: {
+          pollIntervalMs: runtime.pollIntervalMs,
+          telegramReportIntervalMs: runtime.telegramReportIntervalMs,
+        },
+      });
+    }
     const processes = await this.listProcesses();
     const updated = processes.find((entry) => entry.id === processId);
     if (!updated) {
