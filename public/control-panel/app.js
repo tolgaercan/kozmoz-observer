@@ -1406,6 +1406,10 @@ $("btnStopChrome").addEventListener("click", async () => {
   }
 });
 
+$("btnResetAllProfileData")?.addEventListener("click", () => {
+  void resetAllProfileData();
+});
+
 $("btnStartWorkflow").addEventListener("click", async () => {
   const btn = $("btnStartWorkflow");
   btn.disabled = true;
@@ -1579,6 +1583,53 @@ async function saveChromeProfileFromDialog(event) {
   }
 }
 
+async function resetAllProfileData() {
+  const confirmed = window.confirm(
+    "Tüm profil kayıtları silinecek:\n\n" +
+      "• Panel worker / Chrome profil JSON\n" +
+      "• Chrome oturum klasörleri (data/chrome, data/sessions)\n" +
+      "• manifest.json profil listesi\n\n" +
+      "Çalışan watcher ve Chrome süreçleri durdurulur.\n" +
+      ".env ve proxy havuzu korunur.\n\n" +
+      "Devam edilsin mi?",
+  );
+  if (!confirmed) {
+    return;
+  }
+
+  const btn = $("btnResetAllProfileData");
+  if (btn) {
+    btn.disabled = true;
+  }
+
+  try {
+    const result = await api("/api/profile-data/reset", { method: "POST", body: "{}" });
+    state.profileId = "";
+    state.bootstrap = null;
+    state.worker = null;
+    state.network = null;
+    $("selectedProfileLabel").textContent = "—";
+    $("profileMeta").innerHTML = "";
+    if ($("cdpPortInput")) {
+      $("cdpPortInput").value = "";
+    }
+    $("lockedIp").textContent = "—";
+    $("currentIp").textContent = "—";
+    renderChromeProfileCards();
+    updateChromeLaunchButtonState();
+    await refreshProcesses();
+    await loadBootstrap({ light: false });
+    await refreshWorkflowUi();
+    toast(result.message ?? "Profil kayıtları sıfırlandı.", "success");
+  } catch (error) {
+    toast(error.message, "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+    }
+  }
+}
+
 async function deleteChromeProfile(profileId) {
   if (!profileId) return;
   const profile = state.bootstrap?.chromeProfiles?.find((p) => p.id === profileId);
@@ -1595,10 +1646,15 @@ async function deleteChromeProfile(profileId) {
       state.bootstrap.chromeProfiles = state.bootstrap.chromeProfiles.filter((p) => p.id !== profileId);
     }
     if (state.profileId === profileId) {
-      const nextId = state.bootstrap?.chromeProfiles?.[0]?.id ?? "profile-1";
+      const nextId = state.bootstrap?.chromeProfiles?.[0]?.id ?? "";
       state.profileId = nextId;
       renderChromeProfileCards();
-      await selectProfile(nextId, { light: true });
+      if (nextId) {
+        await selectProfile(nextId, { light: true });
+      } else {
+        await loadBootstrap({ light: true });
+        await refreshWorkflowUi();
+      }
     } else {
       renderChromeProfileCards();
     }

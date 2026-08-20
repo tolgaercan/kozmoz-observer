@@ -201,8 +201,12 @@ export class ProfileManager {
       const raw = readFileSync(manifestPath, "utf-8");
       const manifest = JSON.parse(raw) as ProfileManifest;
 
-      if (!Array.isArray(manifest.profiles) || manifest.profiles.length === 0) {
-        throw new Error("Manifest içinde en az bir profil tanımlı olmalı.");
+      if (!Array.isArray(manifest.profiles)) {
+        throw new Error("Manifest profiles alanı geçerli bir dizi olmalı.");
+      }
+
+      if (manifest.profiles.length === 0) {
+        return [];
       }
 
       return manifest.profiles.map(normalizeProfile);

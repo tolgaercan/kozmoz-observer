@@ -63,6 +63,7 @@ import {
 } from "./workerRuntimeStore.js";
 import type { ManagedProcess } from "./processRegistry.js";
 import { logger } from "../utils/logger.js";
+import { resetAllProfilePanelData, type ProfileDataResetResult } from "./profileDataReset.js";
 
 export interface NetworkIpInfo {
   mode: ProxyMode;
@@ -585,12 +586,57 @@ export class ControlPanelService {
     return session?.assignedCdpPort ?? profile.browser?.cdpPort ?? 9222;
   }
 
+  resetAllProfileData(): ProfileDataResetResult {
+    const result = resetAllProfilePanelData(this.projectRoot, this.registry);
+    this.profileManager.reload(this.manifestPath);
+    return result;
+  }
+
   async getBootstrap(profileId: string, options?: { light?: boolean }): Promise<ControlPanelBootstrap> {
     this.importManifestCredentialsIfNeeded();
     this.importLegacyProxiesIfNeeded();
     this.reconcileStaleWatcherSessions();
-    this.chromeProfileStore.getOrThrow(profileId);
-    const worker = this.resolveEffectiveWorker(profileId);
+
+    const chromeProfiles = this.listChromeProfiles();
+    const timingDefaults = this.runtimeDefaults();
+
+    if (chromeProfiles.length === 0) {
+      let homePublicIp = "unknown";
+      let measuredWanIp: string | undefined;
+      let homeIpWarning: string | undefined;
+
+      if (!options?.light) {
+        const home = await resolveHomePublicIp(this.projectRoot);
+        homePublicIp = home.ip === "unavailable" ? "unknown" : home.ip;
+        measuredWanIp = home.measuredIp !== "unknown" ? home.measuredIp : undefined;
+        homeIpWarning = home.warning;
+      }
+
+      return {
+        profiles: [],
+        chromeProfiles: [],
+        dealerOffices: listDealerOffices(),
+        appointmentStyles: APPOINTMENT_STYLE_OPTIONS,
+        applicationTypes: APPLICATION_TYPE_OPTIONS,
+        publicIp: homePublicIp,
+        homePublicIp,
+        measuredWanIp,
+        homeIpWarning,
+        connectionMode: "direct",
+        proxyPool: this.listPanelProxies(),
+        worker: this.workerStore.getWorker(profileId || "profile-1", "", timingDefaults),
+        activeWatcherSession: false,
+        runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
+        envTimingDefaults: timingDefaults,
+      };
+    }
+
+    const resolvedProfileId = this.chromeProfileStore.get(profileId)
+      ? profileId
+      : chromeProfiles[0]!.id;
+
+    this.chromeProfileStore.getOrThrow(resolvedProfileId);
+    const worker = this.resolveEffectiveWorker(resolvedProfileId);
     const workerHome =
       normalizeLockedIp(worker.lastKnownHomeIp) || normalizeLockedIp(worker.lockedIp);
     let homePublicIp = workerHome || "unknown";
@@ -606,7 +652,7 @@ export class ControlPanelService {
       publicIp = homePublicIp;
     }
 
-    const profile = this.resolveProfile(profileId);
+    const profile = this.resolveProfile(resolvedProfileId);
     if (worker.proxyMode === "proxy") {
       if (options?.light) {
         publicIp = worker.lockedIp?.trim() || homePublicIp;
@@ -616,8 +662,7 @@ export class ControlPanelService {
     }
 
     const proxyStore = new ProxyPoolStore(this.projectRoot);
-    const timingDefaults = this.runtimeDefaults();
-    this.runtimeStore.ensure(profileId, timingDefaults);
+    this.runtimeStore.ensure(resolvedProfileId, timingDefaults);
     return {
       profiles: this.listProfiles(),
       chromeProfiles: this.listChromeProfiles(),
@@ -631,7 +676,7 @@ export class ControlPanelService {
       connectionMode: worker.proxyMode ?? "direct",
       proxyPool: this.listPanelProxies(),
       worker,
-      activeWatcherSession: Boolean(this.watcherSessionStore.get(profileId)),
+      activeWatcherSession: Boolean(this.watcherSessionStore.get(resolvedProfileId)),
       runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
       envTimingDefaults: timingDefaults,
     };
@@ -1135,6 +1180,20 @@ export class ControlPanelService {
   }
 
   async getProfileStatus(profileId: string) {
+    if (!this.chromeProfileStore.get(profileId)) {
+      const cdpPort = 9222;
+      const chrome = await getChromeStatus(cdpPort);
+      const allApiHealth = await this.getAllApiHealth();
+      return {
+        cdpPort,
+        chrome,
+        activeJobs: [],
+        apiHealth: undefined,
+        rateLimit: { blocked: false },
+        allApiHealth,
+      };
+    }
+
     const profile = this.resolveProfile(profileId);
     const cdpPort = this.resolveProfileCdpPort(profileId, profile);
     const chrome = await getChromeStatus(cdpPort);

@@ -120,6 +120,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
     return;
   }
 
+  if (method === "POST" && pathname === "/api/profile-data/reset") {
+    const result = service.resetAllProfileData();
+    sendJson(res, 200, result);
+    return;
+  }
+
   if (method === "GET" && pathname === "/api/chrome/exit-ip") {
     const profileId = new URL(req.url ?? "", "http://local").searchParams.get("profileId") ?? "profile-1";
     try {

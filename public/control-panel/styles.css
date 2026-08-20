@@ -474,6 +474,16 @@ input:focus {
   font-size: 0.82rem;
 }
 
+.profile-reset-box {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.profile-reset-box .note {
+  margin-bottom: 10px;
+}
+
 .required-star {
   color: #ef4444;
   font-weight: 600;
