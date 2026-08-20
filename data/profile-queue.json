@@ -1,7 +1,7 @@
 {
   "strategy": "sequential",
-  "activeProfileId": "profile-1",
-  "queue": ["profile-1"],
+  "activeProfileId": "",
+  "queue": [],
   "poolFile": "data/profile-pool.json",
-  "notes": "Supervisor ileride queue dizisinden state=ready profili seçer. Şimdilik tek profil: profile-1."
+  "notes": "Panelden profil ekleyin."
 }

@@ -82,17 +82,21 @@ Gereksiz klasör yok: her profil için sadece `sessions/` + `chrome/` alt klasö
 
 ## 4. Profil şeması (`manifest.json`)
 
+Kimlik bilgileri (email/şifre) **manifest'e yazılmaz** — kaynak: panel (`data/control-panel/chrome-profiles.json`, gitignore).
+
+`manifest.json` yerel çalışma dosyasıdır (gitignore). İlk kurulumda `manifest.example.json` kopyalanır veya boş liste oluşturulur.
+
 ```json
 {
   "id": "profile-1",
-  "name": "Tolga",
+  "name": "Profile 1",
   "enabled": true,
   "mode": "observer",
   "flowId": "kosmos-observe-v1",
   "bootstrapFlowId": "kosmos-portal-bootstrap",
   "credentials": {
-    "email": "${EMAIL_PROFILE_1}",
-    "password": "${PASSWORD_PROFILE_1}"
+    "email": "",
+    "password": ""
   },
   "form": { "appointmentCity": "Ankara", "..." },
   "browser": {

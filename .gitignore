@@ -12,6 +12,7 @@ data/cookies/
 data/config/captcha.runtime.json
 data/config/proxy-pool.local.json
 data/control-panel/
+data/profiles/manifest.json
 *.log
 
 # GitHub Desktop ile yanlışlıkla oluşturulan iç içe boş repo klasörü

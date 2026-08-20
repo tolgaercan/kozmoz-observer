@@ -4,7 +4,7 @@
  * Node / npm paketleri / .env / klasörler / Chrome yolunu kontrol eder, eksikleri yükler.
  */
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -121,6 +121,22 @@ function ensureDirectories() {
   log("info", "Çalışma klasörleri hazır.");
 }
 
+function ensureManifestFile() {
+  const manifestPath = join(PROJECT_ROOT, "data/profiles/manifest.json");
+  if (existsSync(manifestPath)) {
+    return;
+  }
+  const examplePath = join(PROJECT_ROOT, "data/profiles/manifest.example.json");
+  if (existsSync(examplePath)) {
+    copyFileSync(examplePath, manifestPath);
+    log("info", "manifest.json yoktu — manifest.example.json kopyalandı.");
+    return;
+  }
+  mkdirSync(join(PROJECT_ROOT, "data/profiles"), { recursive: true });
+  writeFileSync(manifestPath, '{"profiles":[]}\n', "utf-8");
+  log("info", "manifest.json yoktu — boş şablon oluşturuldu.");
+}
+
 function ensureNodeVersion() {
   const major = nodeMajor();
   if (Number.isNaN(major) || major < MIN_NODE_MAJOR) {
@@ -168,6 +184,7 @@ export async function ensureProjectReady() {
 
   const { created: envCreated } = ensureEnvFile();
   ensureDirectories();
+  ensureManifestFile();
   ensureChrome();
 
   log("info", "Ortam hazır.");

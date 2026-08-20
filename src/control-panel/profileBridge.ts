@@ -19,10 +19,6 @@ function minimalManifestEntry(profile: PanelChromeProfile, cdpPort: number): Pro
     cookiesFile: `data/sessions/${profile.id}/cookies.json`,
     storageFile: `data/sessions/${profile.id}/storage.json`,
     userAgent: DEFAULT_USER_AGENT,
-    credentials: {
-      email: profile.chromeEmail,
-      password: profile.chromePassword,
-    },
     form: {
       appointmentCity: "Ankara",
       applicationType: "Bireysel",

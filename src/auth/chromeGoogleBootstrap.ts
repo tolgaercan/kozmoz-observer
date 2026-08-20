@@ -49,7 +49,7 @@ function resolveChromeButtonFirstName(profileName: string): string {
   return candidates[0] ?? "";
 }
 
-/** "Tolga-profile-2" → ["Tolga", "Tolga-profile-2"] gibi buton eslestirme adaylari */
+/** "Profile-2" → ["Profile", "Profile-2"] gibi buton eslestirme adaylari */
 function resolveChromeButtonNameCandidates(profileName: string): string[] {
   const trimmed = profileName.trim();
   if (!trimmed) {
