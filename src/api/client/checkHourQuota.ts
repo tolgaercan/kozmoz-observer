@@ -66,15 +66,69 @@ function failureResult(
   };
 }
 
+export interface CheckHourQuotaOptions {
+  /** Panel / profil TC — portal `nationalityNumber` */
+  nationalityNumber?: string;
+  /**
+   * Portal takvim reCAPTCHA token — query `recaptchaToken`.
+   * Yoksa (enabled iken) istek atılmaz; captcha bypass yok.
+   */
+  recaptchaToken?: string;
+  /** Varsayılan true — portal `onlyAvailable=true` */
+  onlyAvailable?: boolean;
+}
+
 /**
- * GetAppointmentHourQoutaInfo — tek gün için saat kotası.
+ * Canlı portal ile aynı query setini üretir (istek atmaz).
+ * date = seçilen gün; applicationType = applicationTypeId.
+ */
+export function buildHourQuotaQueryParams(
+  queryParams: ApiQueryParams,
+  appointmentDate: string,
+  options: CheckHourQuotaOptions = {},
+): ApiQueryParams {
+  const normalizedDate = appointmentDate.trim();
+  const nationalityNumber =
+    options.nationalityNumber?.trim() || queryParams.nationalityNumber?.trim() || "";
+  const recaptchaToken =
+    options.recaptchaToken?.trim() || queryParams.recaptchaToken?.trim() || "";
+  const onlyAvailable = options.onlyAvailable === false ? "false" : "true";
+
+  return {
+    ...queryParams,
+    /** Portal hour URL {date} = seçilen gün (GetClosedDate aralık start değil) */
+    date: normalizedDate,
+    appointmentDate: normalizedDate,
+    nationalityNumber,
+    applicationType: queryParams.applicationType ?? queryParams.applicationTypeId,
+    onlyAvailable,
+    recaptchaToken,
+  };
+}
+
+/**
+ * URL şablonunu portal parametreleriyle doldurur (istek atmaz) — debug / hazırlık.
+ */
+export function resolveHourQuotaUrl(
+  ctx: ApiServiceContext,
+  queryParams: ApiQueryParams,
+  appointmentDate: string,
+  options: CheckHourQuotaOptions = {},
+): string {
+  return hourQuotaUrl(ctx, buildHourQuotaQueryParams(queryParams, appointmentDate, options));
+}
+
+/**
+ * GetAppointmentHourQoutaInfo (AppointmentLayouts) — tek gün saat kotası.
  * Varsayılan kapalı: API_HOUR_QUOTA_ENABLED=false iken istek atılmaz.
+ * Açıkken nationalityNumber + recaptchaToken zorunlu (token üretimi/bypass yok).
  */
 export async function checkHourQuota(
   ctx: ApiServiceContext,
   queryParams: ApiQueryParams,
   appointmentDate: string,
   page?: Page,
+  options: CheckHourQuotaOptions = {},
 ): Promise<HourQuotaPollResult> {
   if (!ctx.settings.hourQuotaEnabled) {
     return buildSkippedResult("Saat kotası kapalı — API_HOUR_QUOTA_ENABLED=false");
@@ -85,10 +139,18 @@ export async function checkHourQuota(
     return buildSkippedResult("appointmentDate boş — saat kotası sorgulanamaz");
   }
 
-  const hourParams: ApiQueryParams = {
-    ...queryParams,
-    appointmentDate: normalizedDate,
-  };
+  const hourParams = buildHourQuotaQueryParams(queryParams, normalizedDate, options);
+
+  if (!hourParams.nationalityNumber) {
+    return buildSkippedResult("nationalityNumber yok — hour kota sorgulanamaz");
+  }
+
+  if (!hourParams.recaptchaToken) {
+    return buildSkippedResult(
+      "recaptchaToken yok — hour kota için portal captcha token gerekli (istek atılmadı)",
+    );
+  }
+
   const url = hourQuotaUrl(ctx, hourParams);
 
   try {

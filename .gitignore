@@ -11,6 +11,7 @@ data/sessions/
 data/cookies/
 data/config/captcha.runtime.json
 data/config/proxy-pool.local.json
+data/config/max-appointment-date.cache.json
 data/control-panel/
 data/profiles/manifest.json
 *.log

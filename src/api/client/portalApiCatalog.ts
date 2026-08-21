@@ -29,7 +29,10 @@ export const APPOINTMENT_STYLE_OPTIONS = [
   { label: "Business Trip", appointmentTypeId: "2472" },
 ] as const;
 
-/** applicationTypeId yalnızca GetAppointmentHourQoutaInfo için — GetClosedDate kullanmaz */
+/**
+ * applicationType / applicationTypeId — yalnızca hour kota (AppointmentLayouts).
+ * Portal query adı: applicationType (örn. 1). GetClosedDate kullanmaz.
+ */
 export const APPLICATION_TYPE_OPTIONS = [
   { label: "Bireysel", applicationTypeId: "1" },
   { label: "Aile", applicationTypeId: "2" },

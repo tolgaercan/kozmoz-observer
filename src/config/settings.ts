@@ -150,7 +150,10 @@ export interface ApiWatcherSettings {
   getMaxAppointmentDateUrl: string;
   /** AdminDatas kayıt id — varsayılan 2329 (dataType=MaxAppointmentDate) */
   maxAppointmentDateAdminDataId: string;
-  /** GetAppointmentHourQoutaInfo — {cityId} {appointmentTypeId} {applicationTypeId} {appointmentDate} */
+  /**
+   * AppointmentLayouts/GetAppointmentHourQoutaInfo — canlı portal query.
+   * Placeholders: nationalityNumber, dealerId, date, appointmentTypeId, onlyAvailable, recaptchaToken, applicationType
+   */
   getHourQuotaUrl: string;
   /** Saat kotası sorgusu — varsayılan kapalı (checkHourQuota hazır, watcher tetiklemez) */
   hourQuotaEnabled: boolean;
@@ -583,7 +586,7 @@ export function loadSettings(projectRoot: string): AppSettings {
         process.env.API_MAX_APPOINTMENT_DATE_ADMIN_DATA_ID?.trim() ?? "2329",
       getHourQuotaUrl:
         process.env.API_GET_HOUR_QUOTA_URL?.trim() ??
-        "https://api.kosmosvize.com.tr/api/Appointment/GetAppointmentHourQoutaInfo?cityId={cityId}&appointmentTypeId={appointmentTypeId}&applicationTypeId={applicationTypeId}&appointmentDate={appointmentDate}",
+        "https://api.kosmosvize.com.tr/api/AppointmentLayouts/GetAppointmentHourQoutaInfo?nationalityNumber={nationalityNumber}&dealerId={dealerId}&date={date}&appointmentTypeId={appointmentTypeId}&onlyAvailable={onlyAvailable}&recaptchaToken={recaptchaToken}&applicationType={applicationType}",
       hourQuotaEnabled: process.env.API_HOUR_QUOTA_ENABLED === "true",
       referer:
         process.env.API_REFERER?.trim() ??

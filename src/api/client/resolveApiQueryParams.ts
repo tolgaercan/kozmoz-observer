@@ -32,8 +32,18 @@ export interface ApiQueryParams {
   /** GetAppointmentHourQoutaInfo için — GetClosedDate kullanmaz */
   applicationTypeId: string;
   applicationTypeLabel?: string;
-  /** GetAppointmentHourQoutaInfo — seçili gün (yyyy-MM-dd) */
+  /** GetAppointmentHourQoutaInfo — seçili gün (yyyy-MM-dd); URL'de {date} olarak da yazılır */
   appointmentDate?: string;
+  /**
+   * Hour kota (AppointmentLayouts) — portal query.
+   * GetClosedDate kullanmaz.
+   */
+  nationalityNumber?: string;
+  /** Portal `applicationType` query (= applicationTypeId, örn. 1) */
+  applicationType?: string;
+  onlyAvailable?: string;
+  /** Portal hour isteği — yoksa istek atılmamalı (captcha UI/token) */
+  recaptchaToken?: string;
 }
 
 export interface ApiQueryParamOverrides {

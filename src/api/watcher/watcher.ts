@@ -104,6 +104,10 @@ export function startAvailabilityWatcher(
   let currentTelegramReportMs = runtimeDefaults.telegramReportIntervalMs;
   let telegramEveryPoll = currentTelegramReportMs <= currentPollMs + 2_000;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Son poll bittiği an — beklerken aralık kısalırsa kalan süre yeniden hesaplanır */
+  let lastPollFinishedAt = Date.now();
+  /** Bekleme sırasında canlı ayarı sık okumak için üst sınır */
+  const RUNTIME_CONFIG_CHECK_MS = 2_000;
   let watcherPublicIp = options.lockedIp || "unknown";
   void detectPublicIp(options.projectRoot).then((ip) => {
     if (ip !== "unknown") {
@@ -124,6 +128,13 @@ export function startAvailabilityWatcher(
         `[api-watcher] Canlı ayar — poll: ${Math.round(currentPollMs / 1000)} sn, ` +
           `Telegram: ${Math.round(currentTelegramReportMs / 1000)} sn`,
       );
+    }
+  };
+
+  const clearPollTimer = (): void => {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
     }
   };
 
@@ -472,16 +483,33 @@ export function startAvailabilityWatcher(
     if (stopped) {
       return;
     }
-    pollTimer = setTimeout(() => {
-      void runPoll().finally(() => {
-        if (!stopped) {
-          scheduleNextPoll();
-        }
-      });
-    }, currentPollMs);
+    clearPollTimer();
+
+    const tick = (): void => {
+      if (stopped) {
+        return;
+      }
+
+      applyRuntimeConfig();
+      const remainingMs = lastPollFinishedAt + currentPollMs - Date.now();
+      if (remainingMs <= 0) {
+        void runPoll().finally(() => {
+          lastPollFinishedAt = Date.now();
+          if (!stopped) {
+            scheduleNextPoll();
+          }
+        });
+        return;
+      }
+
+      pollTimer = setTimeout(tick, Math.min(remainingMs, RUNTIME_CONFIG_CHECK_MS));
+    };
+
+    tick();
   };
 
   void runPoll().finally(() => {
+    lastPollFinishedAt = Date.now();
     if (!stopped) {
       scheduleNextPoll();
     }
@@ -490,10 +518,7 @@ export function startAvailabilityWatcher(
   return {
     stop: () => {
       stopped = true;
-      if (pollTimer) {
-        clearTimeout(pollTimer);
-        pollTimer = null;
-      }
+      clearPollTimer();
       logger.info("[api-watcher] Durduruldu.");
     },
   };

@@ -50,7 +50,11 @@ function buildUrl(template: string, params: ApiQueryParams): string {
     cityId: params.cityId,
     appointmentTypeId: params.appointmentTypeId,
     applicationTypeId: params.applicationTypeId,
+    applicationType: params.applicationType ?? params.applicationTypeId,
     appointmentDate: params.appointmentDate,
+    nationalityNumber: params.nationalityNumber,
+    onlyAvailable: params.onlyAvailable ?? "true",
+    recaptchaToken: params.recaptchaToken,
   };
 
   let url = template;

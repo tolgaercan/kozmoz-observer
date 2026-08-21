@@ -18,6 +18,13 @@ import {
 } from "./availabilityDates.js";
 import { parseResponse } from "./closedDateParser.js";
 import { fetchMaxAppointmentDate } from "./maxAppointmentDate.js";
+import {
+  DEFAULT_MAX_DATE_CACHE_TTL_MS,
+  getFreshMaxAppointmentDateFromCache,
+  getStaleMaxAppointmentDateFromCache,
+  logMaxDateCacheHit,
+  saveMaxAppointmentDateCache,
+} from "./maxAppointmentDateCache.js";
 import type { ApiQueryParams } from "./resolveApiQueryParams.js";
 import { syncPortalAppointmentType } from "./syncPortalAppointmentType.js";
 import type { ClosedDatePollResult } from "../types.js";
@@ -56,7 +63,10 @@ function readEnv(key: string): string | undefined {
   return value || undefined;
 }
 
-/** Her poll öncesi maxDate — AdminDatas (varsayılan), portal formülü veya env override. */
+/**
+ * maxDate — AdminDatas (varsayılan), portal formülü veya env override.
+ * api modunda disk cache: varsayılan 12 saat (günde 2 kez), her poll'da tekrar çekilmez.
+ */
 async function enrichQueryParamsWithLiveMaxDate(
   ctx: ApiServiceContext,
   params: ApiQueryParams,
@@ -81,16 +91,36 @@ async function enrichQueryParamsWithLiveMaxDate(
     };
   }
 
+  const cached = getFreshMaxAppointmentDateFromCache(ctx.projectRoot);
+  if (cached) {
+    logMaxDateCacheHit(cached.ageMs, cached.maxDate);
+    return { ...params, maxDate: cached.maxDate };
+  }
+
   const fetched = await fetchMaxAppointmentDate(ctx, page);
   if (fetched) {
-    if (fetched !== params.maxDate) {
-      logger.info(`[api] maxDate AdminDatas → ${fetched}`);
-    }
+    saveMaxAppointmentDateCache(
+      ctx.projectRoot,
+      fetched,
+      "admin-datas",
+      ctx.settings.maxAppointmentDateAdminDataId,
+    );
+    const ttlHours = DEFAULT_MAX_DATE_CACHE_TTL_MS / 3_600_000;
+    logger.info(`[api] maxDate AdminDatas yenilendi → ${fetched} (cache ${ttlHours}sa)`);
     return { ...params, maxDate: fetched };
   }
 
+  const stale = getStaleMaxAppointmentDateFromCache(ctx.projectRoot);
+  if (stale?.maxDate) {
+    logger.warn(
+      `[api] AdminDatas maxDate alınamadı — stale cache kullanılıyor: ${stale.maxDate} (${stale.fetchedAt})`,
+    );
+    return { ...params, maxDate: stale.maxDate };
+  }
+
   const fallback = resolvePortalGetClosedDateMaxDate(params.date);
-  logger.warn(`[api] AdminDatas maxDate alınamadi — portal formulu: ${fallback}`);
+  saveMaxAppointmentDateCache(ctx.projectRoot, fallback, "portal-formula");
+  logger.warn(`[api] AdminDatas maxDate alınamadı — portal formülü cache'lendi: ${fallback}`);
   return { ...params, maxDate: fallback };
 }
 

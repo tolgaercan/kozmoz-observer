@@ -46,6 +46,9 @@ function readWorkerTimingFromForm() {
 
 const $ = (id) => document.getElementById(id);
 
+/** Aktif süreç satırında Güncelle öncesi seçilen aralıklar — 8 sn refresh select'i sıfırlamasın */
+const processTimingDrafts = new Map();
+
 const state = {
   profileId: "profile-1",
   bootstrap: null,
@@ -993,8 +996,32 @@ function renderValidationReport(report) {
   );
 }
 
+function rememberProcessTimingDraft(processId, tbody) {
+  const pollSelect = tbody.querySelector(`[data-poll="${processId}"]`);
+  const telegramSelect = tbody.querySelector(`[data-telegram="${processId}"]`);
+  if (!pollSelect || !telegramSelect) return;
+  processTimingDrafts.set(processId, {
+    pollMs: Number.parseInt(pollSelect.value, 10),
+    telegramMs: Number.parseInt(telegramSelect.value, 10),
+  });
+}
+
+function resolveProcessTimingDisplay(proc) {
+  const serverPoll = proc.runtime?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
+  const serverTelegram = proc.runtime?.telegramReportIntervalMs ?? INTERVAL_OPTIONS[2].ms;
+  const draft = processTimingDrafts.get(proc.id);
+  if (!draft) {
+    return { pollMs: serverPoll, telegramMs: serverTelegram };
+  }
+  return {
+    pollMs: Number.isFinite(draft.pollMs) ? draft.pollMs : serverPoll,
+    telegramMs: Number.isFinite(draft.telegramMs) ? draft.telegramMs : serverTelegram,
+  };
+}
+
 function renderProcesses(processes) {
   const tbody = $("processTableBody");
+  const activeIds = new Set();
   tbody.innerHTML = "";
 
   const apiKinds = new Set(["api-watcher", "chrome"]);
@@ -1004,15 +1031,16 @@ function renderProcesses(processes) {
       (p.status === "running" || p.status === "starting"),
   );
   if (active.length === 0) {
+    processTimingDrafts.clear();
     tbody.innerHTML = `<tr class="empty-row"><td colspan="10">Aktif süreç yok</td></tr>`;
     return;
   }
 
   for (const proc of active) {
+    activeIds.add(proc.id);
     const tr = document.createElement("tr");
     const isWatcher = proc.kind === "api-watcher";
-    const pollMs = proc.runtime?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
-    const telegramMs = proc.runtime?.telegramReportIntervalMs ?? INTERVAL_OPTIONS[2].ms;
+    const { pollMs, telegramMs } = resolveProcessTimingDisplay(proc);
     const cdpCell = proc.cdpPort ? `<code>:${proc.cdpPort}</code>` : "—";
 
     tr.innerHTML = `
@@ -1047,13 +1075,28 @@ function renderProcesses(processes) {
     tbody.appendChild(tr);
   }
 
+  for (const processId of [...processTimingDrafts.keys()]) {
+    if (!activeIds.has(processId)) {
+      processTimingDrafts.delete(processId);
+    }
+  }
+
+  tbody.querySelectorAll(".process-interval-select").forEach((select) => {
+    select.addEventListener("change", () => {
+      const processId = select.dataset.poll || select.dataset.telegram;
+      if (processId) {
+        rememberProcessTimingDraft(processId, tbody);
+      }
+    });
+  });
+
   tbody.querySelectorAll("[data-update-runtime]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const processId = btn.dataset.updateRuntime;
       const pollSelect = tbody.querySelector(`[data-poll="${processId}"]`);
       const telegramSelect = tbody.querySelector(`[data-telegram="${processId}"]`);
       try {
-        const result = await api("/api/process/runtime-config", {
+        await api("/api/process/runtime-config", {
           method: "POST",
           body: JSON.stringify({
             processId,
@@ -1061,6 +1104,7 @@ function renderProcesses(processes) {
             telegramReportIntervalMs: Number.parseInt(telegramSelect?.value ?? "0", 10),
           }),
         });
+        processTimingDrafts.delete(processId);
         toast(`Canlı ayar uygulandı`);
         await refreshWorkflowUi();
       } catch (error) {
@@ -1072,10 +1116,14 @@ function renderProcesses(processes) {
   tbody.querySelectorAll("[data-kill]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       try {
+        const processId = btn.dataset.kill;
         const result = await api("/api/process/kill", {
           method: "POST",
-          body: JSON.stringify({ processId: btn.dataset.kill }),
+          body: JSON.stringify({ processId }),
         });
+        if (processId) {
+          processTimingDrafts.delete(processId);
+        }
         toast(result.message ?? "Süreç listeden kaldırıldı");
         renderProcesses(result.processes);
       } catch (error) {
