@@ -4,7 +4,23 @@ import net from "node:net";
 import type { ProxyDefinition } from "./proxyPoolStore.js";
 import { logger } from "../utils/logger.js";
 
-const relays = new Map<string, { server: http.Server; port: number }>();
+interface RelayEntry {
+  server: http.Server;
+  port: number;
+  /** host/port/kullanıcı/parola değişince relay yeniden kurulur */
+  fingerprint: string;
+}
+
+const relays = new Map<string, RelayEntry>();
+
+function relayFingerprint(def: ProxyDefinition): string {
+  return [
+    def.host,
+    String(def.port),
+    def.username ?? "",
+    def.password ?? "",
+  ].join("\0");
+}
 
 export function invalidateLocalProxyRelay(id: string): void {
   const cached = relays.get(id);
@@ -163,15 +179,21 @@ export async function ensureLocalProxyRelay(def: ProxyDefinition): Promise<strin
 
   const upstreamHost = def.host;
   const upstreamPort = def.port;
+  const fingerprint = relayFingerprint(def);
 
   const cached = relays.get(def.id);
   if (cached) {
-    const stillReachable = await verifyTcpReachable(upstreamHost, upstreamPort);
-    if (stillReachable) {
-      return `127.0.0.1:${cached.port}`;
+    if (cached.fingerprint !== fingerprint) {
+      invalidateLocalProxyRelay(def.id);
+      logger.info(`[proxy] Relay ${def.id} kimlik bilgisi değişti — yeniden oluşturuluyor.`);
+    } else {
+      const stillReachable = await verifyTcpReachable(upstreamHost, upstreamPort);
+      if (stillReachable) {
+        return `127.0.0.1:${cached.port}`;
+      }
+      invalidateLocalProxyRelay(def.id);
+      logger.warn(`[proxy] Relay ${def.id} upstream kapalı — yeniden oluşturuluyor.`);
     }
-    invalidateLocalProxyRelay(def.id);
-    logger.warn(`[proxy] Relay ${def.id} upstream kapalı — yeniden oluşturuluyor.`);
   }
 
   await assertProxyGateReachable(def);
@@ -206,7 +228,9 @@ export async function ensureLocalProxyRelay(def: ProxyDefinition): Promise<strin
     server.on("error", reject);
   });
 
-  relays.set(def.id, { server, port });
-  logger.info(`[proxy] Local relay ${def.id} → 127.0.0.1:${port} → ${upstreamHost}:${upstreamPort}`);
+  relays.set(def.id, { server, port, fingerprint });
+  logger.info(
+    `[proxy] Local relay ${def.id} → 127.0.0.1:${port} → ${upstreamHost}:${upstreamPort} (user=${def.username})`,
+  );
   return `127.0.0.1:${port}`;
 }

@@ -21,6 +21,7 @@ import { measureHomeIpViaChrome } from "../config/chromeIpDetect.js";
 import {
   resolveHomePublicIp,
 } from "../config/publicIpDetect.js";
+import { invalidateLocalProxyRelay } from "../config/localProxyRelay.js";
 import { ProxyPoolStore, type ProxyPanelOption } from "../config/proxyPoolStore.js";
 import { ProfileManager } from "../profiles/profileManager.js";
 import {
@@ -433,10 +434,12 @@ export class ControlPanelService {
     >,
   ): ProxyPoolPanelView & { passwordUpdated: boolean } {
     const { entry, passwordUpdated } = this.panelProxyStore.update(id, patch);
+    invalidateLocalProxyRelay(id);
     return { ...this.toProxyPoolPanelView(entry), passwordUpdated };
   }
 
   deletePanelProxy(id: string): void {
+    invalidateLocalProxyRelay(id);
     this.panelProxyStore.delete(id);
   }
 
