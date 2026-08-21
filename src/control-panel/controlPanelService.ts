@@ -508,8 +508,15 @@ export class ControlPanelService {
         : patch.proxyUrl !== undefined
           ? patch.proxyUrl
           : (existing?.proxyUrl ?? legacy.proxyUrl ?? "");
-    const nextLockedIp =
-      patch.lockedIp !== undefined ? patch.lockedIp : existing?.lockedIp ?? legacy.lockedIp;
+    let nextLockedIp =
+      patch.lockedIp !== undefined ? patch.lockedIp : (existing?.lockedIp ?? legacy.lockedIp);
+    if (nextProxyMode === "proxy" && nextProxyId) {
+      const def = new ProxyPoolStore(this.projectRoot).getById(nextProxyId);
+      const exitIp = def?.exitIp?.trim();
+      if (exitIp) {
+        nextLockedIp = exitIp;
+      }
+    }
     const nextHomeIp =
       patch.lastKnownHomeIp !== undefined
         ? patch.lastKnownHomeIp
@@ -658,10 +665,9 @@ export class ControlPanelService {
 
     const profile = this.resolveProfile(resolvedProfileId);
     if (worker.proxyMode === "proxy") {
-      if (options?.light) {
-        publicIp = worker.lockedIp?.trim() || homePublicIp;
-      } else {
-        publicIp = await resolveProxyPublicIp(this.projectRoot, profile, worker);
+      publicIp = await resolveProxyPublicIp(this.projectRoot, profile, worker);
+      if (publicIp === "unknown") {
+        publicIp = homePublicIp;
       }
     }
 
@@ -734,40 +740,16 @@ export class ControlPanelService {
     if (mode === "proxy") {
       const poolId = draftWorker.proxyId?.trim();
       const def = poolId ? new ProxyPoolStore(this.projectRoot).getById(poolId) : undefined;
-      let chromeIp: string | undefined;
-
-      if (!skipServer && options?.measureViaChrome !== false) {
-        const chromeReady = (await getChromeStatus(cdpPort)).ready;
-        if (chromeReady) {
-          chromeIp = await measureHomeIpViaChrome(cdpPort);
-        }
-      }
-
-      if (chromeIp) {
-        displayIp = chromeIp;
-        ipSource = "chrome";
-        measuredProfileId = profileId;
-        measuredCdpPort = cdpPort;
-      } else if (def?.exitIp?.trim() && skipServer) {
-        displayIp = def.exitIp.trim();
-        ipSource = "cached";
-        warning = "Proxy kaydındaki çıkış IP (ölçüm atlandı)";
-      } else if (!skipServer) {
-        displayIp = await resolveProxyPublicIp(this.projectRoot, profile, draftWorker);
-        ipSource = "proxy";
-        const chromeReady = (await getChromeStatus(cdpPort)).ready;
-        if (!chromeReady) {
-          warning =
-            `Chrome CDP hazır değil (port ${cdpPort}) — sunucu curl ölçümü (havuz IP'si dönebilir). Önce «Chrome Aç».`;
-        } else {
-          warning =
-            "Chrome IP alınamadı — sunucu curl ölçümü (havuz IP'si her seferinde değişebilir).";
-        }
-      } else {
-        displayIp = def?.exitIp?.trim() || "unknown";
-        ipSource = displayIp !== "unknown" ? "cached" : undefined;
-        warning = "Chrome kapalı — kayıtlı proxy IP gösteriliyor.";
-      }
+      const lockedFromWorker = normalizeLockedIp(worker.lockedIp);
+      displayIp =
+        lockedFromWorker ||
+        def?.exitIp?.trim() ||
+        "unknown";
+      ipSource = displayIp !== "unknown" ? "cached" : undefined;
+      warning =
+        displayIp === "unknown"
+          ? "Proxy seçin ve çıkış IP'yi proxy kaydına girin."
+          : "Proxy çıkış IP (otomatik kayıtlı).";
     } else if (skipServer) {
       displayIp = workerHome || "unknown";
       ipSource = workerHome ? "cached" : undefined;
@@ -876,30 +858,18 @@ export class ControlPanelService {
       return { worker, effectiveIp: lockedIp };
     }
 
-    const network = await this.getNetworkIp(
-      profileId,
-      { proxyMode: "proxy", proxyId: worker.proxyId },
-      { skipServerMeasure: true, autoLock: false, measureViaChrome: true },
-    );
-    lockedIp = normalizeLockedIp(network.lockedIp) || lockedIp;
-
-    if (!lockedIp) {
-      const hint =
-        network.displayIp !== "unknown"
-          ? network.displayIp
-          : "proxy çıkış IP ölçülemedi";
-      throw new Error(
-        `IP kilitlemeden watcher başlatılamaz (${hint}). Proxy seçin, IP'yi kilitleyin.`,
-      );
-    }
-
     if (!worker.proxyId && !worker.proxyUrl?.trim()) {
-      throw new Error("Proxy modu seçili — listeden statik IP proxy seçin, kaydedin ve IP'yi kilitleyin.");
+      throw new Error("Proxy modu seçili — listeden proxy seçin, çıkış IP'yi kayda girin ve kilitleyin.");
     }
 
-    if (network.displayIp !== "unknown" && lockedIp !== network.displayIp) {
+    lockedIp = normalizeLockedIp(worker.lockedIp);
+    if (!lockedIp) {
+      const def = worker.proxyId
+        ? new ProxyPoolStore(this.projectRoot).getById(worker.proxyId)
+        : undefined;
+      const hint = def?.exitIp?.trim() || "proxy kaydına çıkış IP girin";
       throw new Error(
-        `Kilitli IP (${lockedIp}) seçili proxy çıkış IP'si (${network.displayIp}) ile uyuşmuyor. IP'yi yeniden kilitleyin.`,
+        `IP tanımlı değil (${hint}). Proxy seçin ve çıkış IP'yi kayda girin.`,
       );
     }
 

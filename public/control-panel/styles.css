@@ -388,6 +388,10 @@ input:focus {
   margin-bottom: 14px;
 }
 
+.ip-grid-single {
+  grid-template-columns: 1fr;
+}
+
 .ip-box {
   padding: 14px;
   border-radius: 12px;

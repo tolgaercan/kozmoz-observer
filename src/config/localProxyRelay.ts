@@ -6,6 +6,46 @@ import { logger } from "../utils/logger.js";
 
 const relays = new Map<string, { server: http.Server; port: number }>();
 
+export function invalidateLocalProxyRelay(id: string): void {
+  const cached = relays.get(id);
+  if (!cached) {
+    return;
+  }
+  try {
+    cached.server.close();
+  } catch {
+    // ignore
+  }
+  relays.delete(id);
+}
+
+function verifyTcpReachable(host: string, port: number, timeoutMs = 6000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port, timeout: timeoutMs });
+    const finish = (ok: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(ok);
+    };
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.once("timeout", () => finish(false));
+  });
+}
+
+/** Chrome açmadan önce proxy gate erişilebilir mi kontrol eder. */
+export async function assertProxyGateReachable(def: ProxyDefinition): Promise<void> {
+  const reachable = await verifyTcpReachable(def.host, def.port);
+  if (reachable) {
+    return;
+  }
+  invalidateLocalProxyRelay(def.id);
+  throw new Error(
+    `Proxy gate erişilemiyor: ${def.host}:${def.port}. ` +
+      "Host/port, kullanıcı adı/parola veya ProxyNet hesabınızı kontrol edin.",
+  );
+}
+
 function basicAuthHeader(username: string, password: string): string {
   return `Basic ${Buffer.from(`${username}:${password}`, "utf-8").toString("base64")}`;
 }
@@ -117,17 +157,26 @@ function relayHttpThroughUpstream(
  */
 export async function ensureLocalProxyRelay(def: ProxyDefinition): Promise<string> {
   if (!def.username) {
+    await assertProxyGateReachable(def);
     return `${def.host}:${def.port}`;
   }
 
-  const cached = relays.get(def.id);
-  if (cached) {
-    return `127.0.0.1:${cached.port}`;
-  }
-
-  const authHeader = basicAuthHeader(def.username, def.password ?? "");
   const upstreamHost = def.host;
   const upstreamPort = def.port;
+
+  const cached = relays.get(def.id);
+  if (cached) {
+    const stillReachable = await verifyTcpReachable(upstreamHost, upstreamPort);
+    if (stillReachable) {
+      return `127.0.0.1:${cached.port}`;
+    }
+    invalidateLocalProxyRelay(def.id);
+    logger.warn(`[proxy] Relay ${def.id} upstream kapalı — yeniden oluşturuluyor.`);
+  }
+
+  await assertProxyGateReachable(def);
+
+  const authHeader = basicAuthHeader(def.username, def.password ?? "");
 
   const server = http.createServer((clientReq, clientRes) => {
     relayHttpThroughUpstream(clientReq, clientRes, upstreamHost, upstreamPort, authHeader);

@@ -2,7 +2,10 @@ import { spawnSync } from "node:child_process";
 
 import { detectHomePublicIp } from "./publicIpDetect.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
-import type { WorkerConfig } from "../control-panel/workerConfigStore.js";
+import {
+  normalizeLockedIp,
+  type WorkerConfig,
+} from "../control-panel/workerConfigStore.js";
 import { ensureLocalProxyRelay } from "./localProxyRelay.js";
 import {
   buildProxyUrl,
@@ -129,26 +132,23 @@ export async function detectPublicIpThroughProxy(def: ProxyDefinition): Promise<
   return def.exitIp?.trim() || "unknown";
 }
 
+/** Proxy modu: yalnızca kilitli IP veya havuzdaki kayıtlı exitIp — canlı ölçüm yok. */
 export async function resolveProxyPublicIp(
   projectRoot: string,
   profile: ResolvedProfile,
   worker: WorkerConfig,
 ): Promise<string> {
-  const def = resolveWorkerProxyDefinition(projectRoot, profile, worker);
-  if (!def) {
-    return detectHomePublicIp(projectRoot);
+  const locked = normalizeLockedIp(worker.lockedIp);
+  if (locked) {
+    return locked;
   }
 
-  if (def.ispStatic && def.exitIp?.trim()) {
+  const def = resolveWorkerProxyDefinition(projectRoot, profile, worker);
+  if (def?.exitIp?.trim()) {
     return def.exitIp.trim();
   }
 
-  const measured = await detectPublicIpThroughProxy(def);
-  if (measured !== "unknown") {
-    return measured;
-  }
-
-  return def.exitIp?.trim() || "unknown";
+  return "unknown";
 }
 
 export async function detectPublicIpForWorker(

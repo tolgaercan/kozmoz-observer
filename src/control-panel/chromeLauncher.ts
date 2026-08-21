@@ -83,9 +83,9 @@ function buildChromeArgs(
   return args;
 }
 
-async function waitForCdp(cdpEndpoint: string, attempts = 20): Promise<boolean> {
+async function waitForCdp(cdpEndpoint: string, attempts = 40): Promise<boolean> {
   for (let i = 0; i < attempts; i++) {
-    if (await isCdpEndpointReady(cdpEndpoint)) {
+    if (await isCdpEndpointReady(cdpEndpoint, { exact: true })) {
       return true;
     }
     await new Promise((r) => setTimeout(r, 500));

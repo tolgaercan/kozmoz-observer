@@ -80,7 +80,7 @@ function readNetworkDraft() {
 
 async function persistNetworkDraftFromForm(options = {}) {
   const network = readNetworkDraft();
-  const lockedIp = $("lockedIp").textContent.trim().replace("—", "");
+  const lockedIp = readLockedIp();
   await saveWorkerConfig(
     {
       proxyMode: network.proxyMode,
@@ -100,26 +100,97 @@ function selectedProxyFromForm() {
   return state.bootstrap?.proxyPool?.find((p) => p.id === proxyId) ?? null;
 }
 
+function normalizeIpText(value) {
+  const text = (value ?? "").trim().replace("—", "");
+  if (!text || text === "unknown" || text === "unavailable") {
+    return "";
+  }
+  return text;
+}
+
+function readLockedIp() {
+  return normalizeIpText(state.worker?.lockedIp) || normalizeIpText(state.network?.lockedIp);
+}
+
+function setActiveIpDisplay(ip) {
+  if ($("currentIp")) {
+    $("currentIp").textContent = ip || "—";
+  }
+}
+
+function updateNetworkActionButtons() {
+  const isProxy = $("proxyMode").value === "proxy";
+  if ($("btnRefreshNetworkIp")) {
+    $("btnRefreshNetworkIp").hidden = isProxy;
+  }
+  if ($("btnClearActiveIp")) {
+    $("btnClearActiveIp").hidden = isProxy;
+  }
+  if ($("manualHomeIpField")) {
+    $("manualHomeIpField").hidden = isProxy;
+  }
+}
+
+async function persistLockedIp(ip, extraPatch = {}, options = {}) {
+  const normalized = normalizeIpText(ip);
+  if (!normalized) {
+    return null;
+  }
+  const network = readNetworkDraft();
+  const patch = {
+    proxyMode: network.proxyMode,
+    proxyId: network.proxyId,
+    proxyUrl: network.proxyUrl,
+    lockedIp: normalized,
+    ...extraPatch,
+  };
+  if (network.proxyMode === "direct") {
+    patch.lastKnownHomeIp = normalized;
+    patch.proxyId = "";
+    patch.proxyUrl = "";
+  }
+  await saveWorkerConfig(patch, { silent: true, skipNetwork: true, ...options });
+  setActiveIpDisplay(normalized);
+  if (state.network) {
+    state.network = { ...state.network, displayIp: normalized, lockedIp: normalized };
+  }
+  return normalized;
+}
+
+async function syncProxyNetworkSelection(options = {}) {
+  if ($("proxyMode").value !== "proxy") {
+    return null;
+  }
+  const selected = selectedProxyFromForm();
+  const exitIp = normalizeIpText(selected?.exitIp);
+  if (!exitIp) {
+    setActiveIpDisplay("");
+    return null;
+  }
+  return persistLockedIp(exitIp, {}, options);
+}
+
 function buildNetworkPreviewSnapshot(mode) {
-  const worker = state.worker ?? {};
-  const locked = worker.lockedIp || $("lockedIp").textContent.trim().replace("—", "") || "";
+  const locked = readLockedIp();
   if (mode === "proxy") {
     const selected = selectedProxyFromForm();
+    const exitIp = normalizeIpText(selected?.exitIp);
+    const activeIp = locked || exitIp;
     return {
       mode: "proxy",
-      displayIp: selected?.exitIp || "—",
-      lockedIp: locked,
+      displayIp: activeIp || "—",
+      lockedIp: activeIp,
       homePublicIp: state.bootstrap?.homePublicIp ?? "unknown",
       proxyPool: state.bootstrap?.proxyPool ?? [],
-      ipSource: selected?.exitIp ? "cached" : undefined,
-      warning: selected?.exitIp
-        ? "Kayıtlı proxy çıkış IP — değişiklikten sonra «Ağ taslağını kaydet»"
-        : "Proxy seçildi — «Çıkış IP ölç» veya kaydedin",
+      ipSource: activeIp ? "cached" : undefined,
+      warning: activeIp
+        ? "Proxy çıkış IP otomatik kaydedildi."
+        : "Proxy seçin ve çıkış IP'yi proxy kaydına girin.",
     };
   }
   const homeIp =
-    worker.lastKnownHomeIp ||
-    worker.lockedIp ||
+    state.worker?.lastKnownHomeIp ||
+    locked ||
     state.network?.displayIp ||
     "unknown";
   return {
@@ -146,7 +217,13 @@ function validateChromeLaunchReady() {
   }
   const network = readNetworkDraft();
   if (network.proxyMode === "proxy" && !network.proxyId && !network.proxyUrl) {
-    return "Proxy modu seçili — proxy havuzundan bir IP seçin.";
+    return "Proxy modu seçili — proxy havuzundan bir kayıt seçin.";
+  }
+  if (network.proxyMode === "proxy") {
+    const selected = selectedProxyFromForm();
+    if (!selected?.exitIp?.trim()) {
+      return "Proxy modu: seçilen proxy kaydında çıkış IP tanımlı olmalı.";
+    }
   }
   return null;
 }
@@ -449,7 +526,7 @@ function renderApiHealth(status) {
     <div class="api-health-identity">
       <span><strong>Profil:</strong> ${profileLabel(health)}</span>
       <span><strong>Ban IP:</strong> <code>${displayBanIp(health, status?.allApiHealth?.publicIp ?? state.bootstrap?.publicIp)}</code></span>
-      <span><strong>Kilitli IP:</strong> <code>${health?.lockedIp ?? "—"}</code></span>
+      <span><strong>Aktif IP:</strong> <code>${health?.lockedIp ?? "—"}</code></span>
       <span><strong>CDP port:</strong> <code>${health?.cdpPort ?? status?.cdpPort ?? "—"}</code></span>
     </div>
     <div class="api-health-row ${isBlocked ? "api-health-alert" : ""}">
@@ -583,8 +660,7 @@ function renderWorkerDraftSummary() {
   const styleOpt = state.bootstrap?.appointmentStyles?.find((s) => s.label === api.appointmentStyle);
   const typeOpt = state.bootstrap?.applicationTypes?.find((t) => t.label === api.applicationType);
   const timing = readWorkerTimingFromForm();
-  const lockedIp =
-    state.worker?.lockedIp || $("lockedIp")?.textContent.trim().replace("—", "") || "—";
+  const lockedIp = readLockedIp() || "—";
 
   const passportMask = api.passportNumber
     ? `${api.passportNumber.slice(0, 2)}***`
@@ -603,7 +679,7 @@ function renderWorkerDraftSummary() {
       <dt>Başvuru</dt><dd>${api.applicationType || "—"} · ${api.appointmentStyle || "—"}</dd>
       <dt>Kimlik</dt><dd>TC ${maskTc(api.nationalityNumber)} · Pasaport ${passportMask}</dd>
       <dt>OTP</dt><dd>Tel ${maskPhone(api.otpPhone)} · ${maskEmail(api.portalEmail)}</dd>
-      <dt>Ağ</dt><dd>Kilitli IP <code>${lockedIp}</code></dd>
+      <dt>Ağ</dt><dd>Aktif IP <code>${lockedIp}</code></dd>
       <dt>Aralık</dt><dd>Poll ${formatIntervalLabel(timing.pollIntervalMs)} · Telegram ${formatIntervalLabel(timing.telegramReportIntervalMs)}</dd>
     </dl>
     ${
@@ -688,31 +764,30 @@ async function applyBrowserHomeIp(profileId) {
 }
 
 function updateRefreshNetworkIpButton() {
-  const btn = $("btnRefreshNetworkIp");
-  if (!btn) return;
-  btn.textContent =
-    $("proxyMode").value === "proxy" ? "Chrome'dan IP ölç" : "Ev IP'yi yeniden ölç";
+  updateNetworkActionButtons();
 }
 
 async function refreshNetworkIp() {
   const proxyMode = $("proxyMode").value;
-  const proxyId = $("proxyUrl").value;
 
-  if (proxyMode === "proxy" && proxyId) {
-    renderNetworkFromSnapshot(buildNetworkPreviewSnapshot("proxy"));
-  } else if (proxyMode === "direct") {
+  if (proxyMode === "proxy") {
+    await syncProxyNetworkSelection({ silent: true });
+    const snapshot = buildNetworkPreviewSnapshot("proxy");
+    state.network = snapshot;
+    renderNetworkFromSnapshot(snapshot);
+    return snapshot;
+  }
+
+  if (proxyMode === "direct") {
     renderNetworkFromSnapshot(buildNetworkPreviewSnapshot("direct"));
   }
 
   const params = new URLSearchParams({
     profileId: state.profileId,
     proxyMode,
-    skipServerMeasure: proxyMode === "proxy" ? "false" : "true",
-    measureViaChrome: proxyMode === "proxy" ? "true" : "false",
+    skipServerMeasure: "true",
+    measureViaChrome: "false",
   });
-  if (proxyMode === "proxy" && proxyId) {
-    params.set("proxyId", proxyId);
-  }
 
   let network = await api(`/api/network/ip?${params.toString()}`);
 
@@ -732,8 +807,8 @@ async function refreshNetworkIp() {
 
   state.network = network;
 
-  const locked = network.lockedIp || "—";
-  $("lockedIp").textContent = locked;
+  const activeIp = normalizeIpText(network.lockedIp) || normalizeIpText(network.displayIp);
+  setActiveIpDisplay(activeIp);
 
   renderNetworkFromSnapshot(network);
 
@@ -745,6 +820,7 @@ async function refreshNetworkIp() {
       !network.lockedIp;
     manualField.hidden = !showManual;
   }
+  updateNetworkActionButtons();
 
   if (network.autoLocked && network.lockedIp) {
     toast(`Ev IP otomatik kilitlendi: ${network.lockedIp}`);
@@ -758,11 +834,13 @@ function renderNetworkFromSnapshot(network) {
   const mode = network.mode ?? $("proxyMode").value;
 
   if (mode === "proxy") {
-    label.textContent = "Proxy çıkış IP";
+    label.textContent = "Proxy çıkış IP (watcher)";
   } else {
-    label.textContent = "Ev public IP";
+    label.textContent = "Ev public IP (watcher)";
   }
-  $("currentIp").textContent = network.displayIp ?? "—";
+  const activeIp =
+    normalizeIpText(network.lockedIp) || normalizeIpText(network.displayIp) || "";
+  setActiveIpDisplay(activeIp);
 }
 
 function fillSelect(select, options, getValue, getLabel, selected) {
@@ -793,7 +871,7 @@ function applyWorkerToForm(worker, options = {}) {
   const prevProxyUrl = $("proxyUrl").value;
   const effectiveMode = skipNetwork ? prevProxyMode : (worker.proxyMode ?? "direct");
   $("proxyMode").value = effectiveMode;
-  $("lockedIp").textContent = worker.lockedIp || "—";
+  setActiveIpDisplay(worker.lockedIp || "");
   $("proxyUrlField").hidden = effectiveMode !== "proxy";
   if (effectiveMode === "proxy") {
     if (worker.proxyId) {
@@ -836,9 +914,13 @@ function applyWorkerToForm(worker, options = {}) {
   updateRefreshNetworkIpButton();
   if (!skipNetwork) {
     renderCurrentIpDisplay();
-    void refreshNetworkIp().catch(() => {});
-  } else if (worker.lockedIp) {
-    $("lockedIp").textContent = worker.lockedIp || "—";
+    if (effectiveMode === "direct") {
+      void refreshNetworkIp().catch(() => {});
+    } else {
+      void syncProxyNetworkSelection({ silent: true }).catch(() => {});
+    }
+  } else {
+    setActiveIpDisplay(worker.lockedIp || "");
   }
   updateChromeLaunchButtonState();
 }
@@ -1167,8 +1249,16 @@ $("proxyMode").addEventListener("change", (event) => {
   }
   state.network = null;
   void persistNetworkDraftFromForm({ silent: true })
-    .then(() => refreshNetworkIp())
+    .then(async () => {
+      if (mode === "proxy") {
+        await syncProxyNetworkSelection({ silent: true });
+        renderCurrentIpDisplay();
+      } else {
+        return refreshNetworkIp();
+      }
+    })
     .catch((e) => toast(e.message, "error"));
+  updateNetworkActionButtons();
   updateChromeLaunchButtonState();
 });
 
@@ -1180,7 +1270,12 @@ $("proxyUrl").addEventListener("change", () => {
     toast("Proxy seçildi.");
   }
   state.network = null;
-  refreshNetworkIp().catch((e) => toast(e.message, "error"));
+  void syncProxyNetworkSelection({ silent: true })
+    .then(() => {
+      renderCurrentIpDisplay();
+      updateNetworkActionButtons();
+    })
+    .catch((e) => toast(e.message, "error"));
   renderProxyPoolCards();
   updateChromeLaunchButtonState();
 });
@@ -1197,66 +1292,26 @@ $("passportNumber")?.addEventListener("input", renderApiPreview);
 $("workerPollInterval").addEventListener("change", renderWorkerSummary);
 $("workerTelegramInterval").addEventListener("change", renderWorkerSummary);
 
-$("btnClearLockedIp").addEventListener("click", async () => {
-  await saveWorkerConfig({ lockedIp: "" }, { silent: true });
-  $("lockedIp").textContent = "—";
-  toast("Kilitli IP sıfırlandı");
-});
-
-$("btnLockCurrentIp").addEventListener("click", async () => {
-  const ip = $("currentIp").textContent.trim();
-  if (!ip || ip === "unknown" || ip === "—" || ip === "unavailable") {
-    toast("Geçerli IP yok — bağlantı modunu kontrol edin", "error");
-    return;
-  }
-  const network = readNetworkDraft();
-  const mode = network.proxyMode;
-  const patch = {
-    proxyMode: mode,
-    proxyId: network.proxyId,
-    proxyUrl: network.proxyUrl,
-    lockedIp: ip,
-  };
-  if (mode === "direct") {
-    patch.lastKnownHomeIp = ip;
-    patch.proxyId = "";
-    patch.proxyUrl = "";
-  }
-  state.network = {
-    ...(state.network ?? {}),
-    mode,
-    displayIp: ip,
-    lockedIp: ip,
-    homePublicIp: mode === "direct" ? ip : state.network?.homePublicIp,
-  };
-  renderNetworkFromSnapshot(state.network);
-  await saveWorkerConfig(patch, { silent: true, skipNetwork: true });
-  $("lockedIp").textContent = ip;
-  toast(mode === "direct" ? `Ev IP kilitlendi: ${ip}` : `Proxy çıkış IP kilitlendi: ${ip}`);
+$("btnClearActiveIp")?.addEventListener("click", async () => {
+  await saveWorkerConfig({ lockedIp: "", lastKnownHomeIp: "" }, { silent: true });
+  setActiveIpDisplay("");
+  toast("Aktif IP sıfırlandı");
 });
 
 $("btnRefreshNetworkIp").addEventListener("click", async () => {
+  if ($("proxyMode").value === "proxy") {
+    toast("Proxy modunda IP ölçülmez — çıkış IP'yi proxy kaydına elle girin.", "info");
+    return;
+  }
   $("btnRefreshNetworkIp").disabled = true;
   try {
-    if ($("proxyMode").value === "proxy") {
-      toast("Seçili profilin Chrome oturumundan IP ölçülüyor…");
-      const network = await refreshNetworkIp();
-      if (network.ipSource === "chrome") {
-        toast(`Chrome çıkış IP: ${network.displayIp}`, "success");
-      } else {
-        toast(network.warning ?? "Chrome ölçemedi — curl yedek sonuç gösteriliyor", "error");
-      }
-      return;
-    }
-
     toast("Tarayıcıdan ev IP ölçülüyor…");
     const fromBrowser = await applyBrowserHomeIp(state.profileId);
     if (fromBrowser) {
       state.network = fromBrowser;
-      $("lockedIp").textContent = fromBrowser.lockedIp || "—";
       renderNetworkFromSnapshot(fromBrowser);
       $("manualHomeIpField").hidden = true;
-      toast(`Ev IP ölçüldü ve kilitlendi: ${fromBrowser.displayIp}`);
+      toast(`Ev IP ölçüldü: ${fromBrowser.displayIp}`);
     } else {
       await refreshNetworkIp();
       toast("Tarayıcı ölçemedi — manuel IP girin", "error");
@@ -1280,10 +1335,9 @@ $("btnSaveManualHomeIp").addEventListener("click", async () => {
       body: JSON.stringify({ profileId: state.profileId, ip }),
     });
     state.network = network;
-    $("lockedIp").textContent = network.lockedIp || "—";
-    $("currentIp").textContent = network.displayIp ?? ip;
+    renderNetworkFromSnapshot(network);
     $("manualHomeIpField").hidden = true;
-    toast(`Ev IP kaydedildi ve kilitlendi: ${ip}`);
+    toast(`Ev IP kaydedildi: ${ip}`);
   } catch (error) {
     toast(error.message, "error");
   }
@@ -1293,15 +1347,17 @@ $("btnSaveNetwork").addEventListener("click", async () => {
   const proxyMode = $("proxyMode").value;
   const proxySelection = $("proxyUrl").value;
   const isPoolId = state.bootstrap?.proxyPool?.some((p) => p.id === proxySelection);
-  const lockedIp = $("lockedIp").textContent.trim().replace("—", "");
   await saveWorkerConfig({
     proxyMode,
     proxyId: proxyMode === "proxy" && isPoolId ? proxySelection : "",
     proxyUrl: proxyMode === "proxy" && !isPoolId && proxySelection ? proxySelection : "",
-    ...(lockedIp ? { lockedIp } : {}),
   });
-  await loadBootstrap();
-  await refreshNetworkIp();
+  await loadBootstrap({ light: true });
+  if (proxyMode === "proxy") {
+    await syncProxyNetworkSelection({ silent: true });
+  } else {
+    await refreshNetworkIp();
+  }
   toast("Ağ kaydedildi");
   updateChromeLaunchButtonState();
 });
@@ -1345,7 +1401,10 @@ $("btnStartChrome").addEventListener("click", async () => {
       proxyId: network.proxyId,
       proxyUrl: network.proxyUrl,
     });
-    const lockedIp = $("lockedIp").textContent.trim().replace("—", "");
+    if (network.proxyMode === "proxy") {
+      await syncProxyNetworkSelection({ silent: true });
+    }
+    const lockedIp = readLockedIp();
     const result = await api("/api/chrome/start", {
       method: "POST",
       body: JSON.stringify({
@@ -1415,7 +1474,12 @@ $("btnStartWorkflow").addEventListener("click", async () => {
   btn.disabled = true;
   try {
     await persistNetworkDraftFromForm();
-    if ($("proxyMode").value === "direct" && !$("lockedIp").textContent.trim().replace("—", "")) {
+    if ($("proxyMode").value === "proxy") {
+      await syncProxyNetworkSelection({ silent: true });
+      if (!readLockedIp()) {
+        throw new Error("Proxy modu: seçilen proxy kaydında çıkış IP tanımlı olmalı.");
+      }
+    } else if (!readLockedIp()) {
       await refreshNetworkIp();
     }
     const status = await api(`/api/status?profileId=${encodeURIComponent(state.profileId)}`);
@@ -1613,8 +1677,7 @@ async function resetAllProfileData() {
     if ($("cdpPortInput")) {
       $("cdpPortInput").value = "";
     }
-    $("lockedIp").textContent = "—";
-    $("currentIp").textContent = "—";
+    setActiveIpDisplay("");
     renderChromeProfileCards();
     updateChromeLaunchButtonState();
     await refreshProcesses();
@@ -1751,12 +1814,17 @@ async function saveProxyFromDialog(event) {
   const editId = $("proxyEditId").value.trim();
   const username = $("proxyUsername").value.trim();
   const password = $("proxyPassword").value;
+  const exitIp = $("proxyExitIp").value.trim();
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(exitIp)) {
+    toast("Geçerli bir çıkış IPv4 adresi girin.", "error");
+    return;
+  }
   const payload = {
     label: $("proxyLabel").value.trim(),
     host: $("proxyHost").value.trim(),
     port: Number.parseInt($("proxyPort").value, 10),
     protocol: $("proxyProtocol").value,
-    exitIp: $("proxyExitIp").value.trim() || undefined,
+    exitIp,
     ispStatic: $("proxyIspStatic").checked,
     enabled: $("proxyEnabled").checked,
     profiles: parseProxyProfilesField($("proxyProfiles").value),
@@ -1819,38 +1887,12 @@ async function deleteProxyRecord(proxyId) {
   }
 }
 
-async function testProxyIpFromDialog() {
-  const editId = $("proxyEditId").value.trim();
-  try {
-    if (!editId) {
-      toast("Önce kaydedin, sonra IP ölçün.", "error");
-      return;
-    }
-    const result = await api("/api/proxy-pool/test-ip", {
-      method: "POST",
-      body: JSON.stringify({ id: editId }),
-    });
-    $("proxyExitIp").value = result.exitIp ?? "";
-    if (result.warning) {
-      toast(result.warning, "error");
-    } else {
-      toast(result.updated ? `Çıkış IP kaydedildi: ${result.exitIp}` : `Çıkış IP: ${result.exitIp}`);
-    }
-    await refreshAll();
-  } catch (error) {
-    toast(error.message, "error");
-  }
-}
-
 $("btnAddProxy")?.addEventListener("click", async () => {
   await loadPanelProxiesFull().catch(() => {});
   openProxyEditor(null);
 });
 $("proxyForm")?.addEventListener("submit", saveProxyFromDialog);
 $("btnCancelProxy")?.addEventListener("click", () => $("proxyDialog")?.close());
-$("btnTestProxyIp")?.addEventListener("click", () => {
-  void testProxyIpFromDialog();
-});
 
 $("btnManageChromeProfiles")?.addEventListener("click", () => openChromeProfileEditor(null));
 $("btnAddChromeProfile")?.addEventListener("click", () => openChromeProfileEditor(null));
@@ -1862,6 +1904,7 @@ refreshAll().catch((error) => {
   $("panelStatus").className = "badge error";
   toast(error.message, "error");
 });
+updateNetworkActionButtons();
 
 setInterval(() => {
   refreshWorkflowUi().catch(() => {});

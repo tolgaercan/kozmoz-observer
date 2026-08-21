@@ -56,14 +56,10 @@
               <p class="wizard-section-title" style="margin: 0">Ağ — Chrome bu ayarlarla açılır</p>
               <button type="button" class="btn btn-secondary btn-compact" id="btnAddProxy">+ Proxy ekle</button>
             </div>
-            <div class="ip-grid">
-              <div class="ip-box">
-                <span class="ip-label" id="currentIpLabel">Çıkış IP</span>
-                <strong id="currentIp">—</strong>
-              </div>
+            <div class="ip-grid ip-grid-single">
               <div class="ip-box ip-box-accent">
-                <span class="ip-label">Kilitli IP (watcher)</span>
-                <strong id="lockedIp">—</strong>
+                <span class="ip-label" id="currentIpLabel">Aktif IP</span>
+                <strong id="currentIp">—</strong>
               </div>
             </div>
 
@@ -85,10 +81,9 @@
             <div id="proxyPoolList" class="profile-list proxy-pool-list"></div>
 
             <div class="inline-actions">
-              <button type="button" class="btn btn-secondary" id="btnLockCurrentIp">Mevcut IP'yi kilitle</button>
-              <button type="button" class="btn btn-secondary" id="btnClearLockedIp">Kilitli IP'yi sıfırla</button>
+              <button type="button" class="btn btn-secondary" id="btnClearActiveIp">IP'yi sıfırla</button>
               <button type="button" class="btn btn-secondary" id="btnRefreshNetworkIp">Ev IP'yi yeniden ölç</button>
-              <button type="button" class="btn btn-secondary" id="btnSaveNetwork">Ağ taslağını kaydet</button>
+              <button type="button" class="btn btn-secondary" id="btnSaveNetwork">Ağ ayarlarını kaydet</button>
             </div>
 
             <div class="manual-home-ip" id="manualHomeIpField" hidden>
@@ -188,8 +183,8 @@
                 </select>
               </label>
               <label class="field">
-                <span>Çıkış IP (opsiyonel)</span>
-                <input type="text" id="proxyExitIp" placeholder="Ölç veya elle girin" inputmode="decimal" />
+                <span>Çıkış IP</span>
+                <input type="text" id="proxyExitIp" placeholder="ör. 108.220.234.194" inputmode="decimal" required />
               </label>
             </div>
             <label class="field field-checkbox">
@@ -206,7 +201,6 @@
             </label>
             <div class="inline-actions">
               <button type="submit" class="btn btn-primary" id="btnSaveProxy">Kaydet</button>
-              <button type="button" class="btn btn-secondary" id="btnTestProxyIp">Çıkış IP ölç</button>
               <button type="button" class="btn btn-ghost" id="btnCancelProxy">İptal</button>
             </div>
           </form>

@@ -174,8 +174,12 @@ export async function runApiWatcherPhase(
     ...worker,
     lockedIp: worker.lockedIp || activeSession?.network.lockedIp || "",
   };
-  const publicIp = await detectPublicIpForWorker(runtime.projectRoot, profile, workerForIp);
-  const lockedIp = normalizeLockedIp(workerForIp.lockedIp) || publicIp;
+  const lockedIpNormalized = normalizeLockedIp(workerForIp.lockedIp);
+  const publicIp =
+    worker.proxyMode === "proxy"
+      ? lockedIpNormalized || "unknown"
+      : await detectPublicIpForWorker(runtime.projectRoot, profile, workerForIp);
+  const lockedIp = lockedIpNormalized || publicIp;
 
   const runtimeStore = new WorkerRuntimeStore(runtime.projectRoot);
   runtimeStore.ensure(profile.id, {

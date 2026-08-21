@@ -4,7 +4,7 @@ import {
   runChromeGoogleBootstrap,
   waitAndAcceptChromeProfileSyncPrompt,
 } from "../auth/chromeGoogleBootstrap.js";
-import { connectOverCdp } from "../browser/cdpConnector.js";
+import { connectOverCdp, isCdpEndpointReady } from "../browser/cdpConnector.js";
 import { isChromeProfileLinkedToGoogle } from "../browser/chromeProfileIdentity.js";
 import { prepareChromeForAutomation } from "../browser/chromeStartupPrep.js";
 import type { AppSettings } from "../config/settings.js";
@@ -15,6 +15,16 @@ import type { PanelChromeProfile } from "./chromeProfileStore.js";
 import type { ChromeLaunchResult } from "./chromeLauncher.js";
 
 const PROFILE_PICKER_URL = "chrome://profile-picker";
+
+async function waitForExactCdp(cdpEndpoint: string, attempts = 40): Promise<boolean> {
+  for (let i = 0; i < attempts; i++) {
+    if (await isCdpEndpointReady(cdpEndpoint, { exact: true })) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
 
 export interface ChromeGoogleLoginResult {
   skipped: boolean;
@@ -122,7 +132,7 @@ export async function ensureChromeGoogleLoginAfterLaunch(
     return { skipped: true, ready: false, detail: "Chrome şifre tanımlı değil" };
   }
 
-  const cdpEndpoint = profile.cdpEndpoint || settings.cdpEndpoint;
+  const cdpEndpoint = launch.cdpEndpoint || profile.cdpEndpoint || settings.cdpEndpoint;
   const credentials = buildCredentials(profile, panelProfile);
   let browser: Browser | undefined;
 
@@ -130,6 +140,15 @@ export async function ensureChromeGoogleLoginAfterLaunch(
     logger.info(
       `[panel] Google giriş akışı başlıyor (${profile.id}, ${credentials.email.replace(/(.{2}).*(@.*)/, "$1***$2")})`,
     );
+
+    const cdpReady = await waitForExactCdp(cdpEndpoint);
+    if (!cdpReady) {
+      return {
+        skipped: false,
+        ready: false,
+        detail: `CDP hazır değil (${cdpEndpoint}) — Google giriş akışı başlatılamadı`,
+      };
+    }
 
     const connected = await connectOverCdp(cdpEndpoint, { skipStealth: false });
     browser = connected.browser;
