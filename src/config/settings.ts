@@ -9,6 +9,8 @@ export interface TelegramSettings {
   chatId: string;
   /** Tum hedef kanallar / gruplar (sayisal chat_id) */
   chatIds: string[];
+  /** Ödeme / kart uyarıları — bos ise chatIds kullanilir */
+  paymentChatIds: string[];
   notifyOnResolved: boolean;
   notifyCooldownMs: number;
   /** Antivirüs/kurumsal proxy TLS kesintisinde true yapın */
@@ -100,6 +102,8 @@ export interface AppointmentSettings {
   slotVerifyByClick: boolean;
   slotVerifyMode: "always" | "single-only" | "never";
   slotDayClickWaitMs: number;
+  /** Gün tıklandıktan sonra saat paneli (.appointment-hours-container) max bekleme */
+  slotHourPanelTimeoutMs: number;
   slotTimeButtonSelector: string;
   slotEmptyTimeMessage: string;
   slotEmptyTimeMessageLocator: string;
@@ -173,6 +177,8 @@ export interface ApiWatcherSettings {
   defaultApplicationType: string;
   /** GetClosedDate poll aralığı — varsayılan 300000ms (5 dk ≈ 12 istek/saat) */
   pollIntervalMs: number;
+  /** Step 2'ye yeni geçişten sonra ilk GetClosedDate öncesi bekleme (ms) */
+  pollPostStep2SettleMs: number;
   openNotifyCooldownMs: number;
   tokenCaptureWaitMs: number;
   fallbackToBrowserOnCaptcha: boolean;
@@ -185,7 +191,7 @@ export interface ApiWatcherSettings {
   syncPortalAppointmentTypeWaitMs: number;
   syncPortalAppointmentTypeTimeoutMs: number;
   appointmentTypeSelectLocator: string;
-  /** Başvuru şekli wizard adımı — API için max 2 (adim 3 captcha riski) */
+  /** Başvuru şekli wizard adımı — API poll Step 2 (Bilgiler) */
   appointmentTypeWizardStep: number;
   wizardNavLocator: string;
   syncHumanMinStepDelayMs: number;
@@ -195,6 +201,30 @@ export interface ApiWatcherSettings {
   apiWizardAutoNavigate: boolean;
   /** Wizard Sonraki ile adim 1→2 (varsayılan kapali — adim 1'de API yine calisabilir) */
   apiWizardAdvanceFromStep1: boolean;
+  /** Yeni gün gelince booking campaign (saat probe) — varsayılan kapalı */
+  bookingEnabled: boolean;
+  /** İlk poll (baseline) açık gün varsa booking dene — varsayılan booking açıksa true */
+  bookingOnBaseline: boolean;
+  bookingHourProbeMaxRequests: number;
+  bookingHourProbeBatchSize: number;
+  bookingHourProbeDelayMs: number;
+  bookingCaptchaWaitMs: number;
+  bookingCaptchaPatienceMs: number;
+  bookingTokenMaxAgeMs: number;
+  bookingTokenPollIntervalMs: number;
+  bookingTokenLogEveryMs: number;
+  bookingTokenStaleBumpEnabled: boolean;
+  bookingTokenStaleBumpCooldownMs: number;
+  bookingUiDayAttemptMs: number;
+  bookingStep2RetryMax: number;
+  /** Ödeme formu doldurulduktan sonra otomatik submit (3DS varsa manuel) */
+  bookingPaymentAutoSubmit: boolean;
+  bookingPaymentPageWaitMs: number;
+  bookingPaymentSubmitWaitMs: number;
+  bookingPaymentOutcomeWaitMs: number;
+  /** 3DS Garanti SS1→SS2 OTP otomasyon — varsayılan kapalı */
+  bookingPayment3dsAutoEnabled: boolean;
+  bookingPayment3dsDetectWaitMs: number;
 }
 
 export interface AppSettings {
@@ -412,6 +442,19 @@ export function resolveTelegramChatIds(env: NodeJS.ProcessEnv = process.env): st
   return [...new Set(ids)];
 }
 
+/** TELEGRAM_PAYMENT_CHAT_ID — virgulle birden fazla odeme kanali */
+export function resolveTelegramPaymentChatIds(env: NodeJS.ProcessEnv = process.env): string[] {
+  const fromList = env.TELEGRAM_PAYMENT_CHAT_IDS?.split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (fromList?.length) {
+    return [...new Set(fromList)];
+  }
+
+  const single = env.TELEGRAM_PAYMENT_CHAT_ID?.trim();
+  return single ? [single] : [];
+}
+
 export function loadSettings(projectRoot: string): AppSettings {
   loadEnvFile(projectRoot);
 
@@ -440,6 +483,7 @@ export function loadSettings(projectRoot: string): AppSettings {
       botToken: process.env.TELEGRAM_BOT_TOKEN ?? "",
       chatIds: resolveTelegramChatIds(process.env),
       chatId: resolveTelegramChatIds(process.env)[0] ?? "",
+      paymentChatIds: resolveTelegramPaymentChatIds(process.env),
       notifyOnResolved: process.env.TELEGRAM_NOTIFY_ON_RESOLVED === "true",
       notifyCooldownMs: parseIntEnv("TELEGRAM_NOTIFY_COOLDOWN_MS", 300_000),
       tlsInsecure: process.env.TELEGRAM_TLS_INSECURE === "true",
@@ -540,6 +584,7 @@ export function loadSettings(projectRoot: string): AppSettings {
       slotVerifyByClick: process.env.SLOT_VERIFY_BY_CLICK !== "false",
       slotVerifyMode: parseSlotVerifyMode(process.env.SLOT_VERIFY_MODE),
       slotDayClickWaitMs: parseIntEnv("SLOT_DAY_CLICK_WAIT_MS", 900),
+      slotHourPanelTimeoutMs: parseIntEnv("SLOT_HOUR_PANEL_TIMEOUT_MS", 15_000),
       slotTimeButtonSelector:
         process.env.SLOT_TIME_BUTTON_SELECTOR?.trim() ??
         ".appointment-hours-container button.btn|.appointment-hours-container button",
@@ -599,6 +644,7 @@ export function loadSettings(projectRoot: string): AppSettings {
       defaultApplicationTypeId: process.env.API_APPLICATION_TYPE_ID?.trim() ?? "1",
       defaultApplicationType: "Bireysel",
       pollIntervalMs: parseIntEnv("API_POLL_INTERVAL_MS", 300_000),
+      pollPostStep2SettleMs: parseIntEnv("API_POLL_POST_STEP2_SETTLE_MS", 5_000),
       openNotifyCooldownMs: parseIntEnv("API_OPEN_NOTIFY_COOLDOWN_MS", 300_000),
       tokenCaptureWaitMs: parseIntEnv("API_TOKEN_CAPTURE_WAIT_MS", 45_000),
       fallbackToBrowserOnCaptcha: process.env.API_CAPTCHA_FALLBACK_BROWSER === "true",
@@ -617,7 +663,7 @@ export function loadSettings(projectRoot: string): AppSettings {
         process.env.API_APPOINTMENT_TYPE_SELECT_LOCATOR?.trim() ??
         process.env.APPOINTMENT_STYLE_LOCATOR?.trim()?.split("|")[0]?.trim() ??
         "select[name='appointmentTypeId']",
-      appointmentTypeWizardStep: parseIntEnv("API_APPOINTMENT_TYPE_WIZARD_STEP", 3),
+      appointmentTypeWizardStep: parseIntEnv("API_APPOINTMENT_TYPE_WIZARD_STEP", 2),
       wizardNavLocator:
         process.env.WIZARD_NAV_LOCATOR?.trim() ?? "ul.wizard-nav-pills|ul.wizard-nav",
       syncHumanMinStepDelayMs: parseIntEnv("HUMAN_MOUSE_MIN_STEP_MS", 4),
@@ -625,6 +671,33 @@ export function loadSettings(projectRoot: string): AppSettings {
       syncHumanOvershootProbability: parseFloatEnv("HUMAN_MOUSE_OVERSHOOT_PROB", 0.18),
       apiWizardAutoNavigate: process.env.API_WIZARD_AUTO_NAVIGATE !== "false",
       apiWizardAdvanceFromStep1: process.env.API_WIZARD_ADVANCE_FROM_STEP1 === "true",
+      bookingEnabled: process.env.API_BOOKING_ENABLED === "true",
+      bookingOnBaseline:
+        process.env.API_BOOKING_ON_BASELINE === "false"
+          ? false
+          : process.env.API_BOOKING_ON_BASELINE === "true" ||
+            process.env.API_BOOKING_ENABLED === "true",
+      bookingHourProbeMaxRequests: parseIntEnv("API_BOOKING_HOUR_PROBE_MAX", 10),
+      bookingHourProbeBatchSize: parseIntEnv("API_BOOKING_HOUR_PROBE_BATCH", 4),
+      bookingHourProbeDelayMs: parseIntEnv("API_BOOKING_HOUR_PROBE_DELAY_MS", 1000),
+      bookingCaptchaWaitMs: parseIntEnv("API_BOOKING_CAPTCHA_WAIT_MS", 90_000),
+      bookingCaptchaPatienceMs: parseIntEnv("API_BOOKING_CAPTCHA_PATIENCE_MS", 600_000),
+      bookingTokenMaxAgeMs: parseIntEnv("API_BOOKING_TOKEN_MAX_AGE_MS", 55_000),
+      bookingTokenPollIntervalMs: parseIntEnv("API_BOOKING_TOKEN_POLL_INTERVAL_MS", 2500),
+      bookingTokenLogEveryMs: parseIntEnv("API_BOOKING_TOKEN_LOG_EVERY_MS", 15_000),
+      bookingTokenStaleBumpEnabled: process.env.API_BOOKING_TOKEN_STALE_BUMP_ENABLED !== "false",
+      bookingTokenStaleBumpCooldownMs: parseIntEnv(
+        "API_BOOKING_TOKEN_STALE_BUMP_COOLDOWN_MS",
+        30_000,
+      ),
+      bookingUiDayAttemptMs: parseIntEnv("API_BOOKING_UI_DAY_ATTEMPT_MS", 25_000),
+      bookingStep2RetryMax: parseIntEnv("API_BOOKING_STEP2_RETRY_MAX", 1),
+      bookingPaymentAutoSubmit: process.env.API_BOOKING_PAYMENT_AUTO_SUBMIT !== "false",
+      bookingPaymentPageWaitMs: parseIntEnv("API_BOOKING_PAYMENT_PAGE_WAIT_MS", 20_000),
+      bookingPaymentSubmitWaitMs: parseIntEnv("API_BOOKING_PAYMENT_SUBMIT_WAIT_MS", 20_000),
+      bookingPaymentOutcomeWaitMs: parseIntEnv("API_BOOKING_PAYMENT_OUTCOME_WAIT_MS", 12_000),
+      bookingPayment3dsAutoEnabled: process.env.API_BOOKING_PAYMENT_3DS_AUTO === "true",
+      bookingPayment3dsDetectWaitMs: parseIntEnv("API_BOOKING_PAYMENT_3DS_DETECT_WAIT_MS", 15_000),
     },
   };
 }

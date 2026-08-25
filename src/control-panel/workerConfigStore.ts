@@ -23,6 +23,21 @@ export interface WorkerApiParams {
   passportNumber: string;
 }
 
+/** Randevu ödeme adımı — kart bilgileri (panelden) */
+export interface WorkerPaymentParams {
+  cardNumber: string;
+  cardholderName: string;
+  /** 01–12 */
+  expireMonth: string;
+  /** örn. 2028 */
+  expireYear: string;
+  cvv: string;
+  /** Boşsa portalEmail kullanılır */
+  email: string;
+  /** Boşsa otpPhone kullanılır (10 hane, 5XXXXXXXXX) */
+  phone: string;
+}
+
 export interface WorkerTimingParams {
   pollIntervalMs: number;
   telegramReportIntervalMs: number;
@@ -40,6 +55,8 @@ export interface WorkerConfig {
   /** data/config/proxy-pool.local.json içindeki id */
   proxyId?: string;
   api: WorkerApiParams;
+  /** Ödeme sayfası kart formu — watcher başlatmak için zorunlu değil */
+  payment: WorkerPaymentParams;
   /** Profil bazlı poll / Telegram aralıkları (.env yalnızca varsayılan) */
   timing: WorkerTimingParams;
   updatedAt: string;
@@ -54,6 +71,32 @@ const FALLBACK_TIMING_DEFAULTS: RuntimeIntervalDefaults = {
   pollIntervalMs: 300_000,
   telegramReportIntervalMs: 300_000,
 };
+
+function defaultWorkerPayment(): WorkerPaymentParams {
+  return {
+    cardNumber: "",
+    cardholderName: "",
+    expireMonth: "",
+    expireYear: "",
+    cvv: "",
+    email: "",
+    phone: "",
+  };
+}
+
+function resolveWorkerPayment(
+  payment: Partial<WorkerPaymentParams> | undefined,
+): WorkerPaymentParams {
+  return {
+    cardNumber: payment?.cardNumber ?? "",
+    cardholderName: payment?.cardholderName ?? "",
+    expireMonth: payment?.expireMonth ?? "",
+    expireYear: payment?.expireYear ?? "",
+    cvv: payment?.cvv ?? "",
+    email: payment?.email ?? "",
+    phone: payment?.phone ?? "",
+  };
+}
 
 function resolveWorkerTiming(
   timing: Partial<WorkerTimingParams> | undefined,
@@ -86,6 +129,7 @@ function defaultWorkerConfig(
       portalEmail: "",
       passportNumber: "",
     },
+    payment: defaultWorkerPayment(),
     timing: resolveWorkerTiming(undefined, timingDefaults),
     updatedAt: new Date().toISOString(),
   };
@@ -147,6 +191,7 @@ export class WorkerConfigStore {
         portalEmail: existing.api?.portalEmail ?? "",
         passportNumber: existing.api?.passportNumber ?? "",
       },
+      payment: resolveWorkerPayment(existing.payment),
       timing: resolveWorkerTiming(existing.timing, timingDefaults),
       updatedAt: existing.updatedAt,
     };
@@ -154,8 +199,9 @@ export class WorkerConfigStore {
 
   updateWorker(
     profileId: string,
-    patch: Partial<Omit<WorkerConfig, "profileId" | "timing" | "api">> & {
+    patch: Partial<Omit<WorkerConfig, "profileId" | "timing" | "api" | "payment">> & {
       api?: Partial<WorkerApiParams>;
+      payment?: Partial<WorkerPaymentParams>;
       timing?: Partial<WorkerTimingParams>;
     },
     timingDefaults: RuntimeIntervalDefaults = FALLBACK_TIMING_DEFAULTS,
@@ -169,6 +215,7 @@ export class WorkerConfigStore {
       profileId,
       lockedIp: normalizeLockedIp(patch.lockedIp ?? existing.lockedIp),
       api: { ...existing.api, ...patch.api },
+      payment: { ...existing.payment, ...patch.payment },
       timing: patch.timing
         ? {
             pollIntervalMs: normalizeRuntimeIntervalMs(

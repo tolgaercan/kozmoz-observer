@@ -78,24 +78,66 @@ export const IDENTITY_PHONE_VERIFICATION_VARIANT: OtpScreenVariant = {
 };
 
 /**
+ * Randevu wizard Adım 5 — «Kodu Gönder» sonrası inline SMS formu (sayfa içi, popup değil).
+ */
+export const WIZARD_INLINE_SMS_FORM_VARIANT: OtpScreenVariant = {
+  id: "wizard-inline-sms-form",
+  label: "Randevu wizard — inline SMS doğrulama (Adım 5)",
+  channel: "phone",
+  detectSelectors: [
+    ".sms-form-wrapper input.form-control[maxlength='6']",
+    ".sms-form-wrapper button:has-text('Sms İle Gelen Kodu Doğrula')",
+    ".sms-form-wrapper",
+  ],
+  detectTextPatterns: [
+    /sms\s*ile\s*gelen\s*kodu\s*doğrula/i,
+    /ödeme\s*adımına\s*geç/i,
+  ],
+  containerSelectors: [".sms-form-wrapper", ".wizard-tab-container"],
+  inputSelectors: [
+    ".sms-form-wrapper input.form-control[maxlength='6']",
+    ".sms-form-wrapper input[type='text']",
+    "input.form-control[maxlength='6'][pattern]",
+  ],
+  inputMode: "single",
+  requestCodeSelectors: [],
+  submitSelectors: [
+    ".sms-form-wrapper button.btn-danger:has-text('Sms İle Gelen Kodu Doğrula')",
+    "button:has-text('Sms İle Gelen Kodu Doğrula')",
+    "button:has-text('Ödeme Adımına Geç')",
+  ],
+};
+
+/**
  * Bilinen OTP ekranları — sıra önemli (ilk eşleşen kazanır).
  * Locator'ları OTP ekranı gelince birlikte güncelleyeceğiz.
  */
 export const PORTAL_OTP_SCREEN_VARIANTS: OtpScreenVariant[] = [
   IDENTITY_PHONE_VERIFICATION_VARIANT,
+  WIZARD_INLINE_SMS_FORM_VARIANT,
   {
     id: "wizard-phone-sms",
     label: "Randevu wizard — telefon SMS OTP (Adım 5)",
     channel: "phone",
     detectSelectors: [
+      ".wizard-tab-container:has-text('sms kodu talep edin')",
+      ".wizard-tab-container button:has-text('Telefonuma Doğrulama Kodu Gönder')",
+      "button.btn.btn-md.btn-primary:has-text('Telefonuma Doğrulama Kodu Gönder')",
       "text=Telefonuma Doğrulama Kodu Gönder",
       "text=sms kodu talep edin",
       "text=SMS kodu",
     ],
-    detectTextPatterns: [/telefonuma\s*doğrulama\s*kodu/i, /sms\s*kodu\s*talep/i],
+    detectTextPatterns: [
+      /telefonuma\s*doğrulama\s*kodu/i,
+      /sms\s*kodu\s*talep/i,
+      /telefon\s*numaranız/i,
+    ],
+    containerSelectors: [".wizard-tab-container"],
     inputSelectors: [...DEFAULT_OTP_INPUT_SELECTORS],
     inputMode: "single",
     requestCodeSelectors: [
+      ".wizard-tab-container button.btn-primary:has-text('Telefonuma Doğrulama Kodu Gönder')",
+      "button.btn.btn-md.btn-primary.w-20:has-text('Telefonuma Doğrulama Kodu Gönder')",
       "text=Telefonuma Doğrulama Kodu Gönder",
       "button:has-text('Doğrulama Kodu')",
       "button:has-text('Kod Gönder')",

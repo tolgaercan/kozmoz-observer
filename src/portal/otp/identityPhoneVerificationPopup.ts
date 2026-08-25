@@ -3,7 +3,6 @@ import type { Locator, Page } from "playwright";
 import {
   DEFAULT_SUPABASE_OTP_TIMEOUT_MS,
   isSupabaseOtpConfigured,
-  waitSupabaseOtp,
   type WaitSupabaseOtpOptions,
 } from "../../integrations/supabaseOtp.js";
 import { humanTypeIntoLocator } from "../../interaction/humanType.js";
@@ -15,7 +14,11 @@ import {
 import { maskNationalityNumber } from "../nationalityNumberInput.js";
 import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { logger } from "../../utils/logger.js";
-import { PORTAL_INTERVENTION_PROBE_MS } from "../interventions/portalInterventionTiming.js";
+import {
+  IDENTITY_OTP_POPUP_POLL_MS,
+  PORTAL_INTERVENTION_PROBE_MS,
+} from "../interventions/portalInterventionTiming.js";
+import { waitForIdentityOtpResolution } from "./identityOtpWait.js";
 import {
   IDENTITY_PHONE_VERIFICATION_SELECTORS,
   IDENTITY_PHONE_VERIFICATION_TITLE,
@@ -41,6 +44,8 @@ export interface IdentityPhoneVerificationOptions {
 export interface IdentityPhoneVerificationResult {
   visible: boolean;
   resolved: boolean;
+  /** Kullanıcı popup'ı elle kapattı (OTP manuel) */
+  manualDismiss?: boolean;
   step:
     | "none"
     | "form"
@@ -306,36 +311,54 @@ export async function handleIdentityPhoneVerificationPopupIfPresent(
   }
 
   const otpInputWaitMs = options.otpInputWaitMs ?? 20_000;
+  let otpInputReady = false;
   try {
     await waitForOtpInput(scope, otpInputWaitMs);
+    otpInputReady = true;
   } catch {
-    return {
-      visible: true,
-      resolved: false,
-      step: "wait-otp",
-      filledForm,
-      codeRequested,
-      otpFilled: false,
-      submitted: false,
-      detail: "Doğrulama kodu input alanı görünmedi",
-    };
-  }
-
-  if (!isSupabaseOtpConfigured()) {
-    return {
-      visible: true,
-      resolved: false,
-      step: "wait-otp",
-      filledForm,
-      codeRequested,
-      otpFilled: false,
-      submitted: false,
-      detail: "SB_URL / SB_SERVICE_KEY tanımlı değil",
-    };
+    logger.warn(
+      "[identity-phone] OTP input henuz gorunmedi — popup kapanisi / manuel giris izlenecek.",
+    );
   }
 
   const phone =
     options.phone?.trim() || resolveProfilePhone(options.profile.id) || resolveProfilePhone(options.profile);
+
+  const otpTimeoutMs = options.waitOptions?.timeoutMs ?? DEFAULT_SUPABASE_OTP_TIMEOUT_MS;
+  const pollIntervalMs =
+    options.waitOptions?.intervalMs ?? IDENTITY_OTP_POPUP_POLL_MS;
+
+  if (!phone && !isSupabaseOtpConfigured()) {
+    const manualOnly = await waitForIdentityOtpResolution(page, "", {
+      timeoutMs: otpTimeoutMs,
+      pollIntervalMs,
+      since,
+    });
+    if (manualOnly.kind === "manual_dismiss") {
+      return {
+        visible: true,
+        resolved: true,
+        manualDismiss: true,
+        step: "done",
+        filledForm,
+        codeRequested,
+        otpFilled: false,
+        submitted: true,
+        detail: "Popup kapandi — manuel OTP",
+      };
+    }
+    return {
+      visible: true,
+      resolved: false,
+      step: "wait-otp",
+      filledForm,
+      codeRequested,
+      otpFilled: false,
+      submitted: false,
+      detail: manualOnly.kind === "timeout" ? manualOnly.message : "Panel Worker OTP telefonu tanımlı değil",
+    };
+  }
+
   if (!phone) {
     return {
       visible: true,
@@ -349,24 +372,46 @@ export async function handleIdentityPhoneVerificationPopupIfPresent(
     };
   }
 
-  const otpTimeoutMs = options.waitOptions?.timeoutMs ?? DEFAULT_SUPABASE_OTP_TIMEOUT_MS;
+  let resolution = await waitForIdentityOtpResolution(page, phone, {
+    timeoutMs: otpTimeoutMs,
+    pollIntervalMs,
+    since,
+    consume: options.waitOptions?.consume,
+  });
 
-  let otp: string;
-  try {
-    logger.info(
-      `[identity-phone] Supabase OTP bekleniyor (panel tel ***${phone.slice(-4)}, timeout ${otpTimeoutMs}ms).`,
-    );
-    otp = await waitSupabaseOtp(phone, {
-      since: since ?? new Date(),
-      ...options.waitOptions,
-      timeoutMs: otpTimeoutMs,
-    });
-  } catch (firstError) {
-    const firstMessage = firstError instanceof Error ? firstError.message : String(firstError);
-    logger.warn(`[identity-phone] OTP gelmedi (${otpTimeoutMs}ms) — yeniden gönder deneniyor: ${firstMessage}`);
+  if (resolution.kind === "manual_dismiss") {
+    return {
+      visible: true,
+      resolved: true,
+      manualDismiss: true,
+      step: "done",
+      filledForm,
+      codeRequested,
+      otpFilled: false,
+      submitted: true,
+      detail: "Popup kapandi — manuel OTP",
+    };
+  }
+
+  if (resolution.kind === "timeout") {
+    logger.warn(`[identity-phone] OTP zaman asimi — yeniden gonder deneniyor: ${resolution.message}`);
 
     const resent = await clickResendCode(scope);
     if (!resent) {
+      const dismissedAfterTimeout = !(await isIdentityPhoneVerificationPopupVisible(page));
+      if (dismissedAfterTimeout) {
+        return {
+          visible: true,
+          resolved: true,
+          manualDismiss: true,
+          step: "done",
+          filledForm,
+          codeRequested,
+          otpFilled: false,
+          submitted: true,
+          detail: "Timeout sonrasi popup kapandi — manuel OTP",
+        };
+      }
       return {
         visible: true,
         resolved: false,
@@ -375,24 +420,35 @@ export async function handleIdentityPhoneVerificationPopupIfPresent(
         codeRequested,
         otpFilled: false,
         submitted: false,
-        detail: firstMessage,
+        detail: resolution.message,
       };
     }
 
     since = new Date();
     await sleep(800);
 
-    try {
-      logger.info(
-        `[identity-phone] Yeniden gönder sonrası OTP bekleniyor (***${phone.slice(-4)}, timeout ${otpTimeoutMs}ms).`,
-      );
-      otp = await waitSupabaseOtp(phone, {
-        since,
-        ...options.waitOptions,
-        timeoutMs: otpTimeoutMs,
-      });
-    } catch (secondError) {
-      const message = secondError instanceof Error ? secondError.message : String(secondError);
+    resolution = await waitForIdentityOtpResolution(page, phone, {
+      timeoutMs: otpTimeoutMs,
+      pollIntervalMs,
+      since,
+      consume: options.waitOptions?.consume,
+    });
+
+    if (resolution.kind === "manual_dismiss") {
+      return {
+        visible: true,
+        resolved: true,
+        manualDismiss: true,
+        step: "done",
+        filledForm,
+        codeRequested,
+        otpFilled: false,
+        submitted: true,
+        detail: "Popup kapandi — manuel OTP (yeniden gonder sonrasi)",
+      };
+    }
+
+    if (resolution.kind === "timeout") {
       return {
         visible: true,
         resolved: false,
@@ -401,7 +457,41 @@ export async function handleIdentityPhoneVerificationPopupIfPresent(
         codeRequested,
         otpFilled: false,
         submitted: false,
-        detail: message,
+        detail: resolution.message,
+      };
+    }
+  }
+
+  const otp = resolution.otp;
+
+  if (!otpInputReady) {
+    try {
+      await waitForOtpInput(scope, 8_000);
+      otpInputReady = true;
+    } catch {
+      const dismissed = !(await isIdentityPhoneVerificationPopupVisible(page));
+      if (dismissed) {
+        return {
+          visible: true,
+          resolved: true,
+          manualDismiss: true,
+          step: "done",
+          filledForm,
+          codeRequested,
+          otpFilled: false,
+          submitted: true,
+          detail: "Supabase OTP geldi ama input yok — popup kapandi (manuel)",
+        };
+      }
+      return {
+        visible: true,
+        resolved: false,
+        step: "wait-otp",
+        filledForm,
+        codeRequested,
+        otpFilled: false,
+        submitted: false,
+        detail: "Doğrulama kodu input alanı görünmedi",
       };
     }
   }

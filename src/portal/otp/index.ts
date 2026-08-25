@@ -2,6 +2,7 @@ export {
   DEFAULT_OTP_DIALOG_SELECTORS,
   DEFAULT_OTP_INPUT_SELECTORS,
   IDENTITY_PHONE_VERIFICATION_VARIANT,
+  WIZARD_INLINE_SMS_FORM_VARIANT,
   PORTAL_OTP_SCREEN_VARIANTS,
   getPortalOtpScreenVariants,
   registerOtpScreenVariant,
@@ -29,8 +30,10 @@ export {
 export {
   detectPortalOtpScreen,
   handlePortalPhoneOtpIfPresent,
+  isPortalPhoneOtpVisible,
   probePortalOtpScreen,
   type DetectedOtpScreen,
   type PortalOtpAutomationOptions,
   type PortalOtpAutomationResult,
+  type PortalOtpHandledScreen,
 } from "./portalOtpAutomation.js";

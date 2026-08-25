@@ -285,6 +285,88 @@
                   />
                 </label>
               </div>
+
+              <div class="wizard-section">
+                <p class="wizard-section-title">Ödeme (kart)</p>
+                <p class="field-hint">Randevu ödeme adımında kullanılır — API izleme için zorunlu değil.</p>
+                <label class="field">
+                  <span>Kart numarası</span>
+                  <input
+                    type="password"
+                    id="paymentCardNumber"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    maxlength="19"
+                    placeholder="16 haneli kart no"
+                  />
+                </label>
+                <label class="field">
+                  <span>Kart sahibi</span>
+                  <input
+                    type="text"
+                    id="paymentCardholderName"
+                    autocomplete="off"
+                    placeholder="AD SOYAD"
+                  />
+                </label>
+                <div class="field-grid-2">
+                  <label class="field">
+                    <span>SKT ay</span>
+                    <input
+                      type="text"
+                      id="paymentExpireMonth"
+                      inputmode="numeric"
+                      autocomplete="off"
+                      maxlength="2"
+                      placeholder="08"
+                    />
+                  </label>
+                  <label class="field">
+                    <span>SKT yıl</span>
+                    <input
+                      type="text"
+                      id="paymentExpireYear"
+                      inputmode="numeric"
+                      autocomplete="off"
+                      maxlength="4"
+                      placeholder="2028"
+                    />
+                  </label>
+                </div>
+                <label class="field">
+                  <span>CVV</span>
+                  <input
+                    type="password"
+                    id="paymentCvv"
+                    inputmode="numeric"
+                    autocomplete="off"
+                    maxlength="4"
+                    placeholder="123"
+                  />
+                </label>
+                <div class="field-grid-2">
+                  <label class="field">
+                    <span>Kart e-posta</span>
+                    <input
+                      type="email"
+                      id="paymentEmail"
+                      autocomplete="off"
+                      placeholder="Boşsa Worker e-postası"
+                    />
+                  </label>
+                  <label class="field">
+                    <span>Kart telefon</span>
+                    <input
+                      type="tel"
+                      id="paymentPhone"
+                      inputmode="numeric"
+                      autocomplete="off"
+                      maxlength="10"
+                      placeholder="Boşsa OTP telefonu"
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
 
             <aside class="worker-settings-side">

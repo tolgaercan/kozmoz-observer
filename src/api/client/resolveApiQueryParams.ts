@@ -3,6 +3,8 @@ import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { extractRawForm } from "../../profiles/profileContext.js";
 import { logger } from "../../utils/logger.js";
 import { resolvePortalGetClosedDateMaxDate } from "./availabilityDates.js";
+import { readPanelWorkerApi } from "../../profiles/profileCredentials.js";
+import { normalizeNationalityNumber } from "../../portal/nationalityNumberInput.js";
 import {
   API_APPOINTMENT_CITY_IDS,
   API_DEALER_IDS,
@@ -330,19 +332,28 @@ export function resolveApiQueryParams(
   const applicationType = resolveApplicationTypeId(profile, apiSettings, overrides);
   const { date, maxDate } = resolveClosedDateRange(apiSettings, overrides);
   const dealer = resolveDealerSelection(profile, apiSettings, overrides);
+  const form = readProfileForm(profile);
+  const panelTc = readPanelWorkerApi(profile.id)?.nationalityNumber?.trim();
+  const nationalityRaw =
+    panelTc || form.nationalityNumber?.trim() || profile.nationalityNumber?.trim() || "";
+  const nationalityNumber = nationalityRaw
+    ? normalizeNationalityNumber(nationalityRaw)
+    : undefined;
 
   return {
     dealerId: dealer.dealerId,
     date,
     maxDate,
     cityId: resolveCityId(profile, apiSettings, overrides),
-    cityLabel: dealer.dealerOfficeLabel ?? readProfileForm(profile).appointmentCity,
+    cityLabel: dealer.dealerOfficeLabel ?? form.appointmentCity,
     dealerOfficeLabel: dealer.dealerOfficeLabel,
     appointmentTypeId: appointmentType.id,
     appointmentStyleLabel: appointmentType.label,
     applicationTypeId: applicationType.id,
     applicationTypeLabel: applicationType.label,
+    applicationType: applicationType.id,
     appointmentDate: resolveAppointmentDate(date, overrides),
+    nationalityNumber,
   };
 }
 

@@ -6,6 +6,9 @@ import {
   resolveChromeExecutable as resolvePlatformChromeExecutable,
   resolveSystemChromeUserDataDir,
 } from "../browser/chromePlatform.js";
+import { buildCaptchaSettingsFromEnv } from "../captcha/captchaConfig.js";
+import { prepareExtensionLaunch } from "../captcha/extensionLoader.js";
+import { installAndConfigureRektCaptcha } from "../captcha/rektCaptchaExtension.js";
 import { detectHomePublicIp } from "../config/publicIpDetect.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { killProcessesOnPort, waitForCdpPortFree } from "./cdpPortKill.js";
@@ -57,6 +60,7 @@ function buildChromeArgs(
   cdpPort: number,
   proxyUrl?: string,
   directMode = false,
+  extensionLaunchArgs: string[] = [],
 ): string[] {
   const args = [
     `--remote-debugging-address=127.0.0.1`,
@@ -68,6 +72,7 @@ function buildChromeArgs(
     "--no-default-browser-check",
     "--disable-session-crashed-bubble",
     "--start-maximized",
+    ...extensionLaunchArgs,
   ];
 
   if (proxyUrl?.trim()) {
@@ -135,7 +140,7 @@ export async function launchChromeForProfile(
   registry: ProcessRegistry,
   proxyUrl?: string,
   directMode = false,
-  options?: { forceFresh?: boolean; cdpPort?: number },
+  options?: { forceFresh?: boolean; cdpPort?: number; projectRoot?: string },
 ): Promise<ChromeLaunchResult> {
   const paths = resolveProfilePaths(profile);
   const userDataDir = paths.userDataDir;
@@ -149,6 +154,7 @@ export async function launchChromeForProfile(
       : undefined;
 
   const forceFresh = options?.forceFresh ?? true;
+  const projectRoot = options?.projectRoot ?? process.cwd();
   const cdpReady = await isCdpEndpointReady(cdpEndpoint, { exact: true });
 
   if (cdpReady && !forceFresh) {
@@ -183,9 +189,19 @@ export async function launchChromeForProfile(
     };
   }
 
-  const args = buildChromeArgs(userDataDir, profileDirectory, cdpPort, proxyUrl, directMode);
+  const captchaConfig = buildCaptchaSettingsFromEnv(projectRoot);
+  const extensionSetup = prepareExtensionLaunch(captchaConfig, projectRoot);
+  const args = buildChromeArgs(
+    userDataDir,
+    profileDirectory,
+    cdpPort,
+    proxyUrl,
+    directMode,
+    extensionSetup.launchArgs,
+  );
   logger.info(
-    `[chrome] Yeni oturum: port=${cdpPort}, proxy=${proxyApplied ?? "sistem varsayılanı (ev IP riski)"}`,
+    `[chrome] Yeni oturum: port=${cdpPort}, proxy=${proxyApplied ?? "sistem varsayılanı (ev IP riski)"}` +
+      (extensionSetup.loaded ? ", rektCaptcha= yüklenecek (+unsafe-extension-debugging)" : ""),
   );
   const record = registry.register({
     kind: "chrome",
@@ -223,6 +239,23 @@ export async function launchChromeForProfile(
   }
 
   registry.markRunning(record.id, { pid: child.pid ?? undefined });
+
+  if (extensionSetup.loaded && extensionSetup.extensionDir && extensionSetup.settings) {
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 2000));
+    const configured = await installAndConfigureRektCaptcha(
+      cdpEndpoint,
+      extensionSetup.extensionDir,
+      extensionSetup.settings,
+      6,
+    );
+    if (!configured) {
+      logger.info(
+        "[rektCaptcha] CDP ayar senkronu atlandı — background.js varsayılanları kullanılacak. " +
+          "chrome://extensions içinde rektCaptcha görünüyor mu kontrol edin.",
+      );
+    }
+  }
+
   return {
     ok: true,
     message: proxyApplied

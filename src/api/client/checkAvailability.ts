@@ -284,6 +284,7 @@ export async function checkAvailability(
         const appSettings = loadSettings(ctx.projectRoot);
         const pollPrepRounds = 2;
         const pollSessionSettleMs = 1_500;
+        let step2Transition = false;
         const telegram = new TelegramNotifier(appSettings.telegram);
 
         for (let round = 1; round <= pollPrepRounds; round++) {
@@ -349,6 +350,9 @@ export async function checkAvailability(
             if (!prep.ok) {
               logger.warn(`[checkAvailability] Wizard hazirlik: ${prep.reason}`);
             }
+            if (prep.step2Transition) {
+              step2Transition = true;
+            }
           }
 
           if (ctx.settings.syncPortalAppointmentType) {
@@ -363,6 +367,13 @@ export async function checkAvailability(
             requireTypeReady: false,
           });
           if (session.ready) {
+            const settleMs = ctx.settings.pollPostStep2SettleMs;
+            if (step2Transition && settleMs > 0) {
+              logger.info(
+                `[checkAvailability] Step 2 yerlesmesi — GetClosedDate oncesi ${settleMs}ms bekleniyor.`,
+              );
+              await pollPage.waitForTimeout(settleMs);
+            }
             return await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
           }
 

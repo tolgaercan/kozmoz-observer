@@ -14,6 +14,8 @@ data/config/proxy-pool.local.json
 data/config/max-appointment-date.cache.json
 data/control-panel/
 data/profiles/manifest.json
+extensions/rektcaptcha/
+.runtime/rektCaptcha-extension/
 *.log
 
 # GitHub Desktop ile yanlışlıkla oluşturulan iç içe boş repo klasörü

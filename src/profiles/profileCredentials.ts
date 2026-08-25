@@ -122,6 +122,42 @@ export function resolveProfilePhone(profile: ResolvedProfile | string): string {
   return pickString(panelApi?.otpPhone, raw) ?? "";
 }
 
+export interface PortalPaymentData {
+  cardNumber: string;
+  cardholderName: string;
+  expireMonth: string;
+  expireYear: string;
+  cvv: string;
+  email: string;
+  phone: string;
+}
+
+function readPanelWorkerPayment(profileId: string) {
+  try {
+    const { projectRoot } = loadSettings(process.cwd());
+    return new WorkerConfigStore(projectRoot).load().workers[profileId]?.payment;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Ödeme sayfası kart formu — panel worker-config payment (+ api yedekleri) */
+export function resolvePortalPaymentData(profile: ResolvedProfile | string): PortalPaymentData {
+  const profileId = typeof profile === "string" ? profile : profile.id;
+  const panelApi = readPanelWorkerApi(profileId);
+  const panelPayment = readPanelWorkerPayment(profileId);
+
+  return {
+    cardNumber: pickString(panelPayment?.cardNumber) ?? "",
+    cardholderName: pickString(panelPayment?.cardholderName) ?? "",
+    expireMonth: pickString(panelPayment?.expireMonth) ?? "",
+    expireYear: pickString(panelPayment?.expireYear) ?? "",
+    cvv: pickString(panelPayment?.cvv) ?? "",
+    email: pickString(panelPayment?.email, panelApi?.portalEmail) ?? "",
+    phone: pickString(panelPayment?.phone, panelApi?.otpPhone) ?? "",
+  };
+}
+
 export interface ChromeGoogleCredentials {
   email: string;
   password: string;

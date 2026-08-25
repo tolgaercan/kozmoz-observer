@@ -78,6 +78,7 @@ export async function runApiWatcherPhase(
   };
 
   const resolveWorkerConfig = () => {
+    const legacy = workerStore.getWorker(profile.id, "", timingDefaults);
     if (activeSession) {
       return {
         profileId: profile.id,
@@ -86,11 +87,12 @@ export async function runApiWatcherPhase(
         proxyId: activeSession.network.proxyId ?? "",
         proxyUrl: activeSession.network.proxyUrl ?? "",
         api: activeSession.api,
+        payment: legacy.payment,
         timing: activeSession.timing,
         updatedAt: activeSession.updatedAt,
       };
     }
-    return workerStore.getWorker(profile.id, "", timingDefaults);
+    return legacy;
   };
 
   const buildQueryOverrides = (): ApiQueryParamOverrides => {
@@ -198,6 +200,7 @@ export async function runApiWatcherPhase(
     {
       projectRoot: runtime.projectRoot,
       profileId: profile.id,
+      profile,
       profileName: profile.name,
       lockedIp,
       cdpPort: profile.browser?.cdpPort,

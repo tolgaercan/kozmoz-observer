@@ -131,6 +131,44 @@ export class TelegramNotifier {
     await this.send(text, `manual:${details.reason.slice(0, 40)}`);
   }
 
+  /**
+   * Booking — kart formu dolduruldu, «Ödemeyi Tamamla» tıklanmadan önce manuel ödeme uyarısı.
+   */
+  async notifyBookingPaymentReady(details: {
+    profileId: string;
+    url: string;
+    date?: string;
+    hourLabel?: string;
+    submitEnabled?: boolean;
+    warnings?: string[];
+  }): Promise<void> {
+    const slotLine =
+      details.date && details.hourLabel
+        ? `${details.date} ${details.hourLabel}`
+        : details.date ?? "—";
+
+    const lines = [
+      `<b>💳 ÖDEME — MANUEL ADIM</b>`,
+      ``,
+      `<b>Profil:</b> ${escapeHtml(details.profileId)}`,
+      `<b>Randevu:</b> ${escapeHtml(slotLine)}`,
+      `<b>URL:</b> ${escapeHtml(details.url)}`,
+      ``,
+      `Kart formu otomasyonla dolduruldu.`,
+      `«Ödemeyi Tamamla» <b>tıklanmadı</b> — tarayıcıda siz tamamlayın.`,
+    ];
+
+    if (details.submitEnabled === false) {
+      lines.push(``, `⚠️ Submit butonu henüz aktif değil — alanları kontrol edin.`);
+    }
+
+    if (details.warnings?.length) {
+      lines.push(``, `<b>Sayfa uyarıları:</b> ${escapeHtml(details.warnings.slice(0, 2).join(" · "))}`);
+    }
+
+    await this.sendPayment(lines.join("\n"), `booking:payment-ready:${details.profileId}`, true);
+  }
+
   /** GetClosedDate API watcher — seçilebilir gün listesi */
   async notifyApiAvailability(details: {
     profileId: string;
@@ -201,6 +239,28 @@ export class TelegramNotifier {
   }
 
   private async send(text: string, dedupeKey: string, skipCooldown = false): Promise<boolean> {
+    return this.sendToChatIdList(text, dedupeKey, this.settings.chatIds, skipCooldown);
+  }
+
+  /** Yalnizca odeme kanallarina — TELEGRAM_PAYMENT_CHAT_ID */
+  private async sendPayment(
+    text: string,
+    dedupeKey: string,
+    skipCooldown = false,
+  ): Promise<boolean> {
+    const targets =
+      this.settings.paymentChatIds.length > 0
+        ? this.settings.paymentChatIds
+        : this.settings.chatIds;
+    return this.sendToChatIdList(text, dedupeKey, targets, skipCooldown);
+  }
+
+  private async sendToChatIdList(
+    text: string,
+    dedupeKey: string,
+    chatIds: string[],
+    skipCooldown = false,
+  ): Promise<boolean> {
     if (!this.isConfigured()) {
       logger.warn(
         "Telegram bildirimi atlanıyor — TELEGRAM_BOT_TOKEN veya chat ID (TELEGRAM_CHAT_ID) eksik.",
@@ -208,8 +268,13 @@ export class TelegramNotifier {
       return false;
     }
 
+    if (chatIds.length === 0) {
+      logger.warn("Telegram bildirimi atlanıyor — hedef chat_id listesi bos.");
+      return false;
+    }
+
     let anyOk = false;
-    for (const chatId of this.settings.chatIds) {
+    for (const chatId of chatIds) {
       const ok = await this.sendToChat(text, `${dedupeKey}:${chatId}`, chatId, skipCooldown);
       anyOk = anyOk || ok;
     }

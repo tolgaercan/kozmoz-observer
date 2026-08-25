@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import type { ProxyMode } from "./workerConfigStore.js";
+import type { ProxyMode, WorkerPaymentParams } from "./workerConfigStore.js";
 
 /** Chrome Aç anında seçilen ağ + atanmış CDP portu — kalıcı Chrome profilinden ayrı */
 export interface ChromeLaunchSession {
@@ -21,6 +21,7 @@ export interface ChromeLaunchSession {
     portalEmail: string;
     passportNumber: string;
   };
+  draftPayment?: WorkerPaymentParams;
   draftTiming?: {
     pollIntervalMs: number;
     telegramReportIntervalMs: number;
@@ -86,6 +87,9 @@ export class ChromeSessionStore {
     };
     if ("draftApi" in patch && patch.draftApi === undefined) {
       delete next.draftApi;
+    }
+    if ("draftPayment" in patch && patch.draftPayment === undefined) {
+      delete next.draftPayment;
     }
     if ("draftTiming" in patch && patch.draftTiming === undefined) {
       delete next.draftTiming;

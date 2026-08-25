@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 
 import { ApiHealthStore } from "../../control-panel/apiHealthStore.js";
-import type { ApiWatcherSettings, AppSettings, TelegramSettings } from "../../config/settings.js";
+import type { ApiWatcherSettings, AppSettings, AppointmentSettings, TelegramSettings } from "../../config/settings.js";
 import {
   buildApiClosedDateStatusSummary,
   buildApiNewlyOpenedDaysSummary,
@@ -17,11 +17,13 @@ import type { ApiQueryParams } from "../client/resolveApiQueryParams.js";
 import { formatDurationTr, resolveRateLimitBackoffMs } from "../client/rateLimitPolicy.js";
 import { resolveClosedDateRangeDays } from "../client/availabilityDates.js";
 import { detectPublicIp } from "../../control-panel/chromeLauncher.js";
+import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { WorkerRuntimeStore } from "../../control-panel/workerRuntimeStore.js";
 
 export interface AvailabilityWatcherOptions {
   projectRoot: string;
   profileId: string;
+  profile: ResolvedProfile;
   profileName?: string;
   lockedIp?: string;
   cdpPort?: number;
@@ -340,12 +342,48 @@ export function startAvailabilityWatcher(
 
     previousAllowedDates = [...currentAllowed];
 
+    const runBookingForDays = async (daysToBook: string[]): Promise<void> => {
+      if (daysToBook.length === 0 || !apiSettings.bookingEnabled) {
+        return;
+      }
+      if (now - lastOpenNotifyAt < apiSettings.openNotifyCooldownMs) {
+        logger.info(
+          `[api-watcher] Booking cooldown aktif — ${daysToBook.length} gün atlandi (${apiSettings.openNotifyCooldownMs}ms).`,
+        );
+        return;
+      }
+      lastOpenNotifyAt = now;
+      const page = options.resolvePage ? await options.resolvePage() : options.page;
+      const bookingQueryParams = options.resolveQueryParams?.() ?? options.queryParams;
+      logger.info(`[api-watcher] Booking campaign baslatiliyor — ${daysToBook.length} gün.`);
+      await import("../executor/bookingExecutor.js").then(({ runBookingExecutor }) =>
+        runBookingExecutor({
+          projectRoot: options.projectRoot,
+          profileId: options.profileId,
+          profile: options.profile,
+          apiSettings,
+          appointmentSettings: options.settings.appointment,
+          queryParams: bookingQueryParams,
+          pollResult: result,
+          addedAllowed: daysToBook,
+          page,
+          getBearerToken: options.getBearerToken,
+        }),
+      );
+    };
+
     if (isEstablishingBaseline) {
       lastTelegramReportAt = now;
       logger.info(
         `[api-watcher] Baseline kaydedildi — ${currentAllowed.length} seçilebilir gün (hafta içi). ` +
           "YENİ uyarısı yok; sonraki poll'larda değişiklik aranır.",
       );
+      if (apiSettings.bookingOnBaseline && currentAllowed.length > 0) {
+        logger.info(
+          `[api-watcher] Baseline booking — ${currentAllowed.length} acik gun, campaign baslatiliyor.`,
+        );
+        await runBookingForDays(currentAllowed);
+      }
       return;
     }
 
@@ -397,16 +435,7 @@ export function startAvailabilityWatcher(
     }
 
     if (addedAllowed.length > 0) {
-      if (now - lastOpenNotifyAt >= apiSettings.openNotifyCooldownMs) {
-        lastOpenNotifyAt = now;
-        await import("../executor/bookingExecutor.js").then(({ runBookingExecutorStub }) =>
-          runBookingExecutorStub({
-            profileId: options.profileId,
-            settings: apiSettings,
-            pollResult: result,
-          }),
-        );
-      }
+      await runBookingForDays(addedAllowed);
     }
   };
 

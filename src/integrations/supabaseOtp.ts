@@ -232,6 +232,16 @@ async function fetchLatestOtp(
   return rows[0];
 }
 
+/** Okundu olarak işaretle — `used=true`. */
+export async function consumeSupabaseOtpForPhone(
+  phone: string,
+  overrides?: Pick<WaitSupabaseOtpOptions, "sbUrl" | "serviceKey" | "table">,
+): Promise<void> {
+  const phoneLast10 = normalizePhoneLast10(phone);
+  const config = resolveSupabaseOtpConfig(overrides);
+  await consumeOtpRow(config, phoneLast10);
+}
+
 async function consumeOtpRow(
   config: SupabaseOtpConfig,
   phoneLast10: string,

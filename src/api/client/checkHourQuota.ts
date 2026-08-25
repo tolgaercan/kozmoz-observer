@@ -76,6 +76,8 @@ export interface CheckHourQuotaOptions {
   recaptchaToken?: string;
   /** Varsayılan true — portal `onlyAvailable=true` */
   onlyAvailable?: boolean;
+  /** Booking campaign — API_HOUR_QUOTA_ENABLED baypas */
+  forceRequest?: boolean;
 }
 
 /**
@@ -130,7 +132,7 @@ export async function checkHourQuota(
   page?: Page,
   options: CheckHourQuotaOptions = {},
 ): Promise<HourQuotaPollResult> {
-  if (!ctx.settings.hourQuotaEnabled) {
+  if (!ctx.settings.hourQuotaEnabled && !options.forceRequest) {
     return buildSkippedResult("Saat kotası kapalı — API_HOUR_QUOTA_ENABLED=false");
   }
 

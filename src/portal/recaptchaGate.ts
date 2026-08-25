@@ -86,6 +86,53 @@ async function readTokenLengthFromDom(page: Page): Promise<number> {
   return maxLen;
 }
 
+/** Takvim adımı GetHourQuota için g-recaptcha-response değeri. */
+export async function readRecaptchaTokenFromPage(page: Page): Promise<string> {
+  for (const selector of TOKEN_FIELD_SELECTORS) {
+    const fields = page.locator(selector);
+    const count = await fields.count();
+    for (let index = 0; index < count; index++) {
+      const field = fields.nth(index);
+      try {
+        const value = (await field.inputValue({ timeout: 1000 })).trim();
+        if (value.length > RECAPTCHA_TOKEN_SOLVED_MIN_LENGTH) {
+          return value;
+        }
+      } catch {
+        // sonraki alan
+      }
+    }
+  }
+
+  try {
+    const fromApi = await page.evaluate(
+      `(() => {
+        try {
+          const g = window.grecaptcha;
+          if (!g || typeof g.getResponse !== "function") return "";
+          const widgets = document.querySelectorAll(".g-recaptcha, [data-sitekey]");
+          let best = "";
+          for (let i = 0; i < widgets.length; i++) {
+            const r = g.getResponse(i) || "";
+            if (r.length > best.length) best = r;
+          }
+          const single = g.getResponse() || "";
+          return single.length > best.length ? single : best;
+        } catch {
+          return "";
+        }
+      })()`,
+    );
+    if (typeof fromApi === "string" && fromApi.trim().length > RECAPTCHA_TOKEN_SOLVED_MIN_LENGTH) {
+      return fromApi.trim();
+    }
+  } catch {
+    // yoksay
+  }
+
+  return "";
+}
+
 async function isRecaptchaCheckboxChecked(page: Page): Promise<boolean> {
   return (await page.locator(".recaptcha-checkbox-checked").count()) > 0;
 }

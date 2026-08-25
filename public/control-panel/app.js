@@ -610,6 +610,25 @@ function readWorkerApiFromForm() {
   };
 }
 
+function readWorkerPaymentFromForm() {
+  return {
+    cardNumber: ($("paymentCardNumber")?.value ?? "").replace(/\D/g, ""),
+    cardholderName: ($("paymentCardholderName")?.value ?? "").trim(),
+    expireMonth: ($("paymentExpireMonth")?.value ?? "").trim(),
+    expireYear: ($("paymentExpireYear")?.value ?? "").trim(),
+    cvv: ($("paymentCvv")?.value ?? "").replace(/\D/g, ""),
+    email: ($("paymentEmail")?.value ?? "").trim(),
+    phone: ($("paymentPhone")?.value ?? "").replace(/\D/g, ""),
+  };
+}
+
+function maskCard(value) {
+  const digits = (value ?? "").replace(/\D/g, "");
+  if (!digits) return "—";
+  if (digits.length <= 4) return "****";
+  return `****${digits.slice(-4)}`;
+}
+
 function maskPhone(value) {
   const digits = (value ?? "").replace(/\D/g, "");
   if (digits.length <= 4) return digits ? "***" : "—";
@@ -658,6 +677,7 @@ function renderWorkerDraftSummary() {
   if (!el) return;
 
   const api = readWorkerApiFromForm();
+  const payment = readWorkerPaymentFromForm();
   const validation = validateWorkerApiForm(api);
   const office = state.bootstrap?.dealerOffices?.find((o) => o.name === api.dealerOffice);
   const styleOpt = state.bootstrap?.appointmentStyles?.find((s) => s.label === api.appointmentStyle);
@@ -682,6 +702,7 @@ function renderWorkerDraftSummary() {
       <dt>Başvuru</dt><dd>${api.applicationType || "—"} · ${api.appointmentStyle || "—"}</dd>
       <dt>Kimlik</dt><dd>TC ${maskTc(api.nationalityNumber)} · Pasaport ${passportMask}</dd>
       <dt>OTP</dt><dd>Tel ${maskPhone(api.otpPhone)} · ${maskEmail(api.portalEmail)}</dd>
+      <dt>Ödeme</dt><dd>Kart ${maskCard(payment.cardNumber)} · ${payment.cardholderName || "—"}</dd>
       <dt>Ağ</dt><dd>Aktif IP <code>${lockedIp}</code></dd>
       <dt>Aralık</dt><dd>Poll ${formatIntervalLabel(timing.pollIntervalMs)} · Telegram ${formatIntervalLabel(timing.telegramReportIntervalMs)}</dd>
     </dl>
@@ -907,6 +928,27 @@ function applyWorkerToForm(worker, options = {}) {
   }
   if ($("passportNumber")) {
     $("passportNumber").value = worker.api?.passportNumber ?? "";
+  }
+  if ($("paymentCardNumber")) {
+    $("paymentCardNumber").value = worker.payment?.cardNumber ?? "";
+  }
+  if ($("paymentCardholderName")) {
+    $("paymentCardholderName").value = worker.payment?.cardholderName ?? "";
+  }
+  if ($("paymentExpireMonth")) {
+    $("paymentExpireMonth").value = worker.payment?.expireMonth ?? "";
+  }
+  if ($("paymentExpireYear")) {
+    $("paymentExpireYear").value = worker.payment?.expireYear ?? "";
+  }
+  if ($("paymentCvv")) {
+    $("paymentCvv").value = worker.payment?.cvv ?? "";
+  }
+  if ($("paymentEmail")) {
+    $("paymentEmail").value = worker.payment?.email ?? "";
+  }
+  if ($("paymentPhone")) {
+    $("paymentPhone").value = worker.payment?.phone ?? "";
   }
   const intervalOptions = state.bootstrap?.runtimeOptionsMs;
   const pollMs = worker.timing?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
@@ -1337,6 +1379,17 @@ $("nationalityNumber").addEventListener("input", renderApiPreview);
 $("otpPhone")?.addEventListener("input", renderApiPreview);
 $("portalEmail")?.addEventListener("input", renderApiPreview);
 $("passportNumber")?.addEventListener("input", renderApiPreview);
+[
+  "paymentCardNumber",
+  "paymentCardholderName",
+  "paymentExpireMonth",
+  "paymentExpireYear",
+  "paymentCvv",
+  "paymentEmail",
+  "paymentPhone",
+].forEach((id) => {
+  $(id)?.addEventListener("input", renderApiPreview);
+});
 $("workerPollInterval").addEventListener("change", renderWorkerSummary);
 $("workerTelegramInterval").addEventListener("change", renderWorkerSummary);
 
@@ -1419,6 +1472,7 @@ $("btnSaveApi").addEventListener("click", async () => {
   }
   await saveWorkerConfig({
     api,
+    payment: readWorkerPaymentFromForm(),
     timing: readWorkerTimingFromForm(),
   });
 });

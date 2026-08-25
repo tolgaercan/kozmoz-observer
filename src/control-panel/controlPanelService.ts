@@ -53,10 +53,12 @@ import {
   WorkerConfigStore,
   type WorkerApiParams,
   type WorkerConfig,
+  type WorkerPaymentParams,
   type WorkerTimingParams,
   type ProxyMode,
 } from "./workerConfigStore.js";
 import { sanitizeWorkerApiParams, validateWorkerApiParams } from "./workerApiValidation.js";
+import { sanitizeWorkerPaymentParams } from "./workerPaymentValidation.js";
 import {
   RUNTIME_INTERVAL_OPTIONS_MS,
   WorkerRuntimeStore,
@@ -302,6 +304,7 @@ export class ControlPanelService {
     const liveTiming = this.runtimeStore.get(profileId, timingDefaults);
     const activeWatcher = this.watcherSessionStore.get(profileId);
     if (activeWatcher && this.isWatcherRunning(profileId)) {
+      const legacy = this.workerStore.getWorker(profileId, "", timingDefaults);
       return {
         profileId,
         proxyMode: activeWatcher.network.proxyMode,
@@ -309,6 +312,7 @@ export class ControlPanelService {
         proxyId: activeWatcher.network.proxyId ?? "",
         proxyUrl: activeWatcher.network.proxyUrl ?? "",
         api: activeWatcher.api,
+        payment: legacy.payment,
         timing: {
           pollIntervalMs: liveTiming.pollIntervalMs,
           telegramReportIntervalMs: liveTiming.telegramReportIntervalMs,
@@ -321,6 +325,7 @@ export class ControlPanelService {
     const legacy = this.workerStore.getWorker(profileId, fallbackIp, timingDefaults);
     const timing = chromeSession?.draftTiming ?? legacy.timing;
     const api = chromeSession?.draftApi ?? legacy.api;
+    const payment = chromeSession?.draftPayment ?? legacy.payment;
 
     return {
       profileId,
@@ -330,6 +335,7 @@ export class ControlPanelService {
       proxyId: chromeSession?.proxyId ?? legacy.proxyId ?? "",
       proxyUrl: chromeSession?.proxyUrl ?? legacy.proxyUrl ?? "",
       api,
+      payment,
       timing,
       updatedAt: chromeSession?.updatedAt ?? legacy.updatedAt,
     };
@@ -491,6 +497,7 @@ export class ControlPanelService {
       lockedIp?: string;
       lastKnownHomeIp?: string;
       api?: WorkerApiParams;
+      payment?: WorkerPaymentParams;
       timing?: WorkerTimingParams;
     },
   ): WorkerConfig {
@@ -527,6 +534,7 @@ export class ControlPanelService {
           ? patch.lockedIp
           : (existing?.lastKnownHomeIp ?? legacy.lastKnownHomeIp);
     const nextApi = patch.api ?? existing?.draftApi ?? legacy.api;
+    const nextPayment = patch.payment ?? legacy.payment ?? existing?.draftPayment;
     const nextTiming = patch.timing ?? legacy.timing ?? existing?.draftTiming;
 
     this.chromeSessionStore.patch(profileId, {
@@ -541,6 +549,7 @@ export class ControlPanelService {
       lockedIp: nextLockedIp,
       lastKnownHomeIp: nextHomeIp,
       draftApi: nextApi,
+      draftPayment: nextPayment,
       draftTiming: nextTiming,
     });
 
@@ -553,6 +562,7 @@ export class ControlPanelService {
         lockedIp: nextLockedIp,
         lastKnownHomeIp: nextHomeIp,
         api: nextApi,
+        payment: nextPayment,
         timing: nextTiming,
       },
       timingDefaults,
@@ -700,6 +710,12 @@ export class ControlPanelService {
     if (patch.api) {
       sanitizedPatch.api = sanitizeWorkerApiParams({ ...this.resolveEffectiveWorker(profileId).api, ...patch.api });
     }
+    if (patch.payment) {
+      sanitizedPatch.payment = sanitizeWorkerPaymentParams({
+        ...this.resolveEffectiveWorker(profileId).payment,
+        ...patch.payment,
+      });
+    }
     return this.savePanelDraft(profileId, {
       proxyMode: sanitizedPatch.proxyMode,
       proxyId: sanitizedPatch.proxyId,
@@ -707,6 +723,7 @@ export class ControlPanelService {
       lockedIp: sanitizedPatch.lockedIp,
       lastKnownHomeIp: sanitizedPatch.lastKnownHomeIp,
       api: sanitizedPatch.api,
+      payment: sanitizedPatch.payment,
       timing: sanitizedPatch.timing,
     });
   }
@@ -1040,7 +1057,7 @@ export class ControlPanelService {
       this.registry,
       proxyServer,
       directMode,
-      { forceFresh: true, cdpPort: assignedCdpPort },
+      { forceFresh: true, cdpPort: assignedCdpPort, projectRoot: this.projectRoot },
     );
 
     this.savePanelDraft(profileId, {

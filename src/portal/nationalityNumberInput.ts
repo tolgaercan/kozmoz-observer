@@ -38,6 +38,43 @@ export function isValidTurkishNationalId(value: string): boolean {
   return sumFirst10 % 10 === digits[10];
 }
 
+/** Booking / hour probe — panel Worker TC dahil */
+export function resolveBookingNationalityNumber(
+  profile: ResolvedProfile,
+  defaultNumber: string,
+  queryNationalityNumber?: string,
+): string {
+  const fromQuery = queryNationalityNumber?.trim();
+  if (fromQuery && !fromQuery.startsWith("${")) {
+    return normalizeNationalityNumber(fromQuery);
+  }
+  return resolveNationalityNumber(profile, defaultNumber) ?? "";
+}
+
+export async function readNationalityNumberFromPage(
+  page: Page,
+  settings: AppointmentSettings,
+): Promise<string> {
+  const selectors = settings.nationalityNumberLocator
+    .split("|")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  for (const selector of selectors) {
+    try {
+      const value = normalizeNationalityNumber(
+        await page.locator(selector).first().inputValue({ timeout: 1500 }),
+      );
+      if (value.length === TC_DIGIT_COUNT) {
+        return value;
+      }
+    } catch {
+      // sonraki selector
+    }
+  }
+  return "";
+}
+
 export function resolveNationalityNumber(
   profile: ResolvedProfile,
   _defaultNumber: string,
@@ -72,16 +109,18 @@ function mouseOptions(settings: AppointmentSettings) {
   };
 }
 
+export interface FillNationalityNumberOptions {
+  /** Booking gibi bilinçli akışlarda TC blur + arka plan API tetikler. Watch modunda kapalı kalır. */
+  triggerBlankClick?: boolean;
+}
+
 async function triggerNationalityValidationBlur(
   page: Page,
   settings: AppointmentSettings,
+  options?: FillNationalityNumberOptions,
 ): Promise<void> {
-  // Kalici: bos tik TC dogrulama istegi tetikler — ban riski.
-  logger.info("[wizard-fill] TC sonrasi bos tik devre disi (ban-safe).");
-  return;
-
-  /*
-  if (!settings.nationalityNumberBlankClickEnabled) {
+  if (!options?.triggerBlankClick) {
+    logger.info("[wizard-fill] TC sonrasi bos tik devre disi (ban-safe).");
     return;
   }
 
@@ -91,13 +130,13 @@ async function triggerNationalityValidationBlur(
 
   logger.info("TC doğrulama için boş alana tıklanıyor...");
   await humanClickBlankArea(page, mouseOptions(settings));
-  */
 }
 
 export async function fillNationalityNumber(
   page: Page,
   profile: ResolvedProfile,
   settings: AppointmentSettings,
+  options?: FillNationalityNumberOptions,
 ): Promise<string> {
   if (!settings.nationalityNumberEnabled) {
     throw new Error("TC Kimlik girişi kapalı.");
@@ -142,7 +181,7 @@ export async function fillNationalityNumber(
         throw new Error("TC alanı doğrulanamadı.");
       }
 
-      await triggerNationalityValidationBlur(page, settings);
+      await triggerNationalityValidationBlur(page, settings, options);
       return nationalityNumber;
     } catch (error) {
       lastError = error;

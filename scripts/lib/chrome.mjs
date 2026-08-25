@@ -3,6 +3,12 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import {
+  installAndConfigureRektCaptcha,
+  isCaptchaExtensionAutoLoadEnabled,
+  prepareRektCaptchaForChromeLaunch,
+} from "./rektCaptcha.mjs";
+
 function log(message) {
   console.log(`[chrome:debug] ${message}`);
 }
@@ -266,6 +272,13 @@ export async function launchChromeDebug(options) {
     cleanChromeExitState(userDataDir);
   }
 
+  const rektCaptcha = prepareRektCaptchaForChromeLaunch(projectRoot);
+  if (rektCaptcha.loaded) {
+    log(`rektCaptcha yüklenecek: ${rektCaptcha.extensionDir}`);
+  } else if (isCaptchaExtensionAutoLoadEnabled()) {
+    log("rektCaptcha bulunamadı — npm run install:rektcaptcha çalıştırın.");
+  }
+
   const chromeArgs = [
     "--remote-debugging-address=127.0.0.1",
     `--remote-debugging-port=${port}`,
@@ -275,6 +288,7 @@ export async function launchChromeDebug(options) {
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-session-crashed-bubble",
+    ...rektCaptcha.launchArgs,
   ];
 
   if (maximized) {
@@ -305,5 +319,19 @@ export async function launchChromeDebug(options) {
   }
 
   log("CDP hazır!");
+
+  if (rektCaptcha.loaded && rektCaptcha.extensionDir) {
+    const configured = await installAndConfigureRektCaptcha(
+      cdpEndpoint,
+      rektCaptcha.extensionDir,
+      rektCaptcha.settings,
+    );
+    if (configured) {
+      log("rektCaptcha yüklendi ve ayarları uygulandı.");
+    } else {
+      log("rektCaptcha kurulumu tamamlanamadı — chrome://extensions kontrol edin.");
+    }
+  }
+
   return { port, userDataDir, skipped: false };
 }

@@ -124,7 +124,7 @@ export class ContextFactory {
     }
 
     const captchaConfig = buildCaptchaSettingsFromEnv(this.settings.projectRoot);
-    const extensionSetup = prepareExtensionLaunch(captchaConfig);
+    const extensionSetup = prepareExtensionLaunch(captchaConfig, this.settings.projectRoot);
 
     logger.info("Chrome başlatılıyor — profil yüklenirken 10-30 sn sürebilir...");
 

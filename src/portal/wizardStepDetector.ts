@@ -3,13 +3,17 @@ import type { Page } from "playwright";
 import { humanClickLocator } from "../interaction/humanClick.js";
 import { logger } from "../utils/logger.js";
 
-export type WizardStepId = 1 | 2 | 3 | 4 | 5;
+export type { WizardStepId } from "./wizardSteps.js";
+export {
+  WIZARD_STEP,
+  WIZARD_OBSERVE_TARGET_STEP,
+  WIZARD_API_POLL_MAX_STEP,
+  WIZARD_FORBIDDEN_STEP,
+  WIZARD_STEP_LABELS,
+} from "./wizardSteps.js";
 
-/**
- * Randevu slot gözlemi bu ilerleme adımında başlar.
- * Portal 5 adımlı: 1 İkamet, 2 Şube, 3 Bilgiler, 4 Takvim, 5 Onay/OTP.
- */
-export const WIZARD_OBSERVE_TARGET_STEP = 4 as WizardStepId;
+import type { WizardStepId } from "./wizardSteps.js";
+import { WIZARD_OBSERVE_TARGET_STEP as OBSERVE_STEP } from "./wizardSteps.js";
 
 export interface WizardStepItem {
   step: WizardStepId;
@@ -164,8 +168,8 @@ function buildWizardStateFromNav(rawItems: RawNavItem[]): WizardStepState {
     isViewingPastStep,
     items,
     observeTargetReached:
-      (progressStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP &&
-      (viewStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP,
+      (progressStep ?? 0) >= OBSERVE_STEP &&
+      (viewStep ?? 0) >= OBSERVE_STEP,
     detectedVia: "nav",
     activeStep: progressStep,
     activeTitle: progressTitle,
@@ -177,22 +181,27 @@ export async function detectViewStepFromContent(page: Page): Promise<WizardStepI
   const checks: Array<{ step: WizardStepId; selector: string }> = [
     { step: 5, selector: "text=Telefonuma Doğrulama Kodu Gönder" },
     { step: 5, selector: "text=sms kodu talep edin" },
-    { step: 4, selector: "text=Randevu Tarihi Seçimi" },
-    { step: 4, selector: "text=Randevu Tarihi Seçin" },
-    { step: 4, selector: "text=Randevu Saatini seçiniz" },
-    { step: 4, selector: ".dp__calendar" },
-    { step: 4, selector: "div.dp__main" },
-    { step: 3, selector: "text=Bilgilerinizi Girin" },
-    { step: 3, selector: "select[name='applicationTypeId']" },
-    { step: 3, selector: "input[name='nationalityNumber']" },
+    { step: 4, selector: "text=Hizmet Teminat Bedeli" },
+    { step: 4, selector: "text=Randevu Bilgileri" },
+    { step: 4, selector: "text=ÖN BİLGİLENDİRME FORMU" },
+    { step: 4, selector: "text=Kayıt Özeti" },
+    { step: 4, selector: "text=Randevu Özeti" },
+    { step: 3, selector: "text=Randevu Tarihi Seçimi" },
+    { step: 3, selector: "text=Randevu Tarihi Seçin" },
+    { step: 3, selector: "text=Randevu Saatini seçiniz" },
+    { step: 3, selector: ".dp__calendar" },
+    { step: 3, selector: "div.dp__main" },
+    { step: 2, selector: "text=Bilgilerinizi Girin" },
+    { step: 2, selector: "select[name='applicationTypeId']" },
+    { step: 2, selector: "input[name='nationalityNumber']" },
     { step: 2, selector: "select[name='appointmentTypeId']" },
-    { step: 2, selector: "text=Şube Seçimi" },
-    { step: 2, selector: "text=Başvuru Şubesi" },
     { step: 1, selector: "text=Yetki Alanları" },
     { step: 1, selector: "text=İkamet Yerini Seçin" },
     { step: 1, selector: "#cities" },
     { step: 1, selector: "select[name='cities']" },
     { step: 1, selector: "text=Seçilen İl" },
+    { step: 1, selector: "text=Şube Seçimi" },
+    { step: 1, selector: "text=Başvuru Şubesi" },
   ];
 
   let highest: WizardStepId | null = null;
@@ -265,8 +274,8 @@ export async function isObserveTargetReady(
   const progress = state?.progressStep ?? 0;
   const ready =
     calendarVisible ||
-    (progress >= WIZARD_OBSERVE_TARGET_STEP &&
-      (state?.viewStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP);
+    (progress >= OBSERVE_STEP &&
+      (state?.viewStep ?? 0) >= OBSERVE_STEP);
   return { ready, state, calendarVisible };
 }
 
@@ -291,8 +300,8 @@ export async function detectWizardStep(
         isViewingPastStep:
           viewFromContent < (fromNav.progressStep ?? viewFromContent),
         observeTargetReached:
-          (fromNav.progressStep ?? 0) >= WIZARD_OBSERVE_TARGET_STEP &&
-          viewFromContent >= WIZARD_OBSERVE_TARGET_STEP,
+          (fromNav.progressStep ?? 0) >= OBSERVE_STEP &&
+          viewFromContent >= OBSERVE_STEP,
         detectedVia: "merged",
       };
     }
@@ -308,7 +317,7 @@ export async function detectWizardStep(
       progressTitle: null,
       isViewingPastStep: false,
       items: [],
-      observeTargetReached: viewFromContent >= WIZARD_OBSERVE_TARGET_STEP,
+      observeTargetReached: viewFromContent >= OBSERVE_STEP,
       detectedVia: "content",
       activeStep: viewFromContent,
       activeTitle: null,

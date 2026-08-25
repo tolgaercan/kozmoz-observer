@@ -36,6 +36,7 @@ export async function drainPortalInterventions(
     clickSubmit: ctx.clickSubmit !== false,
     clickRequestCode: true,
     detectTimeoutMs: PORTAL_INTERVENTION_PROBE_MS,
+    maxPasses: 3,
   });
 
   if (!result.detected) {
@@ -47,15 +48,30 @@ export async function drainPortalInterventions(
     };
   }
 
-  if (result.variantId === "identity-phone-verification-popup") {
+  const identityHandled = result.handledScreens?.some(
+    (screen) => screen.variantId === "identity-phone-verification-popup",
+  );
+  if (identityHandled) {
     logger.info("[portal-checkpoint] Kimlik ve Telefon Doğrulama işlendi.");
   }
+  const wizardHandled = result.handledScreens?.some(
+    (screen) =>
+      screen.variantId === "wizard-phone-sms" ||
+      screen.variantId === "wizard-inline-sms-form",
+  );
+  if (wizardHandled) {
+    logger.info("[portal-checkpoint] Wizard SMS OTP (Adım 5) işlendi.");
+  }
+
+  const identityVisible =
+    result.variantId === "identity-phone-verification-popup" ||
+    Boolean(identityHandled);
 
   return {
     checked: true,
-    identityPopupVisible: result.variantId === "identity-phone-verification-popup",
+    identityPopupVisible: identityVisible,
     handled: true,
-    resolved: Boolean(result.filled && result.submitted),
+    resolved: Boolean(result.filled && (result.submitted || ctx.clickSubmit === false)),
     variantId: result.variantId,
     detail: result.skippedReason,
   };

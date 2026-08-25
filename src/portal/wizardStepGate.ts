@@ -5,6 +5,7 @@ import type { AppointmentSettings } from "../config/settings.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { logger } from "../utils/logger.js";
 import { drainPortalInterventions } from "./interventions/portalCheckpoint.js";
+import { handlePortalPhoneOtpIfPresent } from "./otp/portalOtpAutomation.js";
 import { detectRecaptchaState, waitForRecaptchaSolution } from "./recaptchaGate.js";
 
 export interface WizardStepGateResult {
@@ -184,6 +185,25 @@ export async function waitForWizardStepGate(
   }
 
   if (await detectWizardOtpPrompt(page)) {
+    if (options?.profile) {
+      const otpResult = await handlePortalPhoneOtpIfPresent(page, {
+        profileId: options.profile.id,
+        profile: options.profile,
+        clickRequestCode: true,
+        clickSubmit: true,
+      });
+      if (otpResult.filled && otpResult.submitted) {
+        logger.info("[wizard-gate] Wizard SMS OTP otomasyonla tamamlandi.");
+        return { ok: true };
+      }
+      if (otpResult.detected && otpResult.skippedReason) {
+        return {
+          ok: false,
+          blockedBy: "otp",
+          message: `Wizard SMS OTP: ${otpResult.skippedReason}`,
+        };
+      }
+    }
     return {
       ok: false,
       blockedBy: "otp",

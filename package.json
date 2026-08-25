@@ -21,6 +21,7 @@
     "compare:appointment-types": "node scripts/bootstrap.mjs --run scripts/compare-appointment-types.ts",
     "telegram:discover-chats": "node scripts/bootstrap.mjs --run scripts/telegramDiscoverChats.ts",
     "supabase:otp-test": "node scripts/bootstrap.mjs --run scripts/test-supabase-otp.ts",
+    "install:rektcaptcha": "node scripts/install-rektcaptcha.mjs",
     "portal:checkpoint-test": "node scripts/bootstrap.mjs --run scripts/test-portal-checkpoint.ts"
   },
   "keywords": [
