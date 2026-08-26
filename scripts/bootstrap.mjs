@@ -20,8 +20,23 @@ const REQUIRED_DIRS = [
   "data/control-panel",
 ];
 
+function formatBootstrapTimestamp(date = new Date()) {
+  const pad = (value, width = 2) => String(value).padStart(width, "0");
+  const y = date.getFullYear();
+  const mo = pad(date.getMonth() + 1);
+  const d = pad(date.getDate());
+  const h = pad(date.getHours());
+  const mi = pad(date.getMinutes());
+  const s = pad(date.getSeconds());
+  const ms = pad(date.getMilliseconds(), 3);
+  const offsetMin = -date.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMin);
+  return `${y}-${mo}-${d} ${h}:${mi}:${s}.${ms} ${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`;
+}
+
 function log(level, message) {
-  const timestamp = new Date().toISOString();
+  const timestamp = formatBootstrapTimestamp();
   const line = `[${timestamp}] [${level.toUpperCase()}] [bootstrap] ${message}`;
   if (level === "error") {
     console.error(line);

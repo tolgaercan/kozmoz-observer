@@ -139,15 +139,9 @@ export function filterPortalWeekdays(isoDates: string[]): string[] {
 }
 
 /**
- * Portal GetClosedDate maxDate — fallback formül (AdminDatas alınamazsa).
- * Birincil kaynak: GET AdminDatas/GetDatasById?id=2329 → dataType=MaxAppointmentDate, name=yyyy-MM-dd
- * DevTools: date=2026-08-06 → AdminDatas name=2026-09-01
+ * GetClosedDate maxDate — birincil kaynak: AdminDatas (id=2329, dataType=MaxAppointmentDate).
+ * DevTools örnek: date=2026-08-06 → AdminDatas name=2026-09-01
  */
-export function resolvePortalGetClosedDateMaxDate(rangeStartIso: string): string {
-  const base = new Date(`${rangeStartIso}T12:00:00`);
-  base.setMonth(base.getMonth() + 1, 1);
-  return formatIsoDateLocal(base);
-}
 
 /** İki yyyy-MM-dd arası gün farkı (end − start). */
 export function daysBetweenIso(startIso: string, endIso: string): number {

@@ -16,9 +16,15 @@ import {
 
 import {
 
+  consumeSupabaseOtpForPhone,
+
+  DEFAULT_SUPABASE_OTP_TIMEOUT_MS,
+
   isSupabaseOtpConfigured,
 
-  waitSupabaseOtp,
+  normalizePhoneLast10,
+
+  peekSupabaseOtp,
 
   type WaitSupabaseOtpOptions,
 
@@ -29,6 +35,8 @@ import { humanTypeIntoLocator } from "../../interaction/humanType.js";
 import { resolveProfilePhone } from "../../profiles/profileCredentials.js";
 
 import { logger } from "../../utils/logger.js";
+import { detectWizardStep } from "../wizardStepDetector.js";
+import { WIZARD_STEP } from "../wizardSteps.js";
 
 import {
 
@@ -216,6 +224,206 @@ async function matchesTextPatterns(scope: Locator, patterns: RegExp[]): Promise<
 
 
 
+type PortalOtpWaitResult =
+
+  | { kind: "supabase"; otp: string }
+
+  | { kind: "manual_dismiss" }
+
+  | { kind: "timeout"; message: string };
+
+
+
+async function isPortalOtpScreenVisible(
+
+  variant: OtpScreenVariant,
+
+  scope: Locator,
+
+  probeMs: number,
+
+): Promise<boolean> {
+
+  const selectorHit = await isAnyVisible(scope, variant.detectSelectors, probeMs);
+
+  if (selectorHit) {
+
+    return true;
+
+  }
+
+  if (variant.detectTextPatterns?.length) {
+
+    return matchesTextPatterns(scope, variant.detectTextPatterns);
+
+  }
+
+  return false;
+
+}
+
+
+
+/**
+
+ * Wizard / genel portal OTP — Supabase poll + ekran kapandıysa manuel kabul.
+
+ * Sabit 210sn bloklamaz; her turde OTP UI gorunurlugu kontrol edilir.
+
+ */
+
+async function waitForPortalOtpResolution(
+
+  page: Page,
+
+  phone: string,
+
+  variant: OtpScreenVariant,
+
+  scope: Locator,
+
+  options: {
+
+    since?: Date;
+
+    timeoutMs?: number;
+
+    pollIntervalMs?: number;
+
+    waitOptions?: Pick<WaitSupabaseOtpOptions, "timeoutMs" | "intervalMs" | "consume" | "sbUrl" | "serviceKey" | "table">;
+
+  } = {},
+
+): Promise<PortalOtpWaitResult> {
+
+  const timeoutMs =
+
+    options.timeoutMs ?? options.waitOptions?.timeoutMs ?? DEFAULT_SUPABASE_OTP_TIMEOUT_MS;
+
+  const pollMs = options.pollIntervalMs ?? options.waitOptions?.intervalMs ?? 2_500;
+
+  const consume = options.waitOptions?.consume !== false;
+
+  const since = options.since;
+
+  const started = Date.now();
+
+  let lastProgressLogAt = 0;
+
+  const phoneLast10 = normalizePhoneLast10(phone);
+
+
+
+  logger.info(
+
+    `[portal-otp] OTP izleme — ekran poll ${pollMs}ms, timeout ${timeoutMs}ms` +
+
+      (isSupabaseOtpConfigured(options.waitOptions) ? ", Supabase acik" : ", yalnizca manuel/ekran kapanisi"),
+
+  );
+
+
+
+  while (Date.now() - started < timeoutMs) {
+
+    const stillVisible = await isPortalOtpScreenVisible(variant, scope, pollMs);
+
+    if (!stillVisible) {
+
+      logger.info("[portal-otp] OTP ekrani kapandi — manuel dogrulama kabul edildi, devam ediliyor.");
+
+      return { kind: "manual_dismiss" };
+
+    }
+
+
+
+    if (isSupabaseOtpConfigured(options.waitOptions)) {
+
+      try {
+
+        const otp = await peekSupabaseOtp(phone, {
+
+          since,
+
+          consume: false,
+
+          ...options.waitOptions,
+
+        });
+
+        if (otp) {
+
+          logger.info(`[portal-otp] Supabase OTP alindi (***${phoneLast10.slice(-4)}).`);
+
+          if (consume) {
+
+            await consumeSupabaseOtpForPhone(phone, options.waitOptions);
+
+          }
+
+          return { kind: "supabase", otp };
+
+        }
+
+      } catch (error) {
+
+        const message = error instanceof Error ? error.message : String(error);
+
+        logger.warn(`[portal-otp] Supabase poll hatasi: ${message}`);
+
+      }
+
+    }
+
+
+
+    const elapsed = Date.now() - started;
+
+    if (elapsed - lastProgressLogAt >= 15_000) {
+
+      lastProgressLogAt = elapsed;
+
+      logger.info(
+
+        `[portal-otp] OTP bekleniyor (${Math.round(elapsed / 1000)}s) — ekran acik, manuel giris veya SMS...`,
+
+      );
+
+    }
+
+
+
+    await page.waitForTimeout(pollMs);
+
+  }
+
+
+
+  const stillVisible = await isPortalOtpScreenVisible(variant, scope, pollMs);
+
+  if (!stillVisible) {
+
+    logger.info("[portal-otp] Timeout sonrasi OTP ekrani kapali — manuel dogrulama kabul edildi.");
+
+    return { kind: "manual_dismiss" };
+
+  }
+
+
+
+  return {
+
+    kind: "timeout",
+
+    message: `OTP gelmedi ve ekran acik (timeout ${timeoutMs}ms): ***${phoneLast10.slice(-4)}`,
+
+  };
+
+}
+
+
+
 async function buildSearchScopes(page: Page, variant: OtpScreenVariant): Promise<Locator[]> {
 
   const scopes: Locator[] = [];
@@ -310,13 +518,33 @@ export async function detectPortalOtpScreen(
 
 
 
+      if (variant.id === "wizard-phone-sms" || variant.id === "wizard-inline-sms-form") {
+        const wizard = await detectWizardStep(page).catch(() => null);
+        if (wizard?.viewStep === WIZARD_STEP.SUMMARY) {
+          logger.debug("[portal-otp] Wizard Adım 4 (özet) — SMS OTP sayılmadi.");
+          continue;
+        }
+      }
+
       const inputVisible = await isAnyVisible(scope, variant.inputSelectors, detectTimeoutMs);
 
       if (!inputVisible && variant.channel === "phone") {
 
-        // Wizard: önce «kodu gönder», input sonra gelir — yine eşleş
+        // Wizard: önce «kodu gönder», input sonra gelir — buton görünür olmalı
 
         if (!variant.requestCodeSelectors?.length) {
+
+          continue;
+
+        }
+
+        const requestVisible = await isAnyVisible(
+          scope,
+          variant.requestCodeSelectors,
+          detectTimeoutMs,
+        );
+
+        if (!requestVisible) {
 
           continue;
 
@@ -1068,23 +1296,43 @@ async function handleGenericPortalPhoneOtp(
 
 
 
-  let otp: string;
+  const resolution = await waitForPortalOtpResolution(page, phone, variant, scope, {
 
-  try {
+    since,
 
-    otp = await waitSupabaseOtp(phone, {
+    waitOptions: options.waitOptions,
 
-      since,
+  });
 
-      ...options.waitOptions,
 
-    });
 
-  } catch (error) {
+  if (resolution.kind === "manual_dismiss") {
 
-    const message = error instanceof Error ? error.message : String(error);
+    return {
 
-    logger.warn(`[portal-otp] Supabase OTP alınamadı (${variant.id}): ${message}`);
+      detected: true,
+
+      variantId: variant.id,
+
+      variantLabel: variant.label,
+
+      containerLabel,
+
+      filled: true,
+
+      codeRequested,
+
+      submitted: true,
+
+    };
+
+  }
+
+
+
+  if (resolution.kind === "timeout") {
+
+    logger.warn(`[portal-otp] Supabase OTP alınamadı (${variant.id}): ${resolution.message}`);
 
     return {
 
@@ -1102,11 +1350,15 @@ async function handleGenericPortalPhoneOtp(
 
       submitted: false,
 
-      skippedReason: message,
+      skippedReason: resolution.message,
 
     };
 
   }
+
+
+
+  const otp = resolution.otp;
 
 
 

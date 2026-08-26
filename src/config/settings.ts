@@ -164,8 +164,6 @@ export interface ApiWatcherSettings {
   referer: string;
   /** GetClosedDate — portal dealerId (Ankara=1014) */
   defaultDealerId: string;
-  /** offset modunda maxDate = date + N gün — varsayılan mod api (AdminDatas/2329) */
-  closedDateRangeDays: number;
   defaultCityId: string;
   /** Başvuru şekli fallback ID — Standart=16, EEA AB Eşi=2339 */
   defaultAppointmentTypeId: string;
@@ -637,7 +635,6 @@ export function loadSettings(projectRoot: string): AppSettings {
         process.env.API_REFERER?.trim() ??
         "https://basvuru.kosmosvize.com.tr/appointmentForm",
       defaultDealerId: process.env.API_DEALER_ID?.trim() ?? "1014",
-      closedDateRangeDays: parseIntEnv("API_CLOSED_DATE_RANGE_DAYS", 26),
       defaultCityId: process.env.API_CITY_ID?.trim() ?? "1",
       defaultAppointmentTypeId: process.env.API_APPOINTMENT_TYPE_ID?.trim() ?? "16",
       defaultAppointmentStyle: "Standart",

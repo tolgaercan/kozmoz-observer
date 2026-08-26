@@ -1,6 +1,7 @@
 import { startAvailabilityWatcher } from "../../api/watcher/watcher.js";
 import { resolveAppointmentFormUrl } from "../../navigation/kosmosPortalNav.js";
 import { closedDateUrl } from "../../api/client/apiService.js";
+import { ensureMaxAppointmentDate } from "../../api/client/resolveLiveMaxDate.js";
 import { resolvePortalTabForApiPoll } from "../../browser/cdpConnector.js";
 import {
   logResolvedApiQueryParams,
@@ -105,8 +106,12 @@ export async function runApiWatcherPhase(
     };
   };
 
-  const queryParams = resolveApiQueryParams(profile, apiSettings, buildQueryOverrides());
-  logResolvedApiQueryParams(profile.id, queryParams);
+  const queryParams = resolveApiQueryParams(
+    runtime.projectRoot,
+    profile,
+    apiSettings,
+    buildQueryOverrides(),
+  );
 
   const bootstrap = await runApiAuthBootstrapPhase(runtime, params);
   if (!bootstrap.ok) {
@@ -157,8 +162,31 @@ export async function runApiWatcherPhase(
     );
   }
 
+  try {
+    await ensureMaxAppointmentDate(
+      {
+        projectRoot: runtime.projectRoot,
+        profileId: profile.id,
+        settings: apiSettings,
+        bearerToken: authBearer,
+      },
+      runtime.session?.page,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, detail: message };
+  }
+
+  const resolvedQueryParams = resolveApiQueryParams(
+    runtime.projectRoot,
+    profile,
+    apiSettings,
+    buildQueryOverrides(),
+  );
+  logResolvedApiQueryParams(profile.id, resolvedQueryParams);
+
   const resolveFreshQueryParams = (): ReturnType<typeof resolveApiQueryParams> =>
-    resolveApiQueryParams(profile, apiSettings, buildQueryOverrides());
+    resolveApiQueryParams(runtime.projectRoot, profile, apiSettings, buildQueryOverrides());
 
   const pollUrl = closedDateUrl(
     {
@@ -167,7 +195,7 @@ export async function runApiWatcherPhase(
       settings: apiSettings,
       bearerToken: authBearer,
     },
-    queryParams,
+    resolvedQueryParams,
   );
   logger.info(`[api-watcher] Poll URL: ${pollUrl}`);
 
@@ -205,7 +233,7 @@ export async function runApiWatcherPhase(
       lockedIp,
       cdpPort: profile.browser?.cdpPort,
       settings: runtime.settings,
-      queryParams,
+      queryParams: resolvedQueryParams,
       page: runtime.session?.page,
       getBearerToken: () => getBearerTokenForProfile(runtime),
       resolveQueryParams: resolveFreshQueryParams,

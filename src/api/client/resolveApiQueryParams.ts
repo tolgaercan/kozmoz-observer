@@ -2,7 +2,7 @@ import type { ApiWatcherSettings } from "../../config/settings.js";
 import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { extractRawForm } from "../../profiles/profileContext.js";
 import { logger } from "../../utils/logger.js";
-import { resolvePortalGetClosedDateMaxDate } from "./availabilityDates.js";
+import { resolveMaxDateForParams } from "./resolveLiveMaxDate.js";
 import { readPanelWorkerApi } from "../../profiles/profileCredentials.js";
 import { normalizeNationalityNumber } from "../../portal/nationalityNumberInput.js";
 import {
@@ -83,12 +83,6 @@ function formatIsoDate(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
-}
-
-function addDaysIso(isoDate: string, days: number): string {
-  const base = new Date(`${isoDate}T12:00:00`);
-  base.setDate(base.getDate() + days);
-  return formatIsoDate(base);
 }
 
 function resolveCityId(
@@ -189,7 +183,7 @@ function resolveDealerSelection(
 }
 
 function resolveClosedDateRange(
-  apiSettings: ApiWatcherSettings,
+  projectRoot: string,
   overrides?: ApiQueryParamOverrides,
 ): { date: string; maxDate: string } {
   const date =
@@ -197,17 +191,7 @@ function resolveClosedDateRange(
     readEnv("API_CLOSED_DATE") ||
     formatIsoDate(new Date());
 
-  const maxDateOverride = overrides?.maxDate?.trim() || readEnv("API_CLOSED_DATE_MAX");
-  if (maxDateOverride) {
-    return { date, maxDate: maxDateOverride };
-  }
-
-  const mode = (readEnv("API_CLOSED_DATE_MAX_MODE") ?? "api").toLowerCase();
-  const maxDate =
-    mode === "offset" || mode === "fixed"
-      ? addDaysIso(date, apiSettings.closedDateRangeDays)
-      : resolvePortalGetClosedDateMaxDate(date);
-
+  const maxDate = resolveMaxDateForParams(projectRoot, overrides?.maxDate);
   return { date, maxDate };
 }
 
@@ -324,13 +308,14 @@ function resolveAppointmentDate(
  * API istek parametreleri — öncelik: senaryo params → API_*_PROFILE_X → API_* → manifest etiket → settings default.
  */
 export function resolveApiQueryParams(
+  projectRoot: string,
   profile: ResolvedProfile,
   apiSettings: ApiWatcherSettings,
   overrides?: ApiQueryParamOverrides,
 ): ApiQueryParams {
   const appointmentType = resolveAppointmentTypeId(profile, apiSettings, overrides);
   const applicationType = resolveApplicationTypeId(profile, apiSettings, overrides);
-  const { date, maxDate } = resolveClosedDateRange(apiSettings, overrides);
+  const { date, maxDate } = resolveClosedDateRange(projectRoot, overrides);
   const dealer = resolveDealerSelection(profile, apiSettings, overrides);
   const form = readProfileForm(profile);
   const panelTc = readPanelWorkerApi(profile.id)?.nationalityNumber?.trim();

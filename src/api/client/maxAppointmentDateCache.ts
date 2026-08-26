@@ -9,7 +9,7 @@ export const DEFAULT_MAX_DATE_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 export interface MaxAppointmentDateCacheRecord {
   maxDate: string;
   fetchedAt: string;
-  source: "admin-datas" | "portal-formula" | "stale-reuse";
+  source: "admin-datas";
   adminDataId?: string;
 }
 
@@ -88,12 +88,6 @@ export function getFreshMaxAppointmentDateFromCache(
   }
 
   return { maxDate: record.maxDate, ageMs, record };
-}
-
-export function getStaleMaxAppointmentDateFromCache(
-  projectRoot: string,
-): MaxAppointmentDateCacheRecord | null {
-  return loadMaxAppointmentDateCache(projectRoot);
 }
 
 export function formatCacheAge(ageMs: number): string {

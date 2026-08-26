@@ -20,6 +20,7 @@ import {
 import {
   advanceWizardStep1ToStep2Only,
 } from "./wizardStepAutofill.js";
+import { getPortalBookingFlowLock } from "./portalBookingFlowGuard.js";
 import { drainPortalInterventions } from "./interventions/portalCheckpoint.js";
 import { waitForWizardStepGate } from "./wizardStepGate.js";
 
@@ -233,6 +234,14 @@ export async function ensureWizardForApiPoll(
   const targetTypeId = queryParams.appointmentTypeId.trim();
   const styleLabel = queryParams.appointmentStyleLabel?.trim();
   let step2Transition = false;
+
+  const bookingLock = await getPortalBookingFlowLock(page);
+  if (bookingLock.locked) {
+    logger.info(
+      `[wizard-prep] ${bookingLock.reason} — booking/odeme akisi, wizard geri donus yok (poll atlanacak).`,
+    );
+    return { ok: false, reason: `${bookingLock.reason} — poll wizard hazirligi atlandi` };
+  }
 
   const calendarVisible = await isCalendarStepVisible(page);
   const contentStep = await detectViewStepFromContent(page);

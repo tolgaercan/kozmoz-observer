@@ -10,24 +10,16 @@ import {
   resolvePortalReferer,
 } from "./apiService.js";
 import {
-  addDaysIso,
   computeActiveDates,
   filterPortalWeekdays,
   formatIsoDateLocal,
-  resolvePortalGetClosedDateMaxDate,
 } from "./availabilityDates.js";
 import { parseResponse } from "./closedDateParser.js";
-import { fetchMaxAppointmentDate } from "./maxAppointmentDate.js";
-import {
-  DEFAULT_MAX_DATE_CACHE_TTL_MS,
-  getFreshMaxAppointmentDateFromCache,
-  getStaleMaxAppointmentDateFromCache,
-  logMaxDateCacheHit,
-  saveMaxAppointmentDateCache,
-} from "./maxAppointmentDateCache.js";
+import { enrichQueryParamsWithLiveMaxDate } from "./resolveLiveMaxDate.js";
 import type { ApiQueryParams } from "./resolveApiQueryParams.js";
 import { syncPortalAppointmentType } from "./syncPortalAppointmentType.js";
 import type { ClosedDatePollResult } from "../types.js";
+import { refreshBearerFromPortalPage } from "../auth/refreshPortalBearer.js";
 import { rawJwtFromBearer, resolveBearerToken } from "../auth/tokenProvider.js";
 import { loadSettings } from "../../config/settings.js";
 import { ensurePortalAppointmentEntry } from "../../navigation/ensurePortalAppointmentEntry.js";
@@ -61,67 +53,6 @@ function parseBody(contentType: string, bodyText: string): unknown {
 function readEnv(key: string): string | undefined {
   const value = process.env[key]?.trim();
   return value || undefined;
-}
-
-/**
- * maxDate — AdminDatas (varsayılan), portal formülü veya env override.
- * api modunda disk cache: varsayılan 12 saat (günde 2 kez), her poll'da tekrar çekilmez.
- */
-async function enrichQueryParamsWithLiveMaxDate(
-  ctx: ApiServiceContext,
-  params: ApiQueryParams,
-  page?: Page,
-): Promise<ApiQueryParams> {
-  const maxDateOverride = readEnv("API_CLOSED_DATE_MAX");
-  if (maxDateOverride) {
-    return { ...params, maxDate: maxDateOverride };
-  }
-
-  const mode = (readEnv("API_CLOSED_DATE_MAX_MODE") ?? "api").toLowerCase();
-  if (mode === "offset" || mode === "fixed") {
-    return {
-      ...params,
-      maxDate: addDaysIso(params.date, ctx.settings.closedDateRangeDays),
-    };
-  }
-  if (mode === "portal") {
-    return {
-      ...params,
-      maxDate: resolvePortalGetClosedDateMaxDate(params.date),
-    };
-  }
-
-  const cached = getFreshMaxAppointmentDateFromCache(ctx.projectRoot);
-  if (cached) {
-    logMaxDateCacheHit(cached.ageMs, cached.maxDate);
-    return { ...params, maxDate: cached.maxDate };
-  }
-
-  const fetched = await fetchMaxAppointmentDate(ctx, page);
-  if (fetched) {
-    saveMaxAppointmentDateCache(
-      ctx.projectRoot,
-      fetched,
-      "admin-datas",
-      ctx.settings.maxAppointmentDateAdminDataId,
-    );
-    const ttlHours = DEFAULT_MAX_DATE_CACHE_TTL_MS / 3_600_000;
-    logger.info(`[api] maxDate AdminDatas yenilendi → ${fetched} (cache ${ttlHours}sa)`);
-    return { ...params, maxDate: fetched };
-  }
-
-  const stale = getStaleMaxAppointmentDateFromCache(ctx.projectRoot);
-  if (stale?.maxDate) {
-    logger.warn(
-      `[api] AdminDatas maxDate alınamadı — stale cache kullanılıyor: ${stale.maxDate} (${stale.fetchedAt})`,
-    );
-    return { ...params, maxDate: stale.maxDate };
-  }
-
-  const fallback = resolvePortalGetClosedDateMaxDate(params.date);
-  saveMaxAppointmentDateCache(ctx.projectRoot, fallback, "portal-formula");
-  logger.warn(`[api] AdminDatas maxDate alınamadı — portal formülü cache'lendi: ${fallback}`);
-  return { ...params, maxDate: fallback };
 }
 
 function buildPollResult(
@@ -258,7 +189,20 @@ export async function checkAvailability(
   queryParams: ApiQueryParams,
   page?: Page,
 ): Promise<ClosedDatePollResult> {
-  const effectiveParams = await enrichQueryParamsWithLiveMaxDate(ctx, queryParams, page);
+  let effectiveParams: ApiQueryParams;
+  try {
+    ({ params: effectiveParams } = await enrichQueryParamsWithLiveMaxDate(ctx, queryParams, page));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`[checkAvailability] ${message}`);
+    return {
+      ok: false,
+      status: 0,
+      hasOpenSlots: false,
+      summary: message,
+    };
+  }
+
   const url = closedDateUrl(ctx, effectiveParams);
   logger.debug(
     `[checkAvailability] typeId=${effectiveParams.appointmentTypeId} (${effectiveParams.appointmentStyleLabel ?? "?"}) → ${url}`,
@@ -368,13 +312,49 @@ export async function checkAvailability(
           });
           if (session.ready) {
             const settleMs = ctx.settings.pollPostStep2SettleMs;
-            if (step2Transition && settleMs > 0) {
+            const shouldSettle =
+              settleMs > 0 && (step2Transition || ctx.settings.apiWizardAutoNavigate);
+
+            if (shouldSettle) {
               logger.info(
-                `[checkAvailability] Step 2 yerlesmesi — GetClosedDate oncesi ${settleMs}ms bekleniyor.`,
+                `[checkAvailability] GetClosedDate oncesi sayfa yerlesmesi — ${settleMs}ms bekleniyor.`,
               );
               await pollPage.waitForTimeout(settleMs);
             }
-            return await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
+
+            const refreshed = await refreshBearerFromPortalPage(
+              ctx.projectRoot,
+              ctx.profileId,
+              pollPage,
+            );
+            if (refreshed) {
+              ctx.bearerToken = refreshed;
+            }
+
+            let result = await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
+
+            if (
+              result.ok &&
+              !result.hasOpenSlots &&
+              (result.activeDates?.length ?? 0) === 0 &&
+              shouldSettle
+            ) {
+              logger.info(
+                `[checkAvailability] Ilk GetClosedDate 0 gun — ${settleMs}ms bekleyip token yenilenerek tekrar denenecek.`,
+              );
+              await pollPage.waitForTimeout(settleMs);
+              const retryBearer = await refreshBearerFromPortalPage(
+                ctx.projectRoot,
+                ctx.profileId,
+                pollPage,
+              );
+              if (retryBearer) {
+                ctx.bearerToken = retryBearer;
+              }
+              result = await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
+            }
+
+            return result;
           }
 
           logger.warn(

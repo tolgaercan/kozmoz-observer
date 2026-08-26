@@ -46,6 +46,7 @@ import { handlePortalPhoneOtpIfPresent } from "../../portal/otp/portalOtpAutomat
 import { detectWizardStep } from "../../portal/wizardStepDetector.js";
 import { WIZARD_STEP } from "../../portal/wizardSteps.js";
 import { runBookingPaymentStep } from "./bookingPaymentStep.js";
+import { isPaymentPageVisible } from "../../portal/payment/fillPaymentForm.js";
 import { loadSettings } from "../../config/settings.js";
 import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
 
@@ -482,19 +483,22 @@ export async function runBookingCampaign(
         maxPasses: 2,
       });
 
-      if (!otpResult.detected) {
-        await retreatToApplicantInfoStep(page, input.apiSettings.wizardNavLocator);
-        return {
-          ok: false,
-          phase: "otp_step5",
-          reason: "Step 5 OTP ekranı tespit edilemedi",
-          triggerDays,
-          hourRequestsUsed: loopResult.requestsUsed,
-          verifiedSlot: loopResult.verifiedSlot,
-        };
-      }
+      const otpOk = otpResult.detected && otpResult.filled && otpResult.submitted;
+      const onPayment = await isPaymentPageVisible(page, 800);
 
-      if (!otpResult.filled || !otpResult.submitted) {
+      if (!otpOk && !onPayment) {
+        if (!otpResult.detected) {
+          await retreatToApplicantInfoStep(page, input.apiSettings.wizardNavLocator);
+          return {
+            ok: false,
+            phase: "otp_step5",
+            reason: "Step 5 OTP ekranı tespit edilemedi",
+            triggerDays,
+            hourRequestsUsed: loopResult.requestsUsed,
+            verifiedSlot: loopResult.verifiedSlot,
+          };
+        }
+
         await retreatToApplicantInfoStep(page, input.apiSettings.wizardNavLocator);
         return {
           ok: false,
@@ -506,9 +510,15 @@ export async function runBookingCampaign(
         };
       }
 
-      logger.info(
-        `[booking] OTP doğrulandı (${otpResult.variantId ?? "unknown"}) — ödeme adımına geçiliyor.`,
-      );
+      if (!otpOk && onPayment) {
+        logger.info(
+          "[booking] OTP otomasyon tamamlanamadi ama odeme ekrani acik — odeme adimina devam.",
+        );
+      } else {
+        logger.info(
+          `[booking] OTP doğrulandı (${otpResult.variantId ?? "unknown"}) — ödeme adımına geçiliyor.`,
+        );
+      }
 
       const paymentResult = await runBookingPaymentStep(page, input.profile, config);
 

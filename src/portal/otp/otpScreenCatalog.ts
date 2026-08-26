@@ -125,7 +125,6 @@ export const PORTAL_OTP_SCREEN_VARIANTS: OtpScreenVariant[] = [
       "button.btn.btn-md.btn-primary:has-text('Telefonuma Doğrulama Kodu Gönder')",
       "text=Telefonuma Doğrulama Kodu Gönder",
       "text=sms kodu talep edin",
-      "text=SMS kodu",
     ],
     detectTextPatterns: [
       /telefonuma\s*doğrulama\s*kodu/i,

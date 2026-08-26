@@ -132,7 +132,7 @@ async function runLiveSmokeTest(profileId: string): Promise<void> {
   const settings = loadSettings(projectRoot);
   const profileManager = new ProfileManager(projectRoot, settings.manifestPath);
   const profile = profileManager.resolveProfile(profileId, settings);
-  const queryParams = resolveApiQueryParams(profile, settings.apiWatcher);
+  const queryParams = resolveApiQueryParams(projectRoot, profile, settings.apiWatcher);
   const bearer = resolveBearerToken(projectRoot, profileId);
 
   if (!bearer) {

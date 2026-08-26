@@ -4,6 +4,7 @@ import type { AppointmentSettings } from "../../config/settings.js";
 import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { logger } from "../../utils/logger.js";
 import { navigateToWizardViewStep } from "../../portal/wizardStepDetector.js";
+import { getPortalBookingFlowLock } from "../../portal/portalBookingFlowGuard.js";
 import { WIZARD_STEP } from "../../portal/wizardSteps.js";
 import { clickWizardNextButton } from "../../portal/wizardNavigation.js";
 import {
@@ -18,6 +19,11 @@ export async function retreatToApplicantInfoStep(
   page: Page,
   navLocator: string,
 ): Promise<void> {
+  const bookingLock = await getPortalBookingFlowLock(page);
+  if (bookingLock.locked) {
+    logger.info(`[booking] Step 2 geri dönüş atlandı — ${bookingLock.reason}.`);
+    return;
+  }
   logger.info("[booking] Step 2 (Bilgiler) görünümüne geri dönülüyor.");
   await navigateToWizardViewStep(page, WIZARD_STEP.APPLICANT_INFO, navLocator);
   await page.waitForTimeout(400);
