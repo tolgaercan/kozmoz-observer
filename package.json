@@ -22,7 +22,8 @@
     "telegram:discover-chats": "node scripts/bootstrap.mjs --run scripts/telegramDiscoverChats.ts",
     "supabase:otp-test": "node scripts/bootstrap.mjs --run scripts/test-supabase-otp.ts",
     "install:rektcaptcha": "node scripts/install-rektcaptcha.mjs",
-    "portal:checkpoint-test": "node scripts/bootstrap.mjs --run scripts/test-portal-checkpoint.ts"
+    "portal:checkpoint-test": "node scripts/bootstrap.mjs --run scripts/test-portal-checkpoint.ts",
+    "portal:payment-step": "node scripts/bootstrap.mjs --run scripts/run-payment-step.ts"
   },
   "keywords": [
     "playwright",

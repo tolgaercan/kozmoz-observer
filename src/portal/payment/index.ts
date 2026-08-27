@@ -8,9 +8,12 @@ export {
   formatPaymentPhoneForInput,
   isPaymentPageVisible,
   submitPaymentFormWhenReady,
+  waitForPaymentPage,
   type FillPaymentFormOptions,
   type FillPaymentFormResult,
 } from "./fillPaymentForm.js";
+
+export { resolvePaymentFormRoot } from "./paymentPageDetect.js";
 
 export {
   analyzePaymentFormBeforeSubmit,
@@ -37,7 +40,6 @@ export {
 
 export {
   runPaymentStep,
-  waitForPaymentPage,
   type PaymentStepPhase,
   type RunPaymentStepOptions,
   type RunPaymentStepResult,

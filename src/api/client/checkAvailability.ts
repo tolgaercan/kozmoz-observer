@@ -204,9 +204,11 @@ export async function checkAvailability(
   }
 
   const url = closedDateUrl(ctx, effectiveParams);
-  logger.debug(
-    `[checkAvailability] typeId=${effectiveParams.appointmentTypeId} (${effectiveParams.appointmentStyleLabel ?? "?"}) → ${url}`,
+  logger.info(
+    `[checkAvailability] GetClosedDate typeId=${effectiveParams.appointmentTypeId}` +
+      ` (${effectiveParams.appointmentStyleLabel ?? "?"}) dealerId=${effectiveParams.dealerId}`,
   );
+  logger.debug(`[checkAvailability] Poll URL → ${url}`);
 
   try {
     const forceNode = process.env.API_POLL_VIA_NODE === "true";
@@ -300,15 +302,24 @@ export async function checkAvailability(
           }
 
           if (ctx.settings.syncPortalAppointmentType) {
-            /*
-            const syncResult = await syncPortalAppointmentType(pollPage, effectiveParams, ctx.settings);
-            ...
-            */
-            logger.info("[checkAvailability] BAN-SAFE: typeId senkron atlandi (ek istek yok).");
+            const syncResult = await syncPortalAppointmentType(
+              pollPage,
+              effectiveParams,
+              ctx.settings,
+            );
+            if (syncResult.synced) {
+              logger.info(
+                `[checkAvailability] Portal basvuru sekli senkron: typeId=${syncResult.targetValue}` +
+                  ` (${syncResult.targetLabel ?? "?"})`,
+              );
+              step2Transition = true;
+            } else if (syncResult.reason && !syncResult.skipped) {
+              logger.warn(`[checkAvailability] Basvuru sekli senkron: ${syncResult.reason}`);
+            }
           }
 
           const session = await isPortalSessionReadyForPoll(pollPage, ctx.settings, effectiveParams, {
-            requireTypeReady: false,
+            requireTypeReady: ctx.settings.syncPortalAppointmentType,
           });
           if (session.ready) {
             const settleMs = ctx.settings.pollPostStep2SettleMs;
@@ -340,8 +351,11 @@ export async function checkAvailability(
               shouldSettle
             ) {
               logger.info(
-                `[checkAvailability] Ilk GetClosedDate 0 gun — ${settleMs}ms bekleyip token yenilenerek tekrar denenecek.`,
+                `[checkAvailability] Ilk GetClosedDate 0 gun — basvuru sekli senkron + ${settleMs}ms + tekrar denenecek.`,
               );
+              if (ctx.settings.syncPortalAppointmentType) {
+                await syncPortalAppointmentType(pollPage, effectiveParams, ctx.settings);
+              }
               await pollPage.waitForTimeout(settleMs);
               const retryBearer = await refreshBearerFromPortalPage(
                 ctx.projectRoot,

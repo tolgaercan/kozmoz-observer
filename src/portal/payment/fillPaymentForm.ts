@@ -1,6 +1,7 @@
 import type { Page } from "playwright";
 
 import { humanTypeIntoLocator } from "../../interaction/humanType.js";
+import { humanClickLocator } from "../../interaction/humanClick.js";
 import {
   resolvePortalPaymentData,
   type PortalPaymentData,
@@ -8,7 +9,17 @@ import {
 import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { validateWorkerPaymentParams } from "../../control-panel/workerPaymentValidation.js";
 import { logger } from "../../utils/logger.js";
-import { PAYMENT_FORM_SELECTORS, PAYMENT_PAGE_MARKERS } from "./paymentFormSelectors.js";
+import { PAYMENT_FORM_SELECTORS } from "./paymentFormSelectors.js";
+import {
+  isPaymentPageVisible,
+  resolvePaymentFormRoot,
+  resolvePaymentSubmitButton,
+  type PaymentSearchRoot,
+  waitForPaymentPage,
+} from "./paymentPageDetect.js";
+import { triggerPaymentFormValidation } from "./paymentFormAnalysis.js";
+
+export { isPaymentPageVisible, waitForPaymentPage };
 
 export interface FillPaymentFormOptions {
   profile: ResolvedProfile;
@@ -50,31 +61,16 @@ function maskCardNumber(digits: string): string {
   return `****${normalized.slice(-4)}`;
 }
 
-export async function isPaymentPageVisible(
-  page: Page,
-  timeoutMs = 800,
-): Promise<boolean> {
-  for (const selector of PAYMENT_PAGE_MARKERS) {
-    try {
-      if (await page.locator(selector).first().isVisible({ timeout: timeoutMs })) {
-        return true;
-      }
-    } catch {
-      // sonraki
-    }
-  }
-  return false;
-}
-
 async function fillTextField(
-  page: Page,
+  root: PaymentSearchRoot,
   selector: string,
   value: string,
   label: string,
   maskLog?: (raw: string) => string,
 ): Promise<void> {
-  const input = page.locator(selector).first();
+  const input = root.locator(selector).first();
   await input.waitFor({ state: "visible", timeout: 12_000 });
+  const page = input.page();
   const current = (await input.inputValue().catch(() => "")).trim();
   if (current === value.trim()) {
     logger.info(`[payment] ${label} zaten dolu (${maskLog ? maskLog(value) : label}).`);
@@ -90,12 +86,12 @@ async function fillTextField(
 }
 
 async function selectOptionValue(
-  page: Page,
+  root: PaymentSearchRoot,
   selector: string,
   value: string,
   label: string,
 ): Promise<void> {
-  const select = page.locator(selector).first();
+  const select = root.locator(selector).first();
   await select.waitFor({ state: "visible", timeout: 12_000 });
   const current = (await select.inputValue().catch(() => "")).trim();
   if (current === value) {
@@ -108,38 +104,63 @@ async function selectOptionValue(
 
 async function clickSubmitWhenEnabled(
   page: Page,
+  root: PaymentSearchRoot,
   timeoutMs: number,
 ): Promise<boolean> {
-  const button = page.locator(PAYMENT_FORM_SELECTORS.submitButton).first();
+  await triggerPaymentFormValidation(page);
+
   const deadline = Date.now() + timeoutMs;
+  let lastDisabledLogAt = 0;
 
   while (Date.now() < deadline) {
+    const button = await resolvePaymentSubmitButton(root);
+    if (!button) {
+      await page.waitForTimeout(300);
+      continue;
+    }
+
+    const clickPage = button.page();
+
     try {
-      if (!(await button.isVisible({ timeout: 300 }))) {
-        await page.waitForTimeout(250);
-        continue;
-      }
+      await button.scrollIntoViewIfNeeded().catch(() => undefined);
+
       if (await button.isDisabled()) {
-        await page.waitForTimeout(250);
+        const elapsed = Date.now() - deadline + timeoutMs;
+        if (elapsed - lastDisabledLogAt >= 4000) {
+          lastDisabledLogAt = elapsed;
+          logger.info("[payment] «Ödemeyi Tamamla» henüz devre dışı — portal JS doğrulaması bekleniyor…");
+        }
+        await clickPage.waitForTimeout(350);
         continue;
       }
-      await button.click({ timeout: 8000 });
-      logger.info("[payment] «Ödemeyi Tamamla» tıklandı.");
+
+      await humanClickLocator(clickPage, button, {
+        label: "Ödemeyi Tamamla",
+        waitTimeoutMs: 8000,
+      });
+      logger.info("[payment] «Ödemeyi Tamamla / Complete Payment» tıklandı (#btnSubmit).");
       return true;
-    } catch {
-      await page.waitForTimeout(250);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(`[payment] Submit tıklama denemesi başarısız: ${message}`);
+      await clickPage.waitForTimeout(350);
     }
   }
 
+  logger.warn("[payment] Submit zaman aşımı — #btnSubmit etkinleşmedi veya tıklanamadı.");
   return false;
 }
 
 /** Form dolu varsayımıyla submit — yeniden doldurma yok */
 export async function submitPaymentFormWhenReady(
   page: Page,
-  timeoutMs = 20_000,
+  timeoutMs = 30_000,
 ): Promise<boolean> {
-  return clickSubmitWhenEnabled(page, timeoutMs);
+  const root = await resolvePaymentFormRoot(page);
+  if (!root) {
+    return false;
+  }
+  return clickSubmitWhenEnabled(page, root, timeoutMs);
 }
 
 /**
@@ -159,6 +180,17 @@ export async function fillPaymentForm(
       filled: false,
       submitted: false,
       reason: "Ödeme sayfası görünür değil",
+    };
+  }
+
+  const formRoot = await resolvePaymentFormRoot(page);
+  if (!formRoot) {
+    return {
+      ok: false,
+      detected: false,
+      filled: false,
+      submitted: false,
+      reason: "Ödeme formu kökü bulunamadı (main/iframe)",
     };
   }
 
@@ -193,34 +225,34 @@ export async function fillPaymentForm(
 
   try {
     await fillTextField(
-      page,
+      formRoot,
       PAYMENT_FORM_SELECTORS.cardNumber,
       formatCardNumberForInput(data.cardNumber),
       "Kart numarası",
       maskCardNumber,
     );
     await fillTextField(
-      page,
+      formRoot,
       PAYMENT_FORM_SELECTORS.cardholderName,
       data.cardholderName,
       "Kart sahibi",
     );
     await selectOptionValue(
-      page,
+      formRoot,
       PAYMENT_FORM_SELECTORS.expireMonth,
       data.expireMonth,
       "SKT ay",
     );
     await selectOptionValue(
-      page,
+      formRoot,
       PAYMENT_FORM_SELECTORS.expireYear,
       data.expireYear,
       "SKT yıl",
     );
-    await fillTextField(page, PAYMENT_FORM_SELECTORS.cvv, data.cvv, "CVV", () => "***");
-    await fillTextField(page, PAYMENT_FORM_SELECTORS.email, data.email, "E-posta");
+    await fillTextField(formRoot, PAYMENT_FORM_SELECTORS.cvv, data.cvv, "CVV", () => "***");
+    await fillTextField(formRoot, PAYMENT_FORM_SELECTORS.email, data.email, "E-posta");
     await fillTextField(
-      page,
+      formRoot,
       PAYMENT_FORM_SELECTORS.phone,
       formatPaymentPhoneForInput(data.phone),
       "Telefon",
@@ -239,7 +271,8 @@ export async function fillPaymentForm(
 
   let submitted = false;
   if (options.clickSubmit) {
-    submitted = await clickSubmitWhenEnabled(page, options.submitWaitMs ?? 20_000);
+    await triggerPaymentFormValidation(page);
+    submitted = await clickSubmitWhenEnabled(page, formRoot, options.submitWaitMs ?? 30_000);
     if (!submitted) {
       return {
         ok: false,

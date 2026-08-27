@@ -1,7 +1,8 @@
 import type { Page } from "playwright";
 
 import { logger } from "../../utils/logger.js";
-import { PAYMENT_FORM_SELECTORS } from "./paymentFormSelectors.js";
+import { PAYMENT_FORM_SELECTORS, PAYMENT_FIELD_ERROR_SELECTORS } from "./paymentFormSelectors.js";
+import { resolvePaymentFormRoot, resolvePaymentSubmitButton, type PaymentSearchRoot } from "./paymentPageDetect.js";
 
 export interface PaymentFormAnalysis {
   submitEnabled: boolean;
@@ -29,6 +30,7 @@ export interface PaymentOutcome {
 }
 
 const FIELD_ERROR_SELECTORS = [
+  ...PAYMENT_FIELD_ERROR_SELECTORS,
   ".invalid-feedback:visible",
   ".field-validation-error:visible",
   ".text-danger:visible",
@@ -81,11 +83,11 @@ const THREE_DS_FRAME_SELECTORS = [
   "iframe[name*='secure' i]",
 ] as const;
 
-async function collectVisibleTexts(page: Page, selectors: readonly string[]): Promise<string[]> {
+async function collectVisibleTexts(root: PaymentSearchRoot, selectors: readonly string[]): Promise<string[]> {
   const texts: string[] = [];
 
   for (const selector of selectors) {
-    const locators = page.locator(selector);
+    const locators = root.locator(selector);
     const count = await locators.count().catch(() => 0);
     for (let index = 0; index < count; index++) {
       const text = (await locators.nth(index).innerText().catch(() => "")).trim();
@@ -98,8 +100,8 @@ async function collectVisibleTexts(page: Page, selectors: readonly string[]): Pr
   return [...new Set(texts)];
 }
 
-async function collectInvalidFields(page: Page): Promise<string[]> {
-  return page.evaluate((selectors) => {
+async function collectInvalidFields(root: PaymentSearchRoot): Promise<string[]> {
+  return root.evaluate((selectors) => {
     const ids: string[] = [];
     for (const key of Object.keys(selectors)) {
       if (key === "submitButton") {
@@ -126,11 +128,13 @@ async function collectInvalidFields(page: Page): Promise<string[]> {
 
 /** Alan blur — client-side doğrulamayı tetikler (submit tıklamadan). */
 export async function triggerPaymentFormValidation(page: Page): Promise<void> {
+  const root = (await resolvePaymentFormRoot(page)) ?? page;
+
   for (const [key, selector] of Object.entries(PAYMENT_FORM_SELECTORS)) {
     if (key === "submitButton") {
       continue;
     }
-    const field = page.locator(selector).first();
+    const field = root.locator(selector).first();
     try {
       if (await field.isVisible({ timeout: 200 })) {
         await field.blur();
@@ -156,18 +160,21 @@ export async function triggerPaymentFormValidation(page: Page): Promise<void> {
 export async function analyzePaymentFormBeforeSubmit(page: Page): Promise<PaymentFormAnalysis> {
   await triggerPaymentFormValidation(page);
 
-  const submit = page.locator(PAYMENT_FORM_SELECTORS.submitButton).first();
+  const root = (await resolvePaymentFormRoot(page)) ?? page;
+  const submit =
+    (await resolvePaymentSubmitButton(root)) ??
+    root.locator(PAYMENT_FORM_SELECTORS.submitButton).first();
   const submitEnabled = await submit.isEnabled().catch(() => false);
 
   const fieldErrors = [
-    ...(await collectVisibleTexts(page, FIELD_ERROR_SELECTORS)),
-    ...(await collectInvalidFields(page)),
+    ...(await collectVisibleTexts(root, FIELD_ERROR_SELECTORS)),
+    ...(await collectInvalidFields(root)),
   ];
   const uniqueErrors = [...new Set(fieldErrors.filter(Boolean))];
 
-  const pageWarnings = await collectVisibleTexts(page, PAGE_WARNING_SELECTORS);
+  const pageWarnings = await collectVisibleTexts(root, PAGE_WARNING_SELECTORS);
 
-  const invalidFieldIds = await page.evaluate((selectors) => {
+  const invalidFieldIds = await root.evaluate((selectors) => {
     const ids: string[] = [];
     for (const key of Object.keys(selectors)) {
       if (key === "submitButton") {
@@ -264,8 +271,12 @@ async function detectThreeDsSurface(page: Page): Promise<boolean> {
 }
 
 async function isStillOnPaymentForm(page: Page): Promise<boolean> {
+  const root = await resolvePaymentFormRoot(page);
+  if (!root) {
+    return false;
+  }
   try {
-    return await page.locator(PAYMENT_FORM_SELECTORS.cardNumber).first().isVisible({ timeout: 300 });
+    return await root.locator(PAYMENT_FORM_SELECTORS.cardNumber).first().isVisible({ timeout: 300 });
   } catch {
     return false;
   }

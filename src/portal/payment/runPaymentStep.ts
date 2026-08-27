@@ -8,7 +8,8 @@ import {
   type PaymentFormAnalysis,
   type PaymentOutcome,
 } from "./paymentFormAnalysis.js";
-import { fillPaymentForm, isPaymentPageVisible, submitPaymentFormWhenReady, type FillPaymentFormResult } from "./fillPaymentForm.js";
+import { fillPaymentForm, submitPaymentFormWhenReady, type FillPaymentFormResult } from "./fillPaymentForm.js";
+import { waitForPaymentPage } from "./paymentPageDetect.js";
 import {
   handleThreeDsSecureIfPresent,
   isThreeDsSecureVisible,
@@ -48,17 +49,6 @@ export interface RunPaymentStepResult {
   postSubmit?: PaymentOutcome;
   threeDs?: ThreeDsSecureResult;
   reason?: string;
-}
-
-export async function waitForPaymentPage(page: Page, timeoutMs = 20_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await isPaymentPageVisible(page, 450)) {
-      return true;
-    }
-    await page.waitForTimeout(400);
-  }
-  return false;
 }
 
 async function waitForThreeDsSurface(page: Page, timeoutMs: number): Promise<boolean> {
@@ -185,7 +175,7 @@ export async function runPaymentStep(
   page: Page,
   options: RunPaymentStepOptions,
 ): Promise<RunPaymentStepResult> {
-  const pageReady = await waitForPaymentPage(page, options.paymentPageWaitMs ?? 20_000);
+  const pageReady = await waitForPaymentPage(page, options.paymentPageWaitMs ?? 45_000);
   if (!pageReady) {
     return {
       ok: false,
@@ -268,7 +258,7 @@ export async function runPaymentStep(
 
   logger.info("[payment] Pre-submit OK — «Ödemeyi Tamamla» tıklanıyor.");
 
-  const submitted = await submitPaymentFormWhenReady(page, options.submitWaitMs ?? 20_000);
+  const submitted = await submitPaymentFormWhenReady(page, options.submitWaitMs ?? 30_000);
 
   if (!submitted) {
     return {
