@@ -145,6 +145,8 @@ export interface ControlPanelBootstrap {
 }
 
 export interface ManagedProcessWithRuntime extends ManagedProcess {
+  /** Chrome/watcher başlatılırken kilitlenen egress IP (diskten; canlı sorgu yok) */
+  lockedIp?: string;
   runtime?: WorkerRuntimeConfig;
   runtimeOptionsMs?: readonly number[];
 }
@@ -1342,9 +1344,11 @@ export class ControlPanelService {
       .map((proc) => {
         const sessionPort = this.chromeSessionStore.get(proc.profileId)?.assignedCdpPort;
         const cdpPort = proc.cdpPort ?? sessionPort;
+        const lockedIp = normalizeLockedIp(this.resolveEffectiveWorker(proc.profileId).lockedIp);
         return {
           ...proc,
           cdpPort,
+          lockedIp: lockedIp || undefined,
           runtime:
             proc.kind === "api-watcher" &&
             (proc.status === "running" || proc.status === "starting")

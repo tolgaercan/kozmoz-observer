@@ -1083,7 +1083,12 @@ function renderProcesses(processes) {
     const tr = document.createElement("tr");
     const isWatcher = proc.kind === "api-watcher";
     const { pollMs, telegramMs } = resolveProcessTimingDisplay(proc);
-    const cdpCell = proc.cdpPort ? `<code>:${proc.cdpPort}</code>` : "—";
+    const cdpCell =
+      proc.cdpPort && proc.lockedIp
+        ? `<code>${proc.lockedIp}:${proc.cdpPort}</code>`
+        : proc.cdpPort
+          ? `<code>:${proc.cdpPort}</code>`
+          : "—";
 
     tr.innerHTML = `
       <td>${proc.kind}</td>
