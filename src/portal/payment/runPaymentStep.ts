@@ -233,7 +233,7 @@ export async function runPaymentStep(
     };
   }
 
-  if (preSubmit.fieldErrors.length > 0) {
+  if (preSubmit.fieldErrors.length > 0 && !preSubmit.submitEnabled) {
     return {
       ok: false,
       phase: "payment_blocked",
@@ -241,6 +241,12 @@ export async function runPaymentStep(
       preSubmit,
       reason: preSubmit.fieldErrors.join("; "),
     };
+  }
+
+  if (preSubmit.fieldErrors.length > 0) {
+    logger.warn(
+      `[payment] Pre-submit uyari (submit enabled): ${preSubmit.fieldErrors.slice(0, 3).join("; ")}`,
+    );
   }
 
   if (options.autoSubmit === false) {

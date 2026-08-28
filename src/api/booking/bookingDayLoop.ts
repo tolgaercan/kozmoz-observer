@@ -199,12 +199,30 @@ export async function runBookingDayLoop(
 
     await ensureCalendarView(page, wizardNavLocator);
 
-    const uiResult = await selectVerifiedSlotInCalendar(
-      page,
-      probe.verifiedSlot,
-      appointmentSettings,
-      { hourPanelTimeoutMs: config.uiDayAttemptMs },
-    );
+    const maxUiAttempts = 2;
+    let uiResult: Awaited<ReturnType<typeof selectVerifiedSlotInCalendar>> = {
+      ok: false,
+      reason: "UI denenmedi",
+    };
+
+    for (let uiAttempt = 1; uiAttempt <= maxUiAttempts; uiAttempt++) {
+      uiResult = await selectVerifiedSlotInCalendar(
+        page,
+        probe.verifiedSlot,
+        appointmentSettings,
+        { hourPanelTimeoutMs: config.uiDayAttemptMs },
+      );
+      if (uiResult.ok) {
+        break;
+      }
+      if (uiAttempt < maxUiAttempts) {
+        logger.warn(
+          `[booking] UI seçim ${uiAttempt}/${maxUiAttempts} başarısız (${date}): ${uiResult.reason ?? "—"} — tekrar`,
+        );
+        await ensureCalendarView(page, wizardNavLocator);
+        await sleep(600);
+      }
+    }
 
     if (uiResult.ok) {
       return {

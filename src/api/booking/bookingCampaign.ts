@@ -758,62 +758,30 @@ function markExhaustedDaysGhost(
 
 
 
-/** İlk tetik günleri + aynı campaign'de kalan allowed (budget izin verirse). */
-
+/**
+ * Yalnızca tetik günleri (addedAllowed / baseline listesi) — budget kadar.
+ * Eski davranış tüm allowed listesine genişliyordu; UI 31.08'de takılınca 01.09'a kayıyordu.
+ */
 function expandProbeCandidates(
-
   triggerDays: string[],
-
-  currentAllowed: string[],
-
+  _currentAllowed: string[],
   maxRequests: number,
-
 ): string[] {
-
-  const ordered = [...currentAllowed].sort();
-
   const seen = new Set<string>();
-
   const result: string[] = [];
 
-
-
-  for (const date of triggerDays) {
-
-    if (!seen.has(date)) {
-
-      seen.add(date);
-
-      result.push(date);
-
+  for (const date of [...triggerDays].sort()) {
+    if (seen.has(date)) {
+      continue;
     }
-
-  }
-
-
-
-  for (const date of ordered) {
-
+    seen.add(date);
+    result.push(date);
     if (result.length >= maxRequests) {
-
       break;
-
     }
-
-    if (!seen.has(date)) {
-
-      seen.add(date);
-
-      result.push(date);
-
-    }
-
   }
-
-
 
   return result;
-
 }
 
 

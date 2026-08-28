@@ -669,12 +669,8 @@ export function loadSettings(projectRoot: string): AppSettings {
       apiWizardAutoNavigate: process.env.API_WIZARD_AUTO_NAVIGATE !== "false",
       apiWizardAdvanceFromStep1: process.env.API_WIZARD_ADVANCE_FROM_STEP1 === "true",
       bookingEnabled: process.env.API_BOOKING_ENABLED === "true",
-      bookingOnBaseline:
-        process.env.API_BOOKING_ON_BASELINE === "false"
-          ? false
-          : process.env.API_BOOKING_ON_BASELINE === "true" ||
-            process.env.API_BOOKING_ENABLED === "true",
-      bookingHourProbeMaxRequests: parseIntEnv("API_BOOKING_HOUR_PROBE_MAX", 10),
+      bookingOnBaseline: process.env.API_BOOKING_ON_BASELINE === "true",
+      bookingHourProbeMaxRequests: parseIntEnv("API_BOOKING_HOUR_PROBE_MAX", 3),
       bookingHourProbeBatchSize: parseIntEnv("API_BOOKING_HOUR_PROBE_BATCH", 4),
       bookingHourProbeDelayMs: parseIntEnv("API_BOOKING_HOUR_PROBE_DELAY_MS", 1000),
       bookingCaptchaWaitMs: parseIntEnv("API_BOOKING_CAPTCHA_WAIT_MS", 90_000),
@@ -688,7 +684,7 @@ export function loadSettings(projectRoot: string): AppSettings {
         30_000,
       ),
       bookingUiDayAttemptMs: parseIntEnv("API_BOOKING_UI_DAY_ATTEMPT_MS", 25_000),
-      bookingStep2RetryMax: parseIntEnv("API_BOOKING_STEP2_RETRY_MAX", 1),
+      bookingStep2RetryMax: parseIntEnv("API_BOOKING_STEP2_RETRY_MAX", 0),
       bookingPaymentAutoSubmit: process.env.API_BOOKING_PAYMENT_AUTO_SUBMIT !== "false",
       bookingPaymentPageWaitMs: parseIntEnv("API_BOOKING_PAYMENT_PAGE_WAIT_MS", 45_000),
       bookingPaymentSubmitWaitMs: parseIntEnv("API_BOOKING_PAYMENT_SUBMIT_WAIT_MS", 30_000),

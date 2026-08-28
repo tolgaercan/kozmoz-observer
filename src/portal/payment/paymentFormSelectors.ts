@@ -1,9 +1,7 @@
 /** Kosmos güvenli ödeme sayfası — /Payment/Index (iframe veya doğrudan) */
 
-export const PAYMENT_FORM_SELECTORS = {
-  form: "#payment-form",
-  wrapper: "#payment-wrapper",
-  loadingOverlay: "#payment-loading-overlay",
+/** Kart formu — doldurulabilir input/select alanları */
+export const PAYMENT_INPUT_SELECTORS = {
   cardNumber: "#CreditCardNumber",
   cardholderName: "#CardholderName",
   expireMonth: "#CreditCardExpireMonth",
@@ -11,6 +9,13 @@ export const PAYMENT_FORM_SELECTORS = {
   cvv: "#CreditCardCvv2",
   email: "#Email",
   phone: "#Phone",
+} as const;
+
+export const PAYMENT_FORM_SELECTORS = {
+  form: "#payment-form",
+  wrapper: "#payment-wrapper",
+  loadingOverlay: "#payment-loading-overlay",
+  ...PAYMENT_INPUT_SELECTORS,
   amount: "#Amount",
   submitButton: "#btnSubmit",
 } as const;

@@ -22,6 +22,48 @@ async function readSelectedTypeId(page: Page, selector: string): Promise<string 
   }, selector);
 }
 
+async function isSelectDisabled(page: Page, selector: string): Promise<boolean> {
+  return page.evaluate((sel) => {
+    const element = document.querySelector<HTMLSelectElement>(sel);
+    return !element || element.disabled;
+  }, selector);
+}
+
+/** Disabled native select — Playwright force veya DOM value set (watch poll, TC doldurmadan). */
+async function forceSetSelectValue(
+  page: Page,
+  selector: string,
+  targetValue: string,
+): Promise<boolean> {
+  const locator = page.locator(selector).first();
+
+  try {
+    await locator.selectOption({ value: targetValue }, { force: true, timeout: 5000 });
+    await locator.dispatchEvent("change");
+    await page.waitForTimeout(200);
+    if ((await readSelectedTypeId(page, selector)) === targetValue) {
+      return true;
+    }
+  } catch {
+    // evaluate yedek
+  }
+
+  return page.evaluate(
+    ({ sel, value }) => {
+      const element = document.querySelector<HTMLSelectElement>(sel);
+      if (!element) {
+        return false;
+      }
+      element.disabled = false;
+      element.value = value;
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      return element.value === value;
+    },
+    { sel: selector, value: targetValue },
+  );
+}
+
 function buildHumanSelectOptions(
   settings: ApiWatcherSettings,
   selector: string,
@@ -93,6 +135,31 @@ export async function syncPortalAppointmentType(
     };
   }
 
+  const disabled = await isSelectDisabled(page, selector);
+
+  if (disabled) {
+    logger.info(
+      `[api] Basvuru sekli select disabled — force value=${targetValue} (${targetLabel})`,
+    );
+    const forced = await forceSetSelectValue(page, selector, targetValue);
+    const afterForced = await readSelectedTypeId(page, selector);
+    if (forced && afterForced === targetValue) {
+      logger.info(
+        `[api] Portal basvuru sekli force senkron: ${previousValue ?? "—"} → ${targetLabel} (typeId=${targetValue})`,
+      );
+      return {
+        synced: true,
+        skipped: false,
+        previousValue,
+        targetValue,
+        targetLabel,
+      };
+    }
+    logger.warn(
+      `[api] Force senkron basarisiz (secili: ${afterForced ?? "—"}) — insani secim denenecek.`,
+    );
+  }
+
   try {
     logger.info(`[api] Basvuru sekli insani seciliyor: ${targetLabel} (typeId=${targetValue})`);
     await humanSelectOptionByLabel(
@@ -103,17 +170,30 @@ export async function syncPortalAppointmentType(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return {
-      synced: false,
-      skipped: false,
-      previousValue,
-      targetValue,
-      targetLabel,
-      reason: `insani secim basarisiz: ${message}`,
-    };
+    logger.warn(`[api] Basvuru sekli insani secim basarisiz — force/value yedek: ${message}`);
+    const forced = await forceSetSelectValue(page, selector, targetValue);
+    if (!forced) {
+      return {
+        synced: false,
+        skipped: false,
+        previousValue,
+        targetValue,
+        targetLabel,
+        reason: `insani secim basarisiz: ${message}; force value basarisiz`,
+      };
+    }
+    await page.waitForTimeout(settings.syncPortalAppointmentTypeWaitMs);
   }
 
-  const afterValue = await readSelectedTypeId(page, selector);
+  let afterValue = await readSelectedTypeId(page, selector);
+  if (afterValue !== targetValue) {
+    logger.warn(
+      `[api] Basvuru sekli dogrulanamadi (secili: ${afterValue ?? "—"}) — force value yedek deneniyor.`,
+    );
+    await forceSetSelectValue(page, selector, targetValue);
+    await page.waitForTimeout(settings.syncPortalAppointmentTypeWaitMs);
+    afterValue = await readSelectedTypeId(page, selector);
+  }
   if (afterValue !== targetValue) {
     return {
       synced: false,

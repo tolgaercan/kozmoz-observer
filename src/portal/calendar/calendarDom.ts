@@ -139,6 +139,29 @@ export function normalizeHourLabel(label: string): string {
   return label.replace(/\D/g, "");
 }
 
+/** Takvimde şu an seçili (aktif) gün — VueDatePicker dp__active_date / id=dp-YYYY-MM-DD */
+export async function readSelectedCalendarDayIso(page: Page): Promise<string | null> {
+  return page.evaluate(() => {
+    const activeInner =
+      document.querySelector(".dp__cell_inner.dp__active_date") ??
+      document.querySelector(".dp__cell_inner.dp__selection_start") ??
+      document.querySelector(".dp__cell_inner.dp__range_start");
+
+    const item =
+      activeInner?.closest(".dp__calendar_item") ??
+      activeInner?.closest("[id^='dp-']") ??
+      document.querySelector(".dp__calendar_item .dp__active_date")?.closest(".dp__calendar_item");
+
+    if (!item) {
+      return null;
+    }
+
+    const id = item.id || item.getAttribute("data-test-id") || "";
+    const match = /dp-(\d{4}-\d{2}-\d{2})/.exec(id);
+    return match?.[1] ?? null;
+  });
+}
+
 export async function isDayCellClickable(page: Page, isoDate: string): Promise<boolean> {
   const cell = dayCellLocator(page, isoDate);
   try {

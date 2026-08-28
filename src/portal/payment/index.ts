@@ -1,5 +1,6 @@
 export {
   PAYMENT_FORM_SELECTORS,
+  PAYMENT_INPUT_SELECTORS,
   PAYMENT_PAGE_MARKERS,
 } from "./paymentFormSelectors.js";
 

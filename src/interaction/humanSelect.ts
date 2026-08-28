@@ -47,6 +47,9 @@ function normalizeCityName(value: string): string {
 function cityNamesMatch(optionText: string, cityLabel: string): boolean {
   const option = normalizeCityName(optionText);
   const target = normalizeCityName(cityLabel);
+  if (!option || !target) {
+    return false;
+  }
   return option === target || option.startsWith(target) || target.startsWith(option);
 }
 

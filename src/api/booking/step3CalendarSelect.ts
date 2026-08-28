@@ -6,7 +6,10 @@ import {
   clickHourButtonByLabel,
   readTimeSlotsForSelectedDay,
 } from "../../portal/calendar/calendarDayActions.js";
-import { waitForCalendarContainer } from "../../portal/calendar/calendarDom.js";
+import {
+  readSelectedCalendarDayIso,
+  waitForCalendarContainer,
+} from "../../portal/calendar/calendarDom.js";
 import { ensureDayVisible, scrollCalendarIntoView } from "../../portal/calendar/calendarMonthNav.js";
 import { logger } from "../../utils/logger.js";
 import type { VerifiedSlot } from "./bookingTypes.js";
@@ -53,9 +56,37 @@ export async function selectVerifiedSlotInCalendar(
   }
 
   try {
-    const panelState = await clickCalendarDay(page, isoDate, settings, {
-      hourPanelTimeoutMs,
-    });
+    let panelState: Awaited<ReturnType<typeof clickCalendarDay>> = "timeout";
+    for (let clickAttempt = 1; clickAttempt <= 2; clickAttempt++) {
+      panelState = await clickCalendarDay(page, isoDate, settings, {
+        hourPanelTimeoutMs,
+      });
+
+      const selectedDay = await readSelectedCalendarDayIso(page);
+      if (selectedDay && selectedDay !== isoDate) {
+        logger.warn(
+          `[booking] Takvim gün uyumsuz: beklenen ${isoDate}, seçili ${selectedDay}` +
+            (clickAttempt < 2 ? " — yeniden tıklanacak" : ""),
+        );
+        if (clickAttempt < 2) {
+          await ensureDayVisible(page, isoDate, settings);
+          continue;
+        }
+        return {
+          ok: false,
+          reason: `Yanlış gün seçildi: beklenen ${isoDate}, takvimde ${selectedDay}`,
+        };
+      }
+
+      if (panelState !== "timeout") {
+        break;
+      }
+      if (clickAttempt < 2) {
+        logger.warn(`[booking] Saat paneli açılmadı (${isoDate}) — gün tıklaması tekrarlanacak`);
+        await ensureDayVisible(page, isoDate, settings);
+      }
+    }
+
     if (panelState === "timeout") {
       return {
         ok: false,

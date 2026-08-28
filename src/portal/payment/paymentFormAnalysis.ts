@@ -1,7 +1,7 @@
 import type { Page } from "playwright";
 
 import { logger } from "../../utils/logger.js";
-import { PAYMENT_FORM_SELECTORS, PAYMENT_FIELD_ERROR_SELECTORS } from "./paymentFormSelectors.js";
+import { PAYMENT_FORM_SELECTORS, PAYMENT_FIELD_ERROR_SELECTORS, PAYMENT_INPUT_SELECTORS } from "./paymentFormSelectors.js";
 import { resolvePaymentFormRoot, resolvePaymentSubmitButton, type PaymentSearchRoot } from "./paymentPageDetect.js";
 
 export interface PaymentFormAnalysis {
@@ -104,36 +104,31 @@ async function collectInvalidFields(root: PaymentSearchRoot): Promise<string[]> 
   return root.evaluate((selectors) => {
     const ids: string[] = [];
     for (const key of Object.keys(selectors)) {
-      if (key === "submitButton") {
-        continue;
-      }
       const el = document.querySelector(selectors[key]!);
       if (!el) {
         continue;
       }
-      const input = el as HTMLInputElement | HTMLSelectElement;
-      if (!input.checkValidity?.()) {
-        const label =
-          input.id ||
-          input.getAttribute("name") ||
-          input.getAttribute("aria-label") ||
-          key;
-        const message = input.validationMessage?.trim();
+      if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) {
+        continue;
+      }
+      if (typeof el.checkValidity !== "function") {
+        continue;
+      }
+      if (!el.checkValidity()) {
+        const label = el.id || el.getAttribute("name") || el.getAttribute("aria-label") || key;
+        const message = el.validationMessage?.trim();
         ids.push(message ? `${label}: ${message}` : label);
       }
     }
     return ids;
-  }, PAYMENT_FORM_SELECTORS as Record<string, string>);
+  }, PAYMENT_INPUT_SELECTORS as Record<string, string>);
 }
 
 /** Alan blur — client-side doğrulamayı tetikler (submit tıklamadan). */
 export async function triggerPaymentFormValidation(page: Page): Promise<void> {
   const root = (await resolvePaymentFormRoot(page)) ?? page;
 
-  for (const [key, selector] of Object.entries(PAYMENT_FORM_SELECTORS)) {
-    if (key === "submitButton") {
-      continue;
-    }
+  for (const [key, selector] of Object.entries(PAYMENT_INPUT_SELECTORS)) {
     const field = root.locator(selector).first();
     try {
       if (await field.isVisible({ timeout: 200 })) {
@@ -177,16 +172,19 @@ export async function analyzePaymentFormBeforeSubmit(page: Page): Promise<Paymen
   const invalidFieldIds = await root.evaluate((selectors) => {
     const ids: string[] = [];
     for (const key of Object.keys(selectors)) {
-      if (key === "submitButton") {
+      const el = document.querySelector(selectors[key]!);
+      if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) {
         continue;
       }
-      const el = document.querySelector(selectors[key]!) as HTMLInputElement | HTMLSelectElement | null;
-      if (el && !el.checkValidity?.()) {
+      if (typeof el.checkValidity !== "function") {
+        continue;
+      }
+      if (!el.checkValidity()) {
         ids.push(el.id || el.name || key);
       }
     }
     return ids;
-  }, PAYMENT_FORM_SELECTORS as Record<string, string>);
+  }, PAYMENT_INPUT_SELECTORS as Record<string, string>);
 
   let submitBlockedHint: string | undefined;
   if (!submitEnabled) {

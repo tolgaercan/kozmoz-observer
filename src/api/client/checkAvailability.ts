@@ -26,6 +26,7 @@ import { ensurePortalAppointmentEntry } from "../../navigation/ensurePortalAppoi
 import { mergeWorkerApiIntoProfile } from "../../control-panel/workerWizardForm.js";
 import { WorkerConfigStore } from "../../control-panel/workerConfigStore.js";
 import { ensureWizardForApiPoll, isPortalSessionReadyForPoll } from "../../portal/ensureWizardForApiPoll.js";
+import { getPortalBookingFlowLock } from "../../portal/portalBookingFlowGuard.js";
 import { isBasvuruPortalUrl, isKosmosMarketingHome } from "../../portal/kosmosOrigin.js";
 import { ProfileManager } from "../../profiles/profileManager.js";
 import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
@@ -75,6 +76,12 @@ function buildPollResult(
   logger.debug(
     `[checkAvailability] API ham kapali=${parsed.closedDates.length}, secilebilir=${activeWeekdays.length}, typeId=${queryParams.appointmentTypeId}`,
   );
+  if (activeWeekdays.length === 0 && parsed.closedDates.length > 0) {
+    logger.info(
+      `[checkAvailability] GetClosedDate 0 secilebilir — kapali=${parsed.closedDates.length}, ` +
+        `aralik=${queryParams.date}..${queryParams.maxDate}, typeId=${queryParams.appointmentTypeId}`,
+    );
+  }
 
   const excludesTodayNote =
     active.bookableStart > queryParams.date ? `, bugün ${todayIso} hariç` : "";
@@ -227,6 +234,20 @@ export async function checkAvailability(
     if (onPortal && page && !page.isClosed()) {
       try {
         let pollPage = page;
+        const bookingLock = await getPortalBookingFlowLock(pollPage);
+        if (bookingLock.locked) {
+          logger.info(
+            `[checkAvailability] ${bookingLock.reason} — booking/odeme akisi, poll atlandi (wizard prep yok).`,
+          );
+          return {
+            ok: false,
+            status: 0,
+            hasOpenSlots: false,
+            skipped: true,
+            summary: `Booking akisi aktif (${bookingLock.reason}) — poll atlandi`,
+          };
+        }
+
         const appSettings = loadSettings(ctx.projectRoot);
         const pollPrepRounds = 2;
         const pollSessionSettleMs = 1_500;
@@ -301,25 +322,9 @@ export async function checkAvailability(
             }
           }
 
-          if (ctx.settings.syncPortalAppointmentType) {
-            const syncResult = await syncPortalAppointmentType(
-              pollPage,
-              effectiveParams,
-              ctx.settings,
-            );
-            if (syncResult.synced) {
-              logger.info(
-                `[checkAvailability] Portal basvuru sekli senkron: typeId=${syncResult.targetValue}` +
-                  ` (${syncResult.targetLabel ?? "?"})`,
-              );
-              step2Transition = true;
-            } else if (syncResult.reason && !syncResult.skipped) {
-              logger.warn(`[checkAvailability] Basvuru sekli senkron: ${syncResult.reason}`);
-            }
-          }
-
+          // Watch modu: Step 2 alanlari (TC/sekil/tip) doldurulmadan GetClosedDate — booking'de doldurulur.
           const session = await isPortalSessionReadyForPoll(pollPage, ctx.settings, effectiveParams, {
-            requireTypeReady: ctx.settings.syncPortalAppointmentType,
+            requireTypeReady: false,
           });
           if (session.ready) {
             const settleMs = ctx.settings.pollPostStep2SettleMs;
@@ -331,6 +336,34 @@ export async function checkAvailability(
                 `[checkAvailability] GetClosedDate oncesi sayfa yerlesmesi — ${settleMs}ms bekleniyor.`,
               );
               await pollPage.waitForTimeout(settleMs);
+            }
+
+            if (ctx.settings.syncPortalAppointmentType) {
+              const typeSelector =
+                ctx.settings.appointmentTypeSelectLocator.split("|")[0]?.trim() ??
+                "select[name='appointmentTypeId']";
+              const domTypeId = await pollPage
+                .evaluate((sel) => {
+                  const el = document.querySelector<HTMLSelectElement>(sel);
+                  return el?.value?.trim() || null;
+                }, typeSelector)
+                .catch(() => null);
+
+              if (domTypeId !== effectiveParams.appointmentTypeId) {
+                logger.info(
+                  `[checkAvailability] DOM typeId=${domTypeId ?? "—"} ≠ hedef ${effectiveParams.appointmentTypeId} — hizli senkron (TC yok).`,
+                );
+                const syncResult = await syncPortalAppointmentType(
+                  pollPage,
+                  effectiveParams,
+                  ctx.settings,
+                );
+                if (syncResult.synced) {
+                  step2Transition = true;
+                } else if (syncResult.reason && !syncResult.skipped) {
+                  logger.warn(`[checkAvailability] Basvuru sekli senkron: ${syncResult.reason}`);
+                }
+              }
             }
 
             const refreshed = await refreshBearerFromPortalPage(
@@ -348,24 +381,40 @@ export async function checkAvailability(
               result.ok &&
               !result.hasOpenSlots &&
               (result.activeDates?.length ?? 0) === 0 &&
-              shouldSettle
+              shouldSettle &&
+              ctx.settings.syncPortalAppointmentType
             ) {
-              logger.info(
-                `[checkAvailability] Ilk GetClosedDate 0 gun — basvuru sekli senkron + ${settleMs}ms + tekrar denenecek.`,
-              );
-              if (ctx.settings.syncPortalAppointmentType) {
+              const retryTypeSelector =
+                ctx.settings.appointmentTypeSelectLocator.split("|")[0]?.trim() ??
+                "select[name='appointmentTypeId']";
+              const domTypeIdAfterPoll = await pollPage
+                .evaluate((sel) => {
+                  const el = document.querySelector<HTMLSelectElement>(sel);
+                  return el?.value?.trim() || null;
+                }, retryTypeSelector)
+                .catch(() => null);
+
+              if (domTypeIdAfterPoll !== effectiveParams.appointmentTypeId) {
+                logger.info(
+                  `[checkAvailability] GetClosedDate 0 gun + typeId uyumsuz — DOM=${domTypeIdAfterPoll ?? "—"}, ` +
+                    `hedef=${effectiveParams.appointmentTypeId} — senkron + tek retry.`,
+                );
                 await syncPortalAppointmentType(pollPage, effectiveParams, ctx.settings);
+                await pollPage.waitForTimeout(settleMs);
+                const retryBearer = await refreshBearerFromPortalPage(
+                  ctx.projectRoot,
+                  ctx.profileId,
+                  pollPage,
+                );
+                if (retryBearer) {
+                  ctx.bearerToken = retryBearer;
+                }
+                result = await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
+              } else {
+                logger.debug(
+                  `[checkAvailability] GetClosedDate 0 gun — typeId uyumlu, ikinci istek atlaniyor.`,
+                );
               }
-              await pollPage.waitForTimeout(settleMs);
-              const retryBearer = await refreshBearerFromPortalPage(
-                ctx.projectRoot,
-                ctx.profileId,
-                pollPage,
-              );
-              if (retryBearer) {
-                ctx.bearerToken = retryBearer;
-              }
-              result = await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
             }
 
             return result;
