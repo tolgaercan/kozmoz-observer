@@ -19,6 +19,9 @@ import { resolveClosedDateRangeDays } from "../client/availabilityDates.js";
 import { detectPublicIp } from "../../control-panel/chromeLauncher.js";
 import type { ResolvedProfile } from "../../profiles/profileManager.js";
 import { WorkerRuntimeStore } from "../../control-panel/workerRuntimeStore.js";
+import { resolveBookingTriggerDays } from "../booking/bookingTrigger.js";
+import { GhostDayStore } from "../booking/ghostDayStore.js";
+import { isBookingCampaignRunning } from "../booking/bookingCampaign.js";
 
 export interface AvailabilityWatcherOptions {
   projectRoot: string;
@@ -378,16 +381,7 @@ export function startAvailabilityWatcher(
         `[api-watcher] Baseline kaydedildi — ${currentAllowed.length} seçilebilir gün (hafta içi). ` +
           "YENİ uyarısı yok; sonraki poll'larda değişiklik aranır.",
       );
-      if (apiSettings.bookingOnBaseline && currentAllowed.length > 0) {
-        logger.info(
-          `[api-watcher] Baseline booking — ${currentAllowed.length} acik gun, campaign baslatiliyor.`,
-        );
-        await runBookingForDays(currentAllowed);
-      }
-      return;
-    }
-
-    if (apiSettings.telegramReportEnabled && telegram.isConfigured()) {
+    } else if (apiSettings.telegramReportEnabled && telegram.isConfigured()) {
       const shouldSendTelegram =
         hasNewlyOpenedDays ||
         !sameAllowedAsPrevious ||
@@ -434,9 +428,35 @@ export function startAvailabilityWatcher(
       }
     }
 
-    if (addedAllowed.length > 0) {
-      await runBookingForDays(addedAllowed);
+    const ghostStore = new GhostDayStore(options.projectRoot);
+    const addedForTrigger = isEstablishingBaseline ? [] : addedAllowed;
+    const triggerDays = resolveBookingTriggerDays(
+      options.profileId,
+      addedForTrigger,
+      currentAllowed,
+      ghostStore,
+    );
+
+    if (triggerDays.length === 0) {
+      if (currentAllowed.length > 0) {
+        logger.debug(
+          `[api-watcher] ${currentAllowed.length} aktif gun var — tumu ghost veya filtre bos, booking yok.`,
+        );
+      }
+      return;
     }
+
+    if (isBookingCampaignRunning()) {
+      logger.info("[api-watcher] Booking campaign zaten calisiyor — yeni tetik atlandi.");
+      return;
+    }
+
+    const triggerSource =
+      addedForTrigger.length > 0 ? "yeni acilan gunler" : "aktif gunler (baseline/yedek)";
+    logger.info(
+      `[api-watcher] Booking tetik — ${triggerDays.length} gun (${triggerSource}): ${triggerDays.join(", ")}`,
+    );
+    await runBookingForDays(triggerDays);
   };
 
   const runPoll = async (): Promise<void> => {

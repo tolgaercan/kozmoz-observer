@@ -158,7 +158,7 @@ export async function runBookingCampaign(
 
       phase: "trigger_filter",
 
-      reason: "Yeni gün yok veya tümü ghost — saat isteği atlanmadı",
+      reason: "Aktif gün yok veya tümü ghost — saat isteği atlanmadı",
 
     };
 
@@ -333,6 +333,8 @@ export async function runBookingCampaign(
         input.appointmentSettings,
 
         input.queryParams,
+
+        { force: true },
 
       );
 

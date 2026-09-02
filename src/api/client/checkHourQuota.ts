@@ -10,6 +10,7 @@ import {
   resolveAuthorizationForContext,
 } from "./apiService.js";
 import { parseHourQuotaResponse } from "./hourQuotaParser.js";
+import { logHourQuotaAudit, logHourQuotaHttpFailure } from "./apiResponseAuditLog.js";
 import type { ApiQueryParams } from "./resolveApiQueryParams.js";
 
 function parseBody(contentType: string, bodyText: string): unknown {
@@ -37,8 +38,20 @@ function buildPollResult(
   status: number,
   raw: unknown,
   appointmentDate: string,
+  queryParams: ApiQueryParams,
 ): HourQuotaPollResult {
   const parsed = parseHourQuotaResponse(raw, appointmentDate);
+
+  logHourQuotaAudit({
+    status,
+    raw,
+    appointmentDate,
+    queryParams,
+    hasAvailableHours: parsed.hasAvailableHours,
+    availableHours: parsed.availableHours,
+    slotCount: parsed.slots.length,
+    summary: parsed.summary,
+  });
 
   return {
     ok: true,
@@ -178,10 +191,11 @@ export async function checkHourQuota(
       const raw = parseBody(browserResult.contentType, browserResult.bodyText);
 
       if (status < 200 || status >= 300) {
+        logHourQuotaHttpFailure(status, normalizedDate, hourParams, browserResult.bodyText);
         return failureResult(status, `HTTP ${status}`, { raw });
       }
 
-      return buildPollResult(status, raw, normalizedDate);
+      return buildPollResult(status, raw, normalizedDate, hourParams);
     }
 
     const response = await apiFetch(ctx, url, { queryParams: hourParams });
@@ -206,10 +220,16 @@ export async function checkHourQuota(
     }
 
     if (!response.ok) {
+      logHourQuotaHttpFailure(
+        status,
+        normalizedDate,
+        hourParams,
+        typeof raw === "string" ? raw : undefined,
+      );
       return failureResult(status, `HTTP ${status}`, { raw });
     }
 
-    return buildPollResult(status, raw, normalizedDate);
+    return buildPollResult(status, raw, normalizedDate, hourParams);
   } catch (error) {
     return failureResult(
       0,

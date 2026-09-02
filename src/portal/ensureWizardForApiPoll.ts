@@ -5,6 +5,7 @@ import type { ApiQueryParams } from "../api/client/resolveApiQueryParams.js";
 import type { ApiWatcherSettings, AppointmentSettings } from "../config/settings.js";
 import type { ResolvedProfile } from "../profiles/profileManager.js";
 import { logger } from "../utils/logger.js";
+import { fillApplicantInfoStep } from "../api/booking/step2ApplicantInfoFill.js";
 import {
   detectViewStepFromContent,
   detectWizardStep,
@@ -307,8 +308,28 @@ export async function ensureWizardForApiPoll(
     return { ok: false, reason: message };
   }
 
-  // BAN-SAFE: TC / bos tik / basvuru sekli doldurma kapali — sadece adim 3 gorunumune gelindi.
-  logger.info("[wizard-prep] Step 2 gorunumu hazir — TC/sekil otomasyonu BAN-SAFE kapali.");
+  // Step 2: EEA AB Eşi için TC girilmeden başvuru şekli disabled kalır — force typeId GetClosedDate'i bozar.
+  if (apiSettings.apiPollFillStep2) {
+    const fill = await fillApplicantInfoStep(
+      page,
+      profile,
+      appointmentSettings,
+      queryParams,
+    );
+    if (!fill.ok) {
+      logger.warn(`[wizard-prep] Step 2 doldurma: ${fill.reason ?? "—"}`);
+      return { ok: false, reason: fill.reason ?? "Step 2 doldurma basarisiz" };
+    }
+    if (fill.skipped) {
+      logger.info("[wizard-prep] Step 2 hazir — doldurma atlandi, GetClosedDate hazir.");
+    } else {
+      step2Transition = true;
+      logger.info("[wizard-prep] Step 2 dolduruldu (tip+TC+sekil) — Sonraki yok, GetClosedDate hazir.");
+    }
+  } else {
+    logger.info("[wizard-prep] Step 2 gorunumu hazir — TC/sekil otomasyonu kapali (API_POLL_FILL_STEP2=false).");
+  }
+
   return { ok: true, step2Transition };
 
   /*

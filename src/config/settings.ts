@@ -177,6 +177,8 @@ export interface ApiWatcherSettings {
   pollIntervalMs: number;
   /** Step 2'ye yeni geçişten sonra ilk GetClosedDate öncesi bekleme (ms) */
   pollPostStep2SettleMs: number;
+  /** Poll öncesi Step 2: başvuru tipi + TC + şekil (EEA için zorunlu — force typeId yetmez) */
+  apiPollFillStep2: boolean;
   openNotifyCooldownMs: number;
   tokenCaptureWaitMs: number;
   fallbackToBrowserOnCaptcha: boolean;
@@ -642,6 +644,7 @@ export function loadSettings(projectRoot: string): AppSettings {
       defaultApplicationType: "Bireysel",
       pollIntervalMs: parseIntEnv("API_POLL_INTERVAL_MS", 300_000),
       pollPostStep2SettleMs: parseIntEnv("API_POLL_POST_STEP2_SETTLE_MS", 5_000),
+      apiPollFillStep2: process.env.API_POLL_FILL_STEP2 !== "false",
       openNotifyCooldownMs: parseIntEnv("API_OPEN_NOTIFY_COOLDOWN_MS", 300_000),
       tokenCaptureWaitMs: parseIntEnv("API_TOKEN_CAPTURE_WAIT_MS", 45_000),
       fallbackToBrowserOnCaptcha: process.env.API_CAPTCHA_FALLBACK_BROWSER === "true",

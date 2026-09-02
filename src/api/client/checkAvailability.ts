@@ -15,6 +15,10 @@ import {
   formatIsoDateLocal,
 } from "./availabilityDates.js";
 import { parseResponse } from "./closedDateParser.js";
+import {
+  logGetClosedDateAudit,
+  logGetClosedDateHttpFailure,
+} from "./apiResponseAuditLog.js";
 import { enrichQueryParamsWithLiveMaxDate } from "./resolveLiveMaxDate.js";
 import type { ApiQueryParams } from "./resolveApiQueryParams.js";
 import { syncPortalAppointmentType } from "./syncPortalAppointmentType.js";
@@ -61,6 +65,7 @@ function buildPollResult(
   status: number,
   raw: unknown,
   queryParams: ApiQueryParams,
+  auditOptions?: { retry?: boolean },
 ): ClosedDatePollResult {
   const bearer = resolveBearerToken(ctx.projectRoot, ctx.profileId) ?? "";
   const parsed = parseResponse(raw, bearer ? rawJwtFromBearer(bearer) : undefined);
@@ -72,6 +77,18 @@ function buildPollResult(
     { todayIso },
   );
   const activeWeekdays = filterPortalWeekdays(active.activeDates);
+
+  logGetClosedDateAudit({
+    status,
+    raw,
+    queryParams,
+    closedDates: parsed.closedDates,
+    closedInRange: active.closedInRange,
+    activeDates: activeWeekdays,
+    bookableStart: active.bookableStart,
+    bookableEnd: active.bookableEnd,
+    retry: auditOptions?.retry,
+  });
 
   logger.debug(
     `[checkAvailability] API ham kapali=${parsed.closedDates.length}, secilebilir=${activeWeekdays.length}, typeId=${queryParams.appointmentTypeId}`,
@@ -162,6 +179,12 @@ async function fetchClosedDateViaNode(
   }
 
   if (status < 200 || status >= 300) {
+    logGetClosedDateHttpFailure(
+      status,
+      raw,
+      queryParams,
+      typeof raw === "string" ? raw : undefined,
+    );
     return mapHttpFailure(status, raw, typeof raw === "string" ? raw : undefined);
   }
 
@@ -173,6 +196,7 @@ async function fetchClosedDateViaPage(
   url: string,
   queryParams: ApiQueryParams,
   page: Page,
+  auditOptions?: { retry?: boolean },
 ): Promise<ClosedDatePollResult> {
   const referer = resolvePortalReferer(page.url(), ctx.settings.referer);
   const authorization = resolveAuthorizationForContext(ctx);
@@ -185,10 +209,17 @@ async function fetchClosedDateViaPage(
 
   const raw = parseBody(browserResult.contentType, browserResult.bodyText);
   if (browserResult.status < 200 || browserResult.status >= 300) {
+    logGetClosedDateHttpFailure(
+      browserResult.status,
+      raw,
+      queryParams,
+      browserResult.bodyText,
+      auditOptions?.retry,
+    );
     return mapHttpFailure(browserResult.status, raw, browserResult.bodyText);
   }
 
-  return buildPollResult(ctx, browserResult.status, raw, queryParams);
+  return buildPollResult(ctx, browserResult.status, raw, queryParams, auditOptions);
 }
 
 export async function checkAvailability(
@@ -322,9 +353,8 @@ export async function checkAvailability(
             }
           }
 
-          // Watch modu: Step 2 alanlari (TC/sekil/tip) doldurulmadan GetClosedDate — booking'de doldurulur.
           const session = await isPortalSessionReadyForPoll(pollPage, ctx.settings, effectiveParams, {
-            requireTypeReady: false,
+            requireTypeReady: ctx.settings.apiPollFillStep2 && ctx.settings.syncPortalAppointmentType,
           });
           if (session.ready) {
             const settleMs = ctx.settings.pollPostStep2SettleMs;
@@ -409,7 +439,9 @@ export async function checkAvailability(
                 if (retryBearer) {
                   ctx.bearerToken = retryBearer;
                 }
-                result = await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage);
+                result = await fetchClosedDateViaPage(ctx, url, effectiveParams, pollPage, {
+                  retry: true,
+                });
               } else {
                 logger.debug(
                   `[checkAvailability] GetClosedDate 0 gun — typeId uyumlu, ikinci istek atlaniyor.`,

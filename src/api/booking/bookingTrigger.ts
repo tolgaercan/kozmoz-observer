@@ -1,8 +1,10 @@
 import type { GhostDayStore } from "./ghostDayStore.js";
 
 /**
- * Booking campaign yalnızca yeni günlerle tetiklenir.
- * Ghost günler (saat probe boş) aynı allowed listesinde kaldıkça tekrar istek atılmaz.
+ * Booking campaign tetik günleri:
+ * - Öncelik: baseline sonrası yeni açılan günler (`addedAllowed`)
+ * - Yedek: aktif günler (`currentAllowed`) — baseline'da kayıtlı dolu günlerde takılmayı önler
+ * - Ghost günler (saat probe boş) filtrelenir
  */
 export function resolveBookingTriggerDays(
   profileId: string,
@@ -10,11 +12,13 @@ export function resolveBookingTriggerDays(
   currentAllowed: string[],
   ghostStore: GhostDayStore,
 ): string[] {
-  if (addedAllowed.length === 0) {
+  if (currentAllowed.length === 0) {
     return [];
   }
 
   ghostStore.syncAllowedSnapshot(profileId, currentAllowed);
-  const fresh = ghostStore.filterFreshTriggerDays(profileId, addedAllowed);
+
+  const candidates = addedAllowed.length > 0 ? addedAllowed : [...currentAllowed];
+  const fresh = ghostStore.filterFreshTriggerDays(profileId, candidates);
   return [...fresh].sort();
 }
