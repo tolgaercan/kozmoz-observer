@@ -16,6 +16,14 @@ export interface RuntimeIntervalDefaults {
   telegramReportIntervalMs: number;
 }
 
+export interface WorkerBookingDefaults {
+  paymentAutoSubmit: boolean;
+  payment3dsAuto: boolean;
+}
+
+/** Panel worker-config varsayılanları — .env ile beslenir */
+export interface WorkerConfigDefaults extends RuntimeIntervalDefaults, WorkerBookingDefaults {}
+
 export function clampRuntimeIntervalMs(value: number): number {
   if (!Number.isFinite(value)) {
     return MIN_RUNTIME_INTERVAL_MS;

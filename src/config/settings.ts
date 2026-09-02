@@ -203,8 +203,6 @@ export interface ApiWatcherSettings {
   apiWizardAdvanceFromStep1: boolean;
   /** Yeni gün gelince booking campaign (saat probe) — varsayılan kapalı */
   bookingEnabled: boolean;
-  /** İlk poll (baseline) açık gün varsa booking dene — varsayılan booking açıksa true */
-  bookingOnBaseline: boolean;
   bookingHourProbeMaxRequests: number;
   bookingHourProbeBatchSize: number;
   bookingHourProbeDelayMs: number;
@@ -672,7 +670,6 @@ export function loadSettings(projectRoot: string): AppSettings {
       apiWizardAutoNavigate: process.env.API_WIZARD_AUTO_NAVIGATE !== "false",
       apiWizardAdvanceFromStep1: process.env.API_WIZARD_ADVANCE_FROM_STEP1 === "true",
       bookingEnabled: process.env.API_BOOKING_ENABLED === "true",
-      bookingOnBaseline: process.env.API_BOOKING_ON_BASELINE === "true",
       bookingHourProbeMaxRequests: parseIntEnv("API_BOOKING_HOUR_PROBE_MAX", 3),
       bookingHourProbeBatchSize: parseIntEnv("API_BOOKING_HOUR_PROBE_BATCH", 4),
       bookingHourProbeDelayMs: parseIntEnv("API_BOOKING_HOUR_PROBE_DELAY_MS", 1000),

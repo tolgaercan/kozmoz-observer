@@ -188,12 +188,6 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, pathname: st
     return;
   }
 
-  if (method === "GET" && pathname === "/api/diagnostics/validate-api-dates") {
-    const report = service.runApiDateValidation();
-    sendJson(res, 200, report);
-    return;
-  }
-
   if (method === "POST" && pathname === "/api/process/runtime-config") {
     const body = await readJsonBody<{
       processId: string;

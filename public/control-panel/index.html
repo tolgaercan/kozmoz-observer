@@ -366,6 +366,15 @@
                     />
                   </label>
                 </div>
+                <p class="field-hint">Otomasyon — profil bazlı; .env yalnızca varsayılan.</p>
+                <label class="field field-checkbox">
+                  <input type="checkbox" id="paymentAutoSubmit" checked />
+                  <span>Ödemeyi otomatik gönder («Ödemeyi Tamamla»)</span>
+                </label>
+                <label class="field field-checkbox field-last">
+                  <input type="checkbox" id="payment3dsAuto" />
+                  <span>3D Secure OTP otomasyonu (Supabase)</span>
+                </label>
               </div>
             </div>
 
@@ -411,12 +420,7 @@
             <button type="button" class="btn btn-danger" id="btnStopApiWatcher" hidden>
               API Watcher Durdur
             </button>
-            <button type="button" class="btn btn-secondary" id="btnValidateApiDates">
-              Tarih mantığı testi
-            </button>
           </div>
-
-          <div class="diagnostics-output" id="diagnosticsOutput" hidden></div>
         </section>
 
         <section class="card card-ban-overview span-2">

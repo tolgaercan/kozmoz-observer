@@ -89,6 +89,7 @@ export async function runApiWatcherPhase(
         proxyUrl: activeSession.network.proxyUrl ?? "",
         api: activeSession.api,
         payment: legacy.payment,
+        booking: legacy.booking,
         timing: activeSession.timing,
         updatedAt: activeSession.updatedAt,
       };

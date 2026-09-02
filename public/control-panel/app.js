@@ -622,6 +622,58 @@ function readWorkerPaymentFromForm() {
   };
 }
 
+function readWorkerBookingFromForm() {
+  return {
+    paymentAutoSubmit: Boolean($("paymentAutoSubmit")?.checked),
+    payment3dsAuto: Boolean($("payment3dsAuto")?.checked),
+  };
+}
+
+function formatBookingSummary(booking) {
+  const submit = booking.paymentAutoSubmit ? "Otomatik submit: açık" : "Otomatik submit: kapalı";
+  const threeDs = booking.payment3dsAuto ? "3DS OTP: açık" : "3DS OTP: kapalı";
+  return `${submit} · ${threeDs}`;
+}
+
+function bookingFlagsEqual(left, right) {
+  if (!left || !right) return false;
+  return (
+    left.paymentAutoSubmit === right.paymentAutoSubmit &&
+    left.payment3dsAuto === right.payment3dsAuto
+  );
+}
+
+function formatWorkerSavedAt(iso) {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleString("tr-TR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+async function persistWorkerDraftFromForm(options = {}) {
+  const api = readWorkerApiFromForm();
+  const validation = validateWorkerApiForm(api);
+  if (!validation.ok) {
+    throw new Error(validation.errors[0]);
+  }
+  await saveWorkerConfig(
+    {
+      api,
+      payment: readWorkerPaymentFromForm(),
+      booking: readWorkerBookingFromForm(),
+      timing: readWorkerTimingFromForm(),
+    },
+    options,
+  );
+}
+
 function maskCard(value) {
   const digits = (value ?? "").replace(/\D/g, "");
   if (!digits) return "—";
@@ -684,6 +736,9 @@ function renderWorkerDraftSummary() {
   const typeOpt = state.bootstrap?.applicationTypes?.find((t) => t.label === api.applicationType);
   const timing = readWorkerTimingFromForm();
   const lockedIp = readLockedIp() || "—";
+  const liveBooking = readWorkerBookingFromForm();
+  const savedBooking = state.worker?.booking;
+  const bookingDirty = savedBooking && !bookingFlagsEqual(savedBooking, liveBooking);
 
   const passportMask = api.passportNumber
     ? `${api.passportNumber.slice(0, 2)}***`
@@ -703,6 +758,14 @@ function renderWorkerDraftSummary() {
       <dt>Kimlik</dt><dd>TC ${maskTc(api.nationalityNumber)} · Pasaport ${passportMask}</dd>
       <dt>OTP</dt><dd>Tel ${maskPhone(api.otpPhone)} · ${maskEmail(api.portalEmail)}</dd>
       <dt>Ödeme</dt><dd>Kart ${maskCard(payment.cardNumber)} · ${payment.cardholderName || "—"}</dd>
+      <dt>Ödeme otomasyonu</dt><dd>${formatBookingSummary(liveBooking)}${
+        bookingDirty
+          ? ' <span class="draft-badge warn">kaydedilmedi</span>'
+          : savedBooking
+            ? ' <span class="draft-badge ok">kayıtlı</span>'
+            : ""
+      }</dd>
+      <dt>Son kayıt</dt><dd>${formatWorkerSavedAt(state.worker?.updatedAt)}</dd>
       <dt>Ağ</dt><dd>Aktif IP <code>${lockedIp}</code></dd>
       <dt>Aralık</dt><dd>Poll ${formatIntervalLabel(timing.pollIntervalMs)} · Telegram ${formatIntervalLabel(timing.telegramReportIntervalMs)}</dd>
     </dl>
@@ -950,6 +1013,16 @@ function applyWorkerToForm(worker, options = {}) {
   if ($("paymentPhone")) {
     $("paymentPhone").value = worker.payment?.phone ?? "";
   }
+  const envBooking = state.bootstrap?.envBookingDefaults;
+  const booking = worker.booking ?? envBooking ?? {};
+  if ($("paymentAutoSubmit")) {
+    $("paymentAutoSubmit").checked =
+      booking.paymentAutoSubmit ?? envBooking?.paymentAutoSubmit ?? true;
+  }
+  if ($("payment3dsAuto")) {
+    $("payment3dsAuto").checked =
+      booking.payment3dsAuto ?? envBooking?.payment3dsAuto ?? false;
+  }
   const intervalOptions = state.bootstrap?.runtimeOptionsMs;
   const pollMs = worker.timing?.pollIntervalMs ?? INTERVAL_OPTIONS[2].ms;
   const telegramMs = worker.timing?.telegramReportIntervalMs ?? INTERVAL_OPTIONS[2].ms;
@@ -1014,28 +1087,6 @@ function renderWorkflowSteps(status, processes) {
           ? "Watcher zaten calisiyor"
           : "";
   }
-}
-
-function renderDiagnostics(title, bodyHtml, ok = true) {
-  const el = $("diagnosticsOutput");
-  if (!el) return;
-  el.hidden = false;
-  el.className = `diagnostics-output ${ok ? "ok" : "fail"}`;
-  el.innerHTML = `<strong>${title}</strong>${bodyHtml}`;
-}
-
-function renderValidationReport(report) {
-  const rows = (report.items ?? [])
-    .map(
-      (item) =>
-        `<div class="diag-row ${item.ok ? "ok" : "fail"}">${item.ok ? "✓" : "✗"} ${item.name}<br><small>${item.detail}</small></div>`,
-    )
-    .join("");
-  renderDiagnostics(
-    `${report.summary}`,
-    `<div class="diag-summary">${report.passed}/${report.total} geçti</div>${rows}`,
-    report.ok,
-  );
 }
 
 function rememberProcessTimingDraft(processId, tbody) {
@@ -1285,10 +1336,13 @@ async function saveWorkerConfig(patch, options = {}) {
     body: JSON.stringify({ profileId: state.profileId, config: patch }),
   });
   state.worker = body.worker;
-  const networkOnly = !patch.api && !patch.timing;
+  const networkOnly = !patch.api && !patch.timing && !patch.booking && !patch.payment;
   applyWorkerToForm(body.worker, { skipNetwork: options.skipNetwork ?? networkOnly });
+  renderWorkerDraftSummary();
   if (!options.silent) {
-    toast("Taslak kaydedildi");
+    const booking = body.worker?.booking;
+    const bookingNote = booking ? ` · ${formatBookingSummary(booking)}` : "";
+    toast(`Worker taslağı kaydedildi${bookingNote}`);
   }
 }
 
@@ -1392,8 +1446,12 @@ $("passportNumber")?.addEventListener("input", renderApiPreview);
   "paymentCvv",
   "paymentEmail",
   "paymentPhone",
+  "paymentAutoSubmit",
+  "payment3dsAuto",
 ].forEach((id) => {
-  $(id)?.addEventListener("input", renderApiPreview);
+  const el = $(id);
+  if (!el) return;
+  el.addEventListener(el.type === "checkbox" ? "change" : "input", renderApiPreview);
 });
 $("workerPollInterval").addEventListener("change", renderWorkerSummary);
 $("workerTelegramInterval").addEventListener("change", renderWorkerSummary);
@@ -1469,17 +1527,11 @@ $("btnSaveNetwork").addEventListener("click", async () => {
 });
 
 $("btnSaveApi").addEventListener("click", async () => {
-  const api = readWorkerApiFromForm();
-  const validation = validateWorkerApiForm(api);
-  if (!validation.ok) {
-    toast(validation.errors[0], "error");
-    return;
+  try {
+    await persistWorkerDraftFromForm();
+  } catch (error) {
+    toast(error.message, "error");
   }
-  await saveWorkerConfig({
-    api,
-    payment: readWorkerPaymentFromForm(),
-    timing: readWorkerTimingFromForm(),
-  });
 });
 
 $("btnStartChrome").addEventListener("click", async () => {
@@ -1600,6 +1652,7 @@ $("btnStartWorkflow").addEventListener("click", async () => {
     if (!validation.ok) {
       throw new Error(`Worker ayarları eksik: ${validation.errors.join("; ")}`);
     }
+    await persistWorkerDraftFromForm({ silent: true, skipNetwork: true });
     const timing = readWorkerTimingFromForm();
     const result = await api("/api/run/api-watcher-workflow", {
       method: "POST",
@@ -1628,19 +1681,6 @@ $("btnStopApiWatcher").addEventListener("click", async () => {
     await refreshWorkflowUi();
   } catch (error) {
     toast(error.message, "error");
-  }
-});
-
-$("btnValidateApiDates").addEventListener("click", async () => {
-  $("btnValidateApiDates").disabled = true;
-  try {
-    const report = await api("/api/diagnostics/validate-api-dates");
-    renderValidationReport(report);
-    toast(report.ok ? "Tarih mantığı OK" : "Bazı testler başarısız", report.ok ? "success" : "error");
-  } catch (error) {
-    toast(error.message, "error");
-  } finally {
-    $("btnValidateApiDates").disabled = false;
   }
 });
 

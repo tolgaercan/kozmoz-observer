@@ -4,6 +4,8 @@ import { dirname, resolve } from "node:path";
 import {
   normalizeRuntimeIntervalMs,
   type RuntimeIntervalDefaults,
+  type WorkerBookingDefaults,
+  type WorkerConfigDefaults,
 } from "./workerTimingUtils.js";
 
 export type ProxyMode = "direct" | "proxy";
@@ -43,6 +45,12 @@ export interface WorkerTimingParams {
   telegramReportIntervalMs: number;
 }
 
+/** Worker bazlı ödeme otomasyonu — .env varsayılanının üzerine yazar */
+export interface WorkerBookingParams {
+  paymentAutoSubmit: boolean;
+  payment3dsAuto: boolean;
+}
+
 export interface WorkerConfig {
   profileId: string;
   proxyMode: ProxyMode;
@@ -57,6 +65,8 @@ export interface WorkerConfig {
   api: WorkerApiParams;
   /** Ödeme sayfası kart formu — watcher başlatmak için zorunlu değil */
   payment: WorkerPaymentParams;
+  /** Ödeme adımı otomasyon bayrakları (panel checkbox) */
+  booking: WorkerBookingParams;
   /** Profil bazlı poll / Telegram aralıkları (.env yalnızca varsayılan) */
   timing: WorkerTimingParams;
   updatedAt: string;
@@ -70,6 +80,16 @@ export interface ControlPanelStore {
 const FALLBACK_TIMING_DEFAULTS: RuntimeIntervalDefaults = {
   pollIntervalMs: 300_000,
   telegramReportIntervalMs: 300_000,
+};
+
+const FALLBACK_BOOKING_DEFAULTS: WorkerBookingDefaults = {
+  paymentAutoSubmit: true,
+  payment3dsAuto: false,
+};
+
+const FALLBACK_CONFIG_DEFAULTS: WorkerConfigDefaults = {
+  ...FALLBACK_TIMING_DEFAULTS,
+  ...FALLBACK_BOOKING_DEFAULTS,
 };
 
 function defaultWorkerPayment(): WorkerPaymentParams {
@@ -111,10 +131,20 @@ function resolveWorkerTiming(
   };
 }
 
+function resolveWorkerBooking(
+  booking: Partial<WorkerBookingParams> | undefined,
+  defaults: WorkerBookingDefaults = FALLBACK_BOOKING_DEFAULTS,
+): WorkerBookingParams {
+  return {
+    paymentAutoSubmit: booking?.paymentAutoSubmit ?? defaults.paymentAutoSubmit,
+    payment3dsAuto: booking?.payment3dsAuto ?? defaults.payment3dsAuto,
+  };
+}
+
 function defaultWorkerConfig(
   profileId: string,
   lockedIp: string,
-  timingDefaults: RuntimeIntervalDefaults = FALLBACK_TIMING_DEFAULTS,
+  configDefaults: WorkerConfigDefaults = FALLBACK_CONFIG_DEFAULTS,
 ): WorkerConfig {
   return {
     profileId,
@@ -130,7 +160,8 @@ function defaultWorkerConfig(
       passportNumber: "",
     },
     payment: defaultWorkerPayment(),
-    timing: resolveWorkerTiming(undefined, timingDefaults),
+    booking: resolveWorkerBooking(undefined, configDefaults),
+    timing: resolveWorkerTiming(undefined, configDefaults),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -141,6 +172,16 @@ export function normalizeLockedIp(value?: string): string {
     return "";
   }
   return trimmed;
+}
+
+/** .env / loadSettings → panel worker-config varsayılanları */
+export function buildWorkerConfigDefaults(input: WorkerConfigDefaults): WorkerConfigDefaults {
+  return {
+    pollIntervalMs: input.pollIntervalMs,
+    telegramReportIntervalMs: input.telegramReportIntervalMs,
+    paymentAutoSubmit: input.paymentAutoSubmit,
+    payment3dsAuto: input.payment3dsAuto,
+  };
 }
 
 export class WorkerConfigStore {
@@ -170,12 +211,16 @@ export class WorkerConfigStore {
   getWorker(
     profileId: string,
     fallbackIp: string,
-    timingDefaults: RuntimeIntervalDefaults = FALLBACK_TIMING_DEFAULTS,
+    configDefaults: Partial<WorkerConfigDefaults> = FALLBACK_CONFIG_DEFAULTS,
   ): WorkerConfig {
+    const resolvedDefaults: WorkerConfigDefaults = {
+      ...FALLBACK_CONFIG_DEFAULTS,
+      ...configDefaults,
+    };
     const store = this.load();
     const existing = store.workers[profileId];
     if (!existing) {
-      return defaultWorkerConfig(profileId, fallbackIp, timingDefaults);
+      return defaultWorkerConfig(profileId, fallbackIp, resolvedDefaults);
     }
 
     return {
@@ -192,23 +237,31 @@ export class WorkerConfigStore {
         passportNumber: existing.api?.passportNumber ?? "",
       },
       payment: resolveWorkerPayment(existing.payment),
-      timing: resolveWorkerTiming(existing.timing, timingDefaults),
+      booking: resolveWorkerBooking(existing.booking, resolvedDefaults),
+      timing: resolveWorkerTiming(existing.timing, resolvedDefaults),
       updatedAt: existing.updatedAt,
     };
   }
 
   updateWorker(
     profileId: string,
-    patch: Partial<Omit<WorkerConfig, "profileId" | "timing" | "api" | "payment">> & {
+    patch: Partial<Omit<WorkerConfig, "profileId" | "timing" | "api" | "payment" | "booking">> & {
       api?: Partial<WorkerApiParams>;
       payment?: Partial<WorkerPaymentParams>;
+      booking?: Partial<WorkerBookingParams>;
       timing?: Partial<WorkerTimingParams>;
     },
-    timingDefaults: RuntimeIntervalDefaults = FALLBACK_TIMING_DEFAULTS,
+    configDefaults: Partial<WorkerConfigDefaults> = FALLBACK_CONFIG_DEFAULTS,
   ): WorkerConfig {
+    const resolvedDefaults: WorkerConfigDefaults = {
+      ...FALLBACK_CONFIG_DEFAULTS,
+      ...configDefaults,
+    };
     const store = this.load();
-    const existing = store.workers[profileId] ?? defaultWorkerConfig(profileId, patch.lockedIp ?? "", timingDefaults);
-    const resolvedTiming = resolveWorkerTiming(existing.timing, timingDefaults);
+    const existing =
+      store.workers[profileId] ?? defaultWorkerConfig(profileId, patch.lockedIp ?? "", resolvedDefaults);
+    const resolvedTiming = resolveWorkerTiming(existing.timing, resolvedDefaults);
+    const resolvedBooking = resolveWorkerBooking(existing.booking, resolvedDefaults);
     const next: WorkerConfig = {
       ...existing,
       ...patch,
@@ -216,15 +269,16 @@ export class WorkerConfigStore {
       lockedIp: normalizeLockedIp(patch.lockedIp ?? existing.lockedIp),
       api: { ...existing.api, ...patch.api },
       payment: { ...existing.payment, ...patch.payment },
+      booking: patch.booking ? { ...resolvedBooking, ...patch.booking } : resolvedBooking,
       timing: patch.timing
         ? {
             pollIntervalMs: normalizeRuntimeIntervalMs(
               patch.timing.pollIntervalMs ?? resolvedTiming.pollIntervalMs,
-              timingDefaults.pollIntervalMs,
+              resolvedDefaults.pollIntervalMs,
             ),
             telegramReportIntervalMs: normalizeRuntimeIntervalMs(
               patch.timing.telegramReportIntervalMs ?? resolvedTiming.telegramReportIntervalMs,
-              timingDefaults.telegramReportIntervalMs,
+              resolvedDefaults.telegramReportIntervalMs,
             ),
           }
         : resolvedTiming,

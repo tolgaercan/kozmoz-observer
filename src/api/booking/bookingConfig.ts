@@ -1,4 +1,5 @@
 import type { ApiWatcherSettings } from "../../config/settings.js";
+import type { WorkerBookingParams } from "../../control-panel/workerConfigStore.js";
 
 
 
@@ -47,7 +48,10 @@ export interface BookingRuntimeConfig {
 
 
 
-export function resolveBookingConfig(apiSettings: ApiWatcherSettings): BookingRuntimeConfig {
+export function resolveBookingConfig(
+  apiSettings: ApiWatcherSettings,
+  workerBooking?: Partial<WorkerBookingParams>,
+): BookingRuntimeConfig {
 
   const captchaPatienceMs =
 
@@ -87,11 +91,13 @@ export function resolveBookingConfig(apiSettings: ApiWatcherSettings): BookingRu
 
     step2RetryMax: apiSettings.bookingStep2RetryMax,
 
-    paymentAutoSubmit: apiSettings.bookingPaymentAutoSubmit,
+    paymentAutoSubmit:
+      workerBooking?.paymentAutoSubmit ?? apiSettings.bookingPaymentAutoSubmit,
     paymentPageWaitMs: apiSettings.bookingPaymentPageWaitMs,
     paymentSubmitWaitMs: apiSettings.bookingPaymentSubmitWaitMs,
     paymentOutcomeWaitMs: apiSettings.bookingPaymentOutcomeWaitMs,
-    payment3dsAutoEnabled: apiSettings.bookingPayment3dsAutoEnabled,
+    payment3dsAutoEnabled:
+      workerBooking?.payment3dsAuto ?? apiSettings.bookingPayment3dsAutoEnabled,
     payment3dsDetectWaitMs: apiSettings.bookingPayment3dsDetectWaitMs,
 
   };

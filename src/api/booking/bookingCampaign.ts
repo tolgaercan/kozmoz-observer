@@ -49,6 +49,7 @@ import { runBookingPaymentStep } from "./bookingPaymentStep.js";
 import { isPaymentPageVisible } from "../../portal/payment/fillPaymentForm.js";
 import { loadSettings } from "../../config/settings.js";
 import { TelegramNotifier } from "../../notifications/telegramNotifier.js";
+import { WorkerConfigStore } from "../../control-panel/workerConfigStore.js";
 
 function buildApiContext(input: BookingCampaignInput): ApiServiceContext {
 
@@ -94,7 +95,19 @@ export async function runBookingCampaign(
 
 ): Promise<BookingCampaignResult> {
 
-  const config = resolveBookingConfig(input.apiSettings);
+  const appSettings = loadSettings(input.projectRoot);
+  const configDefaults = {
+    pollIntervalMs: appSettings.apiWatcher.pollIntervalMs,
+    telegramReportIntervalMs: appSettings.apiWatcher.telegramReportIntervalMs,
+    paymentAutoSubmit: appSettings.apiWatcher.bookingPaymentAutoSubmit,
+    payment3dsAuto: appSettings.apiWatcher.bookingPayment3dsAutoEnabled,
+  };
+  const worker = new WorkerConfigStore(input.projectRoot).getWorker(
+    input.profileId,
+    "",
+    configDefaults,
+  );
+  const config = resolveBookingConfig(input.apiSettings, worker.booking);
 
 
 

@@ -47,11 +47,11 @@ import {
   syncManifestFromChromeProfiles,
 } from "./profileBridge.js";
 import type { ProcessRegistry } from "./processRegistry.js";
-import { runMockApiDateValidation, type ApiDateValidationReport } from "../api/validation/apiDateLogicValidation.js";
 import {
   normalizeLockedIp,
   WorkerConfigStore,
   type WorkerApiParams,
+  type WorkerBookingParams,
   type WorkerConfig,
   type WorkerPaymentParams,
   type WorkerTimingParams,
@@ -141,6 +141,10 @@ export interface ControlPanelBootstrap {
   envTimingDefaults: {
     pollIntervalMs: number;
     telegramReportIntervalMs: number;
+  };
+  envBookingDefaults: {
+    paymentAutoSubmit: boolean;
+    payment3dsAuto: boolean;
   };
 }
 
@@ -315,6 +319,7 @@ export class ControlPanelService {
         proxyUrl: activeWatcher.network.proxyUrl ?? "",
         api: activeWatcher.api,
         payment: legacy.payment,
+        booking: legacy.booking,
         timing: {
           pollIntervalMs: liveTiming.pollIntervalMs,
           telegramReportIntervalMs: liveTiming.telegramReportIntervalMs,
@@ -338,6 +343,7 @@ export class ControlPanelService {
       proxyUrl: chromeSession?.proxyUrl ?? legacy.proxyUrl ?? "",
       api,
       payment,
+      booking: legacy.booking,
       timing,
       updatedAt: chromeSession?.updatedAt ?? legacy.updatedAt,
     };
@@ -500,12 +506,13 @@ export class ControlPanelService {
       lastKnownHomeIp?: string;
       api?: WorkerApiParams;
       payment?: WorkerPaymentParams;
+      booking?: WorkerBookingParams;
       timing?: WorkerTimingParams;
     },
   ): WorkerConfig {
     const existing = this.chromeSessionStore.get(profileId);
-    const timingDefaults = this.runtimeDefaults();
-    const legacy = this.workerStore.getWorker(profileId, "", timingDefaults);
+    const configDefaults = this.runtimeDefaults();
+    const legacy = this.workerStore.getWorker(profileId, "", configDefaults);
 
     const nextProxyMode = patch.proxyMode ?? existing?.proxyMode ?? legacy.proxyMode ?? "direct";
     const nextProxyId =
@@ -537,6 +544,7 @@ export class ControlPanelService {
           : (existing?.lastKnownHomeIp ?? legacy.lastKnownHomeIp);
     const nextApi = patch.api ?? existing?.draftApi ?? legacy.api;
     const nextPayment = patch.payment ?? legacy.payment ?? existing?.draftPayment;
+    const nextBooking = patch.booking ?? legacy.booking;
     const nextTiming = patch.timing ?? legacy.timing ?? existing?.draftTiming;
 
     this.chromeSessionStore.patch(profileId, {
@@ -565,9 +573,10 @@ export class ControlPanelService {
         lastKnownHomeIp: nextHomeIp,
         api: nextApi,
         payment: nextPayment,
+        booking: nextBooking,
         timing: nextTiming,
       },
-      timingDefaults,
+      configDefaults,
     );
 
     return this.resolveEffectiveWorker(profileId);
@@ -576,11 +585,15 @@ export class ControlPanelService {
   private runtimeDefaults(): {
     pollIntervalMs: number;
     telegramReportIntervalMs: number;
+    paymentAutoSubmit: boolean;
+    payment3dsAuto: boolean;
   } {
     const settings = loadSettings(this.projectRoot);
     return {
       pollIntervalMs: settings.apiWatcher.pollIntervalMs,
       telegramReportIntervalMs: settings.apiWatcher.telegramReportIntervalMs,
+      paymentAutoSubmit: settings.apiWatcher.bookingPaymentAutoSubmit,
+      payment3dsAuto: settings.apiWatcher.bookingPayment3dsAutoEnabled,
     };
   }
 
@@ -653,7 +666,14 @@ export class ControlPanelService {
         worker: this.workerStore.getWorker(profileId || "profile-1", "", timingDefaults),
         activeWatcherSession: false,
         runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
-        envTimingDefaults: timingDefaults,
+        envTimingDefaults: {
+          pollIntervalMs: timingDefaults.pollIntervalMs,
+          telegramReportIntervalMs: timingDefaults.telegramReportIntervalMs,
+        },
+        envBookingDefaults: {
+          paymentAutoSubmit: timingDefaults.paymentAutoSubmit,
+          payment3dsAuto: timingDefaults.payment3dsAuto,
+        },
       };
     }
 
@@ -703,7 +723,14 @@ export class ControlPanelService {
       worker,
       activeWatcherSession: Boolean(this.watcherSessionStore.get(resolvedProfileId)),
       runtimeOptionsMs: RUNTIME_INTERVAL_OPTIONS_MS,
-      envTimingDefaults: timingDefaults,
+      envTimingDefaults: {
+        pollIntervalMs: timingDefaults.pollIntervalMs,
+        telegramReportIntervalMs: timingDefaults.telegramReportIntervalMs,
+      },
+      envBookingDefaults: {
+        paymentAutoSubmit: timingDefaults.paymentAutoSubmit,
+        payment3dsAuto: timingDefaults.payment3dsAuto,
+      },
     };
   }
 
@@ -726,6 +753,7 @@ export class ControlPanelService {
       lastKnownHomeIp: sanitizedPatch.lastKnownHomeIp,
       api: sanitizedPatch.api,
       payment: sanitizedPatch.payment,
+      booking: sanitizedPatch.booking,
       timing: sanitizedPatch.timing,
     });
   }
@@ -1288,10 +1316,6 @@ export class ControlPanelService {
     }
 
     return { stopped, processIds };
-  }
-
-  runApiDateValidation(): ApiDateValidationReport {
-    return runMockApiDateValidation();
   }
 
   async startApiWatcher(profileId: string, api: WorkerApiParams) {

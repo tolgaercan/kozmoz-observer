@@ -5,7 +5,7 @@
  * 2) Panel worker-config → payment alanları dolu
  * 3) npm run portal:payment-step -- profile-tolga2
  *
- * Varsayılan: .env API_BOOKING_PAYMENT_AUTO_SUBMIT (true) — submit tıklanır.
+ * Varsayılan: worker panel booking ayarları (.env yedek).
  * Sadece doldur: --no-submit   Zorla submit: --submit
  */
 import { resolve } from "node:path";
@@ -21,15 +21,15 @@ import { resolveProfileBrowserPaths } from "../src/profiles/profileBrowserResolv
 const projectRoot = resolve(import.meta.dirname, "..");
 const settings = loadSettings(projectRoot);
 const profileId = process.argv[2]?.trim() || settings.defaultProfileId || "profile-1";
-const autoSubmit = process.argv.includes("--no-submit")
-  ? false
-  : process.argv.includes("--submit") || settings.apiWatcher.bookingPaymentAutoSubmit;
 
 const workerStore = new WorkerConfigStore(projectRoot);
-const worker = workerStore.getWorker(profileId, "", {
+const configDefaults = {
   pollIntervalMs: settings.apiWatcher.pollIntervalMs,
   telegramReportIntervalMs: settings.apiWatcher.telegramReportIntervalMs,
-});
+  paymentAutoSubmit: settings.apiWatcher.bookingPaymentAutoSubmit,
+  payment3dsAuto: settings.apiWatcher.bookingPayment3dsAutoEnabled,
+};
+const worker = workerStore.getWorker(profileId, "", configDefaults);
 const baseProfile = new ProfileManager(projectRoot, settings.manifestPath).resolveProfile(
   profileId,
   settings,
@@ -41,8 +41,15 @@ const endpoint =
   resolveProfileBrowserPaths(projectRoot, baseProfile, settings).cdpEndpoint ||
   `http://127.0.0.1:${process.env.CDP_PORT ?? "9222"}`;
 
+const autoSubmit = process.argv.includes("--no-submit")
+  ? false
+  : process.argv.includes("--submit")
+    ? true
+    : worker.booking.paymentAutoSubmit;
+const threeDsAuto = worker.booking.payment3dsAuto;
+
 console.log(`CDP: ${endpoint}`);
-console.log(`Profil: ${profileId} · autoSubmit=${autoSubmit}`);
+console.log(`Profil: ${profileId} · autoSubmit=${autoSubmit} · 3dsAuto=${threeDsAuto}`);
 console.log("Ödeme sayfası bekleniyor…\n");
 
 const { browser, context } = await connectOverCdp(endpoint, { skipStealth: true });
@@ -59,7 +66,7 @@ try {
   const result = await runPaymentStep(page, {
     profile,
     autoSubmit,
-    threeDsAutoEnabled: settings.apiWatcher.bookingPayment3dsAutoEnabled,
+    threeDsAutoEnabled: threeDsAuto,
     paymentPageWaitMs: settings.apiWatcher.bookingPaymentPageWaitMs,
     submitWaitMs: settings.apiWatcher.bookingPaymentSubmitWaitMs,
     outcomeWaitMs: settings.apiWatcher.bookingPaymentOutcomeWaitMs,
